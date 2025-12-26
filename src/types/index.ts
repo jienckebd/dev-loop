@@ -60,7 +60,7 @@ export interface LogAnalysis {
 
 export interface WorkflowState {
   currentTask?: Task;
-  status: 'idle' | 'fetching-task' | 'executing-ai' | 'applying-changes' | 'awaiting-approval' | 'running-tests' | 'analyzing-logs' | 'marking-done' | 'creating-fix-task';
+  status: 'idle' | 'fetching-task' | 'executing-ai' | 'applying-changes' | 'awaiting-approval' | 'running-pre-test-hooks' | 'running-tests' | 'analyzing-logs' | 'marking-done' | 'creating-fix-task';
   progress: number;
   totalTasks: number;
   completedTasks: number;

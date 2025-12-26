@@ -84,38 +84,49 @@ export class TaskMasterBridge {
       const content = await fs.readFile(this.tasksPath, 'utf-8');
       try {
         const data = JSON.parse(content);
+        console.log(`[TaskBridge] Loaded file, top-level keys:`, Object.keys(data));
         // Handle multiple formats:
         // 1. Direct array: [task1, task2, ...]
         if (Array.isArray(data)) {
+          console.log(`[TaskBridge] Found direct array with ${data.length} tasks`);
           return data;
         }
         // 2. Object with tasks property: {tasks: [task1, task2, ...]}
         else if (data.tasks && Array.isArray(data.tasks)) {
+          console.log(`[TaskBridge] Found {tasks: []} with ${data.tasks.length} tasks`);
           return data.tasks;
         }
         // 3. Object with tag keys containing tasks: {master: {tasks: [task1, task2, ...]}, ...}
         else if (typeof data === 'object') {
           // Get first object value and check for nested tasks
           const tagKeys = Object.keys(data);
+          console.log(`[TaskBridge] Found object with keys:`, tagKeys);
           for (const key of tagKeys) {
             if (data[key] && typeof data[key] === 'object') {
+              console.log(`[TaskBridge] Checking key "${key}", type:`, Array.isArray(data[key]) ? 'array' : 'object', 'keys:', Object.keys(data[key]));
               // Check for nested tasks array
               if (data[key].tasks && Array.isArray(data[key].tasks)) {
+                console.log(`[TaskBridge] Found {${key}: {tasks: []}} with ${data[key].tasks.length} tasks`);
                 return data[key].tasks;
               }
               // Or direct array
               else if (Array.isArray(data[key])) {
+                console.log(`[TaskBridge] Found {${key}: []} with ${data[key].length} tasks`);
                 return data[key];
               }
             }
           }
         }
+        // If we get here, log for debugging
+        console.warn(`[TaskBridge] Could not parse tasks from ${this.tasksPath}. Top-level keys:`, Object.keys(data));
         return [];
-      } catch {
+      } catch (error) {
+        console.error(`[TaskBridge] Error parsing tasks file:`, error);
         return [];
       }
     }
 
+    console.warn(`[TaskBridge] Tasks file not found: ${this.tasksPath}`);
     return [];
   }
 
