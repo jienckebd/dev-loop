@@ -84,14 +84,26 @@ export class TaskMasterBridge {
       const content = await fs.readFile(this.tasksPath, 'utf-8');
       try {
         const data = JSON.parse(content);
-        // Handle both array and object formats
+        // Handle multiple formats:
+        // 1. Direct array: [task1, task2, ...]
         if (Array.isArray(data)) {
           return data;
-        } else if (data.tasks && Array.isArray(data.tasks)) {
-          return data.tasks;
-        } else {
-          return [];
         }
+        // 2. Object with tasks property: {tasks: [task1, task2, ...]}
+        else if (data.tasks && Array.isArray(data.tasks)) {
+          return data.tasks;
+        }
+        // 3. Object with tag keys: {master: [task1, task2, ...], ...}
+        else if (typeof data === 'object') {
+          // Get first array value (typically 'master' tag)
+          const tagKeys = Object.keys(data);
+          for (const key of tagKeys) {
+            if (Array.isArray(data[key])) {
+              return data[key];
+            }
+          }
+        }
+        return [];
       } catch {
         return [];
       }
