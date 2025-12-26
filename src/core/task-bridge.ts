@@ -93,13 +93,20 @@ export class TaskMasterBridge {
         else if (data.tasks && Array.isArray(data.tasks)) {
           return data.tasks;
         }
-        // 3. Object with tag keys: {master: [task1, task2, ...], ...}
+        // 3. Object with tag keys containing tasks: {master: {tasks: [task1, task2, ...]}, ...}
         else if (typeof data === 'object') {
-          // Get first array value (typically 'master' tag)
+          // Get first object value and check for nested tasks
           const tagKeys = Object.keys(data);
           for (const key of tagKeys) {
-            if (Array.isArray(data[key])) {
-              return data[key];
+            if (data[key] && typeof data[key] === 'object') {
+              // Check for nested tasks array
+              if (data[key].tasks && Array.isArray(data[key].tasks)) {
+                return data[key].tasks;
+              }
+              // Or direct array
+              else if (Array.isArray(data[key])) {
+                return data[key];
+              }
             }
           }
         }
