@@ -1,5 +1,7 @@
 import * as fs from 'fs-extra';
 import * as path from 'path';
+import { exec } from 'child_process';
+import { promisify } from 'util';
 import { Config } from '../config/schema';
 import { Task, WorkflowState, CodeChanges, TaskContext } from '../types';
 import { TaskMasterBridge } from './task-bridge';
@@ -10,6 +12,8 @@ import { AIProviderFactory } from '../providers/ai/factory';
 import { TestRunnerFactory } from '../providers/test-runners/factory';
 import { LogAnalyzerFactory } from '../providers/log-analyzers/factory';
 import { AIProvider } from '../providers/ai/interface';
+
+const execAsync = promisify(exec);
 
 export interface WorkflowResult {
   completed: boolean;
@@ -104,6 +108,12 @@ export class WorkflowEngine {
 
       // Apply changes to filesystem
       await this.applyChanges(changes);
+
+      // Execute pre-test hooks (e.g., cache clearing)
+      if (this.config.hooks?.preTest && this.config.hooks.preTest.length > 0) {
+        await this.updateState({ status: 'running-pre-test-hooks' });
+        await this.executePreTestHooks();
+      }
 
       // Update state: RunningTests
       await this.updateState({ status: 'running-tests' });
@@ -220,6 +230,21 @@ export class WorkflowEngine {
     }
 
     return contexts.join('\n---\n');
+  }
+
+  private async executePreTestHooks(): Promise<void> {
+    if (!this.config.hooks?.preTest || this.config.hooks.preTest.length === 0) {
+      return;
+    }
+
+    for (const command of this.config.hooks.preTest) {
+      try {
+        await execAsync(command);
+      } catch (error) {
+        // Log but don't fail - hooks are optional
+        console.warn(`Pre-test hook failed: ${command}`, error);
+      }
+    }
   }
 
   private async updateState(updates: Partial<WorkflowState>): Promise<void> {

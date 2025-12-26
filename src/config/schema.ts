@@ -38,6 +38,10 @@ const configSchema = z.object({
   taskMaster: z.object({
     tasksPath: z.string(),
   }),
+  hooks: z.object({
+    preTest: z.array(z.string()).optional(),
+    postTest: z.array(z.string()).optional(),
+  }).optional(),
 });
 
 export type Config = z.infer<typeof configSchema>;
