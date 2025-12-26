@@ -15,7 +15,7 @@ export class AnthropicProvider implements AIProvider {
 
   async generateCode(prompt: string, context: TaskContext): Promise<CodeChanges> {
     // Detect if this is a Drupal/PHP task
-    const isDrupalTask = context.codebaseContext?.includes('docroot/modules') || 
+    const isDrupalTask = context.codebaseContext?.includes('docroot/modules') ||
                          context.codebaseContext?.includes('.php') ||
                          prompt.includes('Drupal') ||
                          prompt.includes('hook_') ||
@@ -86,7 +86,7 @@ ${prompt}`;
       const content = response.content[0];
       if (content.type === 'text') {
         const text = content.text;
-        
+
         // Try to extract JSON from code block first
         let jsonText: string | null = null;
         const codeBlockMatch = text.match(/```(?:json)?\s*(\{[\s\S]*?\})\s*```/);
@@ -99,7 +99,7 @@ ${prompt}`;
             jsonText = jsonMatch[0];
           }
         }
-        
+
         if (jsonText) {
           try {
             const parsed = JSON.parse(jsonText);
@@ -108,7 +108,7 @@ ${prompt}`;
             console.warn('[Anthropic] JSON parse failed, using fallback:', parseError instanceof Error ? parseError.message : String(parseError));
           }
         }
-        
+
         // Fallback: create a single file with the response
         const fileExtension = isDrupalTask ? 'php' : 'ts';
         const filePath = isDrupalTask ? 'generated-code.php' : 'generated-code.ts';

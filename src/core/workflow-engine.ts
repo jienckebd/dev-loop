@@ -222,7 +222,7 @@ export class WorkflowEngine {
       } else if (file.operation === 'create' || file.operation === 'update') {
         await fs.ensureDir(path.dirname(filePath));
         await fs.writeFile(filePath, file.content, 'utf-8');
-        
+
         // Validate PHP syntax if it's a PHP file
         if (filePath.endsWith('.php')) {
           try {
@@ -243,7 +243,7 @@ export class WorkflowEngine {
   }> {
     const taskText = `${task.title} ${task.description} ${task.details || ''}`;
     const mentionedFiles: string[] = [];
-    
+
     // Pattern 1: Explicit file paths (docroot/modules/...)
     const docRootPattern = /(docroot\/[^\s,\)]+\.(php|module|yml|yaml|inc))/gi;
     let match;
@@ -252,7 +252,7 @@ export class WorkflowEngine {
         mentionedFiles.push(match[1]);
       }
     }
-    
+
     // Pattern 2: Module names mentioned (EntityFormService, prepopulateSchemaMappings, etc.)
     // Map common class/method names to files
     const classToFileMap: Record<string, string> = {
@@ -264,13 +264,13 @@ export class WorkflowEngine {
       'ApiSpecProcessor': 'docroot/modules/share/openapi_entity/src/Service/ApiSpecProcessor.php',
       'WizardStepProcessor': 'docroot/modules/share/openapi_entity/src/Service/WizardStepProcessor.php',
     };
-    
+
     for (const [className, filePath] of Object.entries(classToFileMap)) {
       if (taskText.includes(className) && !mentionedFiles.includes(filePath)) {
         mentionedFiles.push(filePath);
       }
     }
-    
+
     // Pattern 3: Module name extraction (e.g., "openapi_entity module")
     const modulePattern = /(\w+)(?:\.module|\s+module)/gi;
     while ((match = modulePattern.exec(taskText)) !== null) {
@@ -310,7 +310,7 @@ export class WorkflowEngine {
     console.log(`[WorkflowEngine] Found ${validFiles.length} relevant files:`, validFiles);
 
     return {
-      codebaseContext: contexts.length > 0 
+      codebaseContext: contexts.length > 0
         ? `## Existing Code Files (MODIFY THESE, DO NOT CREATE NEW MODULES)\n${contexts.join('\n---\n')}`
         : '',
       targetFiles: validFiles.length > 0 ? validFiles.join('\n') : undefined,

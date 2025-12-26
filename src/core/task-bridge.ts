@@ -86,7 +86,7 @@ export class TaskMasterBridge {
       try {
         const data = JSON.parse(content);
         let rawTasks: Task[] = [];
-        
+
         // Handle multiple formats and remember original format:
         // 1. Direct array: [task1, task2, ...]
         if (Array.isArray(data)) {
@@ -118,7 +118,7 @@ export class TaskMasterBridge {
             }
           }
         }
-        
+
         // Flatten subtasks into main task list
         const allTasks: Task[] = [];
         for (const task of rawTasks) {
@@ -137,7 +137,7 @@ export class TaskMasterBridge {
             }
           }
         }
-        
+
         const pending = allTasks.filter(t => t.status === 'pending');
         console.log(`[TaskBridge] Loaded ${rawTasks.length} tasks, ${pending.length} pending (including subtasks)`);
         return allTasks;
@@ -153,15 +153,15 @@ export class TaskMasterBridge {
 
   private async saveTasks(tasks: Task[]): Promise<void> {
     await fs.ensureDir(path.dirname(this.tasksPath));
-    
+
     // Always use master format to preserve Task Master CLI compatibility
     const originalFormat = 'master';
     console.log(`[TaskBridge] Saving ${tasks.length} tasks in ${originalFormat} format`);
-    
+
     // Reconstruct tasks with subtasks (tasks with parentId go back to parent's subtasks array)
     const mainTasks: Task[] = [];
     const subtaskMap = new Map<string, Task[]>();
-    
+
     for (const task of tasks) {
       if (task.parentId) {
         // This is a subtask - add to parent's subtasks
@@ -180,17 +180,17 @@ export class TaskMasterBridge {
         mainTasks.push(task);
       }
     }
-    
+
     // Attach subtasks back to parent tasks
     for (const task of mainTasks) {
       if (subtaskMap.has(task.id.toString())) {
         task.subtasks = subtaskMap.get(task.id.toString())!;
       }
     }
-    
+
     // Always save in master format for Task Master CLI compatibility
     const output = { master: { tasks: mainTasks } };
-    
+
     await fs.writeJson(this.tasksPath, output, { spaces: 2 });
   }
 
