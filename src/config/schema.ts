@@ -41,6 +41,7 @@ const configSchema = z.object({
   hooks: z.object({
     preTest: z.array(z.string()).optional(),
     postTest: z.array(z.string()).optional(),
+    postApply: z.array(z.string()).optional(),
   }).optional(),
 });
 

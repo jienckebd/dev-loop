@@ -15,6 +15,9 @@ export interface Task {
   status: TaskStatus;
   priority: 'high' | 'medium' | 'low';
   dependencies?: string[];
+  details?: string;
+  subtasks?: Task[];
+  parentId?: string;
 }
 
 export interface TaskContext {
@@ -60,7 +63,7 @@ export interface LogAnalysis {
 
 export interface WorkflowState {
   currentTask?: Task;
-  status: 'idle' | 'fetching-task' | 'executing-ai' | 'applying-changes' | 'awaiting-approval' | 'running-pre-test-hooks' | 'running-tests' | 'analyzing-logs' | 'marking-done' | 'creating-fix-task';
+  status: 'idle' | 'fetching-task' | 'executing-ai' | 'applying-changes' | 'awaiting-approval' | 'running-post-apply-hooks' | 'running-pre-test-hooks' | 'running-tests' | 'analyzing-logs' | 'marking-done' | 'creating-fix-task';
   progress: number;
   totalTasks: number;
   completedTasks: number;

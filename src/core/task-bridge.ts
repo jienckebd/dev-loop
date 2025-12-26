@@ -9,6 +9,7 @@ const execAsync = promisify(exec);
 
 export class TaskMasterBridge {
   private tasksPath: string;
+  private originalFormat: 'array' | 'tasks' | 'master' = 'master';
 
   constructor(private config: Config) {
     this.tasksPath = path.resolve(process.cwd(), config.taskMaster.tasksPath);
@@ -84,42 +85,62 @@ export class TaskMasterBridge {
       const content = await fs.readFile(this.tasksPath, 'utf-8');
       try {
         const data = JSON.parse(content);
-        console.log(`[TaskBridge] Loaded file, top-level keys:`, Object.keys(data));
-        // Handle multiple formats:
+        let rawTasks: Task[] = [];
+        
+        // Handle multiple formats and remember original format:
         // 1. Direct array: [task1, task2, ...]
         if (Array.isArray(data)) {
-          console.log(`[TaskBridge] Found direct array with ${data.length} tasks`);
-          return data;
+          rawTasks = data;
+          this.originalFormat = 'array';
         }
         // 2. Object with tasks property: {tasks: [task1, task2, ...]}
         else if (data.tasks && Array.isArray(data.tasks)) {
-          console.log(`[TaskBridge] Found {tasks: []} with ${data.tasks.length} tasks`);
-          return data.tasks;
+          rawTasks = data.tasks;
+          this.originalFormat = 'tasks';
         }
         // 3. Object with tag keys containing tasks: {master: {tasks: [task1, task2, ...]}, ...}
         else if (typeof data === 'object') {
-          // Get first object value and check for nested tasks
           const tagKeys = Object.keys(data);
-          console.log(`[TaskBridge] Found object with keys:`, tagKeys);
           for (const key of tagKeys) {
             if (data[key] && typeof data[key] === 'object') {
-              console.log(`[TaskBridge] Checking key "${key}", type:`, Array.isArray(data[key]) ? 'array' : 'object', 'keys:', Object.keys(data[key]));
               // Check for nested tasks array
               if (data[key].tasks && Array.isArray(data[key].tasks)) {
-                console.log(`[TaskBridge] Found {${key}: {tasks: []}} with ${data[key].tasks.length} tasks`);
-                return data[key].tasks;
+                rawTasks = data[key].tasks;
+                this.originalFormat = 'master';
+                break;
               }
               // Or direct array
               else if (Array.isArray(data[key])) {
-                console.log(`[TaskBridge] Found {${key}: []} with ${data[key].length} tasks`);
-                return data[key];
+                rawTasks = data[key];
+                this.originalFormat = 'master';
+                break;
               }
             }
           }
         }
-        // If we get here, log for debugging
-        console.warn(`[TaskBridge] Could not parse tasks from ${this.tasksPath}. Top-level keys:`, Object.keys(data));
-        return [];
+        
+        // Flatten subtasks into main task list
+        const allTasks: Task[] = [];
+        for (const task of rawTasks) {
+          allTasks.push(task);
+          // Add pending subtasks as separate tasks
+          if (task.subtasks && Array.isArray(task.subtasks)) {
+            for (const subtask of task.subtasks) {
+              if (subtask.status === 'pending') {
+                allTasks.push({
+                  ...subtask,
+                  id: `${task.id}.${subtask.id}`,
+                  parentId: task.id,
+                  priority: subtask.priority || task.priority || 'medium',
+                });
+              }
+            }
+          }
+        }
+        
+        const pending = allTasks.filter(t => t.status === 'pending');
+        console.log(`[TaskBridge] Loaded ${rawTasks.length} tasks, ${pending.length} pending (including subtasks)`);
+        return allTasks;
       } catch (error) {
         console.error(`[TaskBridge] Error parsing tasks file:`, error);
         return [];
@@ -132,7 +153,45 @@ export class TaskMasterBridge {
 
   private async saveTasks(tasks: Task[]): Promise<void> {
     await fs.ensureDir(path.dirname(this.tasksPath));
-    await fs.writeJson(this.tasksPath, tasks, { spaces: 2 });
+    
+    // Always use master format to preserve Task Master CLI compatibility
+    const originalFormat = 'master';
+    console.log(`[TaskBridge] Saving ${tasks.length} tasks in ${originalFormat} format`);
+    
+    // Reconstruct tasks with subtasks (tasks with parentId go back to parent's subtasks array)
+    const mainTasks: Task[] = [];
+    const subtaskMap = new Map<string, Task[]>();
+    
+    for (const task of tasks) {
+      if (task.parentId) {
+        // This is a subtask - add to parent's subtasks
+        const parentId = task.parentId;
+        if (!subtaskMap.has(parentId)) {
+          subtaskMap.set(parentId, []);
+        }
+        // Remove parentId and restore original ID
+        const { parentId: _, id, ...subtaskData } = task;
+        const originalSubtaskId = id.toString().split('.').pop() || id;
+        subtaskMap.get(parentId)!.push({
+          ...subtaskData,
+          id: originalSubtaskId,
+        } as Task);
+      } else {
+        mainTasks.push(task);
+      }
+    }
+    
+    // Attach subtasks back to parent tasks
+    for (const task of mainTasks) {
+      if (subtaskMap.has(task.id.toString())) {
+        task.subtasks = subtaskMap.get(task.id.toString())!;
+      }
+    }
+    
+    // Always save in master format for Task Master CLI compatibility
+    const output = { master: { tasks: mainTasks } };
+    
+    await fs.writeJson(this.tasksPath, output, { spaces: 2 });
   }
 
   async initializeTaskMaster(): Promise<void> {

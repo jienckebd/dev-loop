@@ -16,14 +16,24 @@ export class TemplateManager {
   async getTaskGenerationTemplateWithContext(context: {
     task: { title: string; description: string; priority: string };
     codebaseContext?: string;
+    targetFiles?: string;
+    existingCode?: string;
+    templateType?: 'generic' | 'drupal';
   }): Promise<string> {
-    let template = await this.loadTemplate('generate-tasks.md');
+    // Use Drupal template if specified or if target files suggest Drupal
+    const useDrupalTemplate = context.templateType === 'drupal' || 
+      (context.targetFiles && /\.(php|module|yml)$/.test(context.targetFiles));
+    
+    const templateFile = useDrupalTemplate ? 'drupal-task.md' : 'generate-tasks.md';
+    let template = await this.loadTemplate(templateFile);
 
     // Simple variable substitution
     template = template.replace(/\{\{task\.title\}\}/g, context.task.title);
     template = template.replace(/\{\{task\.description\}\}/g, context.task.description);
     template = template.replace(/\{\{task\.priority\}\}/g, context.task.priority);
     template = template.replace(/\{\{codebaseContext\}\}/g, context.codebaseContext || '');
+    template = template.replace(/\{\{targetFiles\}\}/g, context.targetFiles || '');
+    template = template.replace(/\{\{existingCode\}\}/g, context.existingCode || '');
 
     return template;
   }

@@ -67,7 +67,7 @@ export class WorkflowEngine {
       await this.taskBridge.updateTaskStatus(task.id, 'in-progress');
 
       // Generate code using AI
-      const codebaseContext = await this.getCodebaseContext();
+      const { codebaseContext, targetFiles, existingCode } = await this.getCodebaseContext(task);
       const context: TaskContext = {
         task,
         codebaseContext,
@@ -81,9 +81,15 @@ export class WorkflowEngine {
           priority: task.priority,
         },
         codebaseContext,
+        targetFiles,
+        existingCode,
+        templateType: targetFiles ? 'drupal' : 'generic',
       });
 
+      console.log('[WorkflowEngine] Calling AI provider to generate code...');
+      console.log('[WorkflowEngine] Task:', context.task.title);
       const changes = await this.aiProvider.generateCode(template, context);
+      console.log('[WorkflowEngine] AI response received, files:', changes.files?.length || 0);
 
       // Update state: ApplyingChanges
       await this.updateState({ status: 'applying-changes' });
@@ -107,16 +113,29 @@ export class WorkflowEngine {
       }
 
       // Apply changes to filesystem
+      console.log('[WorkflowEngine] Applying changes to filesystem...');
       await this.applyChanges(changes);
+      console.log('[WorkflowEngine] Changes applied');
+
+      // Execute post-apply hooks (e.g., cache clearing for Drupal)
+      if (this.config.hooks?.postApply && this.config.hooks.postApply.length > 0) {
+        console.log('[WorkflowEngine] Running post-apply hooks...');
+        await this.updateState({ status: 'running-post-apply-hooks' });
+        await this.executePostApplyHooks();
+        console.log('[WorkflowEngine] Post-apply hooks completed');
+      }
 
       // Execute pre-test hooks (e.g., cache clearing)
       if (this.config.hooks?.preTest && this.config.hooks.preTest.length > 0) {
+        console.log('[WorkflowEngine] Running pre-test hooks...');
         await this.updateState({ status: 'running-pre-test-hooks' });
         await this.executePreTestHooks();
+        console.log('[WorkflowEngine] Pre-test hooks completed');
       }
 
       // Update state: RunningTests
       await this.updateState({ status: 'running-tests' });
+      console.log('[WorkflowEngine] Running tests...');
 
       // Run tests
       const testResult = await this.testRunner.run({
@@ -203,33 +222,100 @@ export class WorkflowEngine {
       } else if (file.operation === 'create' || file.operation === 'update') {
         await fs.ensureDir(path.dirname(filePath));
         await fs.writeFile(filePath, file.content, 'utf-8');
+        
+        // Validate PHP syntax if it's a PHP file
+        if (filePath.endsWith('.php')) {
+          try {
+            await execAsync(`php -l "${filePath}"`);
+          } catch (error) {
+            console.warn(`PHP syntax check failed for ${filePath}:`, error);
+            // Don't fail - let Drupal handle validation
+          }
+        }
       }
     }
   }
 
-  private async getCodebaseContext(): Promise<string> {
-    // Simple implementation: read key files
-    // In a real implementation, this could be more sophisticated
-    const contextFiles = [
-      'package.json',
-      'README.md',
-      'tsconfig.json',
-    ];
+  private async getCodebaseContext(task: Task): Promise<{
+    codebaseContext: string;
+    targetFiles?: string;
+    existingCode?: string;
+  }> {
+    const taskText = `${task.title} ${task.description} ${task.details || ''}`;
+    const mentionedFiles: string[] = [];
+    
+    // Pattern 1: Explicit file paths (docroot/modules/...)
+    const docRootPattern = /(docroot\/[^\s,\)]+\.(php|module|yml|yaml|inc))/gi;
+    let match;
+    while ((match = docRootPattern.exec(taskText)) !== null) {
+      if (!mentionedFiles.includes(match[1])) {
+        mentionedFiles.push(match[1]);
+      }
+    }
+    
+    // Pattern 2: Module names mentioned (EntityFormService, prepopulateSchemaMappings, etc.)
+    // Map common class/method names to files
+    const classToFileMap: Record<string, string> = {
+      'EntityFormService': 'docroot/modules/share/entity_form_wizard/src/Service/EntityFormService.php',
+      'prepopulateSchemaMappings': 'docroot/modules/share/entity_form_wizard/src/Service/EntityFormService.php',
+      'ensureFeedTypesForAllBundles': 'docroot/modules/share/entity_form_wizard/src/Service/EntityFormService.php',
+      'openapi_entity.module': 'docroot/modules/share/openapi_entity/openapi_entity.module',
+      'hook_wizard_step_post_save': 'docroot/modules/share/openapi_entity/openapi_entity.module',
+      'ApiSpecProcessor': 'docroot/modules/share/openapi_entity/src/Service/ApiSpecProcessor.php',
+      'WizardStepProcessor': 'docroot/modules/share/openapi_entity/src/Service/WizardStepProcessor.php',
+    };
+    
+    for (const [className, filePath] of Object.entries(classToFileMap)) {
+      if (taskText.includes(className) && !mentionedFiles.includes(filePath)) {
+        mentionedFiles.push(filePath);
+      }
+    }
+    
+    // Pattern 3: Module name extraction (e.g., "openapi_entity module")
+    const modulePattern = /(\w+)(?:\.module|\s+module)/gi;
+    while ((match = modulePattern.exec(taskText)) !== null) {
+      const moduleName = match[1].toLowerCase();
+      const moduleFile = `docroot/modules/share/${moduleName}/${moduleName}.module`;
+      if (!mentionedFiles.includes(moduleFile)) {
+        mentionedFiles.push(moduleFile);
+      }
+    }
 
     const contexts: string[] = [];
-    for (const file of contextFiles) {
-      const filePath = path.join(process.cwd(), file);
+    const existingCodeSections: string[] = [];
+    const validFiles: string[] = [];
+
+    // Load mentioned PHP files
+    for (const file of mentionedFiles) {
+      const filePath = path.resolve(process.cwd(), file);
       if (await fs.pathExists(filePath)) {
         try {
           const content = await fs.readFile(filePath, 'utf-8');
-          contexts.push(`\n${file}:\n${content}`);
+          validFiles.push(file);
+          // For large files, extract relevant sections
+          if (content.length > 15000) {
+            const truncated = content.substring(0, 15000) + '\n\n... (file truncated, showing first 15000 chars) ...';
+            contexts.push(`\n### EXISTING FILE: ${file}\n${truncated}`);
+            existingCodeSections.push(`\n### ${file}:\n${truncated}`);
+          } else {
+            contexts.push(`\n### EXISTING FILE: ${file}\n${content}`);
+            existingCodeSections.push(`\n### ${file}:\n${content}`);
+          }
         } catch {
           // Ignore read errors
         }
       }
     }
 
-    return contexts.join('\n---\n');
+    console.log(`[WorkflowEngine] Found ${validFiles.length} relevant files:`, validFiles);
+
+    return {
+      codebaseContext: contexts.length > 0 
+        ? `## Existing Code Files (MODIFY THESE, DO NOT CREATE NEW MODULES)\n${contexts.join('\n---\n')}`
+        : '',
+      targetFiles: validFiles.length > 0 ? validFiles.join('\n') : undefined,
+      existingCode: existingCodeSections.length > 0 ? existingCodeSections.join('\n---\n') : undefined,
+    };
   }
 
   private async executePreTestHooks(): Promise<void> {
@@ -243,6 +329,21 @@ export class WorkflowEngine {
       } catch (error) {
         // Log but don't fail - hooks are optional
         console.warn(`Pre-test hook failed: ${command}`, error);
+      }
+    }
+  }
+
+  private async executePostApplyHooks(): Promise<void> {
+    if (!this.config.hooks?.postApply || this.config.hooks.postApply.length === 0) {
+      return;
+    }
+
+    for (const command of this.config.hooks.postApply) {
+      try {
+        await execAsync(command);
+      } catch (error) {
+        // Log but don't fail - hooks are optional
+        console.warn(`Post-apply hook failed: ${command}`, error);
       }
     }
   }
