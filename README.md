@@ -2,18 +2,166 @@
 
 > Automated Development Workflow Orchestrator
 
-A TypeScript CLI application with daemon mode that wraps `task-master-ai` to orchestrate the PRD-to-validated-code workflow. Supports multiple AI providers, Playwright + Cypress testing, hybrid log analysis, configurable automation levels, and optional integration with [ai-dev-tasks](https://github.com/snarktank/ai-dev-tasks) prompt templates.
+A TypeScript CLI application that orchestrates the complete PRD-to-validated-code workflow by wrapping `task-master-ai` and coordinating multiple AI providers, test runners, and log analyzers. dev-loop automates the iterative development cycle where **features and tests are built together**, running continuously until all requirements are implemented and validated.
 
 ## Overview
 
-dev-loop automates the iterative development cycle where **features and tests are built together**:
+dev-loop transforms Product Requirements Documents (PRDs) into fully tested, production-ready code through an automated orchestration loop:
 
-1. Parse PRD into tasks that bundle feature code + test code together
-2. Send each task to the AI provider with context for both implementation AND tests
-3. Run tests immediately after code generation
-4. Analyze logs for hidden errors
-5. Create fix tasks when issues are found
-6. Loop until PRD is 100% complete
+**Core Workflow:**
+1. **Task Creation**: Parse PRD into tasks that bundle feature code + test code together via TaskMasterBridge
+2. **Orchestration**: WorkflowEngine fetches tasks, manages state, and coordinates all components
+3. **Code Generation**: AI Provider generates both feature implementation and test code simultaneously
+4. **Approval**: Intervention System optionally requires human approval (autonomous/review/hybrid modes)
+5. **Validation**: Test Runner executes tests and collects artifacts (screenshots, videos, logs)
+6. **Analysis**: Log Analyzer detects issues through pattern matching and AI-powered analysis
+7. **Iteration**: State Manager updates status, creates fix tasks when needed, and loops until PRD is 100% complete
+
+**Key Architecture Components:**
+- **WorkflowEngine**: State machine orchestrating the entire lifecycle
+- **TaskMasterBridge**: Wrapper around task-master-ai for task management
+- **AI Providers**: Anthropic Claude, OpenAI GPT, Google Gemini, Ollama (with fallback support)
+- **Test Runners**: Playwright and Cypress with artifact collection
+- **Log Analyzers**: Hybrid pattern matching + AI analysis for issue detection
+- **Intervention System**: Configurable approval gates (autonomous/review/hybrid)
+- **State Manager**: Persistent state tracking across restarts
+- **Template Manager**: Flexible prompt templates (builtin/ai-dev-tasks/custom)
+
+## PRD to Feature Lifecycle
+
+The complete workflow from Product Requirements Document to validated feature implementation:
+
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                         PRD (Product Requirements)                          │
+│                         ┌──────────────────────┐                           │
+│                         │  Feature Requirements │                           │
+│                         │  Test Requirements    │                           │
+│                         └──────────────────────┘                           │
+└─────────────────────────────────────────────────────────────────────────────┘
+                                      │
+                                      ▼
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                    TASK MASTER (via TaskMasterBridge)                        │
+│  ┌─────────────────────────────────────────────────────────────────────┐   │
+│  │  Parse PRD → Create Tasks (Feature + Test bundled together)        │   │
+│  │  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐              │   │
+│  │  │   Task 1    │  │   Task 2    │  │   Task N    │              │   │
+│  │  │  Feature A  │  │  Feature B  │  │   Fix Task  │              │   │
+│  │  │  + Test A   │  │  + Test B   │  │   + Tests   │              │   │
+│  │  └─────────────┘  └─────────────┘  └─────────────┘              │   │
+│  └─────────────────────────────────────────────────────────────────────┘   │
+└─────────────────────────────────────────────────────────────────────────────┘
+                                      │
+                                      ▼
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                    WORKFLOW ENGINE (Orchestration Loop)                      │
+│  ┌─────────────────────────────────────────────────────────────────────┐   │
+│  │  1. Fetch next pending task                                          │   │
+│  │  2. Set status: pending → in-progress                                │   │
+│  │  3. Load task context (codebase, tests, logs)                        │   │
+│  └─────────────────────────────────────────────────────────────────────┘   │
+└─────────────────────────────────────────────────────────────────────────────┘
+                                      │
+                                      ▼
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                    AI PROVIDER (Code Generation)                           │
+│  ┌─────────────────────────────────────────────────────────────────────┐   │
+│  │  • Receive task prompt + context                                    │   │
+│  │  • Generate feature code + test code together                       │   │
+│  │  • Return code changes (diffs/patches)                             │   │
+│  └─────────────────────────────────────────────────────────────────────┘   │
+└─────────────────────────────────────────────────────────────────────────────┘
+                                      │
+                                      ▼
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                    INTERVENTION SYSTEM (Optional Approval)                  │
+│  ┌─────────────────────────────────────────────────────────────────────┐   │
+│  │  Mode: autonomous → skip                                            │   │
+│  │  Mode: review/hybrid → show diff, await approval                    │   │
+│  └─────────────────────────────────────────────────────────────────────┘   │
+└─────────────────────────────────────────────────────────────────────────────┘
+                                      │
+                                      ▼
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                    CODEBASE (Apply Changes)                                 │
+│  ┌─────────────────────────────┐  ┌─────────────────────────────────────┐ │
+│  │      Feature Code            │  │        Test Code                     │ │
+│  │  • Controllers/Services      │  │  • Playwright/Cypress tests           │ │
+│  │  • Forms/Handlers            │  │  • Unit tests                          │ │
+│  │  • Entity definitions        │  │  • Integration tests                 │ │
+│  └─────────────────────────────┘  └─────────────────────────────────────┘ │
+└─────────────────────────────────────────────────────────────────────────────┘
+                                      │
+                                      ▼
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                    TEST RUNNER (Validation)                                 │
+│  ┌───────────────────┐  ┌───────────────────┐  ┌───────────────────────┐   │
+│  │  Execute Tests    │  │  Collect Artifacts│  │  Parse Results         │   │
+│  │  • Playwright     │  │  • Screenshots    │  │  • Pass/Fail status   │   │
+│  │  • Cypress        │  │  • Videos         │  │  • Test coverage       │   │
+│  │  • Unit tests     │  │  • Logs           │  │  • Error details       │   │
+│  └───────────────────┘  └───────────────────┘  └───────────────────────┘   │
+└─────────────────────────────────────────────────────────────────────────────┘
+                                      │
+                                      ▼
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                    LOG ANALYZER (Issue Detection)                          │
+│  ┌───────────────────┐  ┌───────────────────┐  ┌───────────────────────┐   │
+│  │  Pattern Matcher  │  │  AI Analyzer      │  │  Hybrid Analysis      │   │
+│  │  • Regex patterns │  │  • Root cause     │  │  • Combine results   │   │
+│  │  • Fast detection │  │  • Suggestions     │  │  • Issue prioritization│   │
+│  └───────────────────┘  └───────────────────┘  └───────────────────────┘   │
+└─────────────────────────────────────────────────────────────────────────────┘
+                                      │
+                          ┌───────────┴───────────┐
+                          ▼                       ▼
+                   ┌─────────────┐         ┌─────────────┐
+                   │    PASS     │         │    FAIL     │
+                   │             │         │             │
+                   │ All tests   │         │ Issues      │
+                   │ pass        │         │ detected    │
+                   │ Logs clean  │         │             │
+                   └─────────────┘         └─────────────┘
+                          │                       │
+                          │                       ▼
+                          │              ┌─────────────────────┐
+                          │              │  Create Fix Task    │
+                          │              │  (via TaskMaster)   │
+                          │              └─────────────────────┘
+                          │                       │
+                          │                       │
+                          ▼                       ▼
+                   ┌─────────────────────────────────────┐
+                   │  STATE MANAGER (Update Status)      │
+                   │  • Mark task as done                │
+                   │  • Save execution history           │
+                   │  • Update workflow state             │
+                   └─────────────────────────────────────┘
+                                      │
+                          ┌───────────┴───────────┐
+                          ▼                       ▼
+                   ┌─────────────┐         ┌─────────────┐
+                   │  Next Task   │         │  Fix Task   │
+                   │  (if any)    │         │  (loop back)│
+                   └─────────────┘         └─────────────┘
+                          │                       │
+                          └───────────┬─────────┘
+                                      │
+                                      ▼
+                          ┌─────────────────────┐
+                          │  Watch Mode?        │
+                          │  • Yes → Loop       │
+                          │  • No → Complete    │
+                          └─────────────────────┘
+                                      │
+                                      ▼
+                          ┌─────────────────────┐
+                          │  PRD 100% COMPLETE  │
+                          │  All features done  │
+                          │  All tests passing  │
+                          └─────────────────────┘
+```
 
 ## Architecture
 
@@ -168,118 +316,6 @@ All providers implement standardized interfaces for pluggability:
    - `detectIssues()`: Identify errors and warnings
    - `suggestFixes()`: Provide remediation recommendations
    - Implementations: PatternMatcher, AILogAnalyzer
-
-### High-Level Workflow
-
-```
-┌─────────────────────────────────────────────────────────────────────────────┐
-│                              PRD (Requirements)                              │
-└─────────────────────────────────────────────────────────────────────────────┘
-                                      │
-                                      ▼
-┌─────────────────────────────────────────────────────────────────────────────┐
-│                         TASK MASTER (Orchestration)                          │
-│  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐        │
-│  │   Task 1    │  │   Task 2    │  │   Task 3    │  │   Task N    │        │
-│  │  Feature A  │  │  Feature B  │  │   Test A    │  │   Test B    │        │
-│  │  + Test A   │  │  + Test B   │  │   Updates   │  │   Updates   │        │
-│  └─────────────┘  └─────────────┘  └─────────────┘  └─────────────┘        │
-└─────────────────────────────────────────────────────────────────────────────┘
-                                      │
-                    ┌─────────────────┼─────────────────┐
-                    ▼                 ▼                 ▼
-        ┌───────────────────┐ ┌───────────────┐ ┌───────────────────┐
-        │    AI AGENT       │ │   AI AGENT    │ │    AI AGENT       │
-        │  (Claude/GPT)     │ │ (Claude/GPT)  │ │  (Claude/GPT)     │
-        │                   │ │               │ │                   │
-        │ Implements:       │ │ Implements:   │ │ Implements:       │
-        │ • Feature code    │ │ • Test code   │ │ • Bug fixes       │
-        │ • Test code       │ │ • Assertions  │ │ • Test updates    │
-        └───────────────────┘ └───────────────┘ └───────────────────┘
-                    │                 │                 │
-                    └─────────────────┼─────────────────┘
-                                      ▼
-┌─────────────────────────────────────────────────────────────────────────────┐
-│                              CODEBASE                                        │
-│  ┌─────────────────────────────┐  ┌─────────────────────────────────────┐  │
-│  │      Feature Code           │  │        Playwright Tests              │  │
-│  │  • Controllers/Services     │  │  • wizard-validation.spec.ts        │  │
-│  │  • Forms/Handlers           │  │  • api-integration.spec.ts          │  │
-│  │  • Entity definitions       │  │  • user-workflow.spec.ts            │  │
-│  └─────────────────────────────┘  └─────────────────────────────────────┘  │
-└─────────────────────────────────────────────────────────────────────────────┘
-                                      │
-                                      ▼
-┌─────────────────────────────────────────────────────────────────────────────┐
-│                         VALIDATION LAYER                                     │
-│  ┌───────────────────┐  ┌───────────────────┐  ┌───────────────────────┐   │
-│  │ PLAYWRIGHT RUNNER │  │  APPLICATION LOGS │  │   SCREENSHOT/VIDEO    │   │
-│  │                   │  │                   │  │                       │   │
-│  │ • Execute tests   │  │ • PHP errors      │  │ • Step-by-step imgs   │   │
-│  │ • Assert results  │  │ • Exceptions      │  │ • Failure captures    │   │
-│  │ • Report pass/fail│  │ • Warnings        │  │ • Debug artifacts     │   │
-│  └───────────────────┘  └───────────────────┘  └───────────────────────┘   │
-└─────────────────────────────────────────────────────────────────────────────┘
-                                      │
-                          ┌───────────┴───────────┐
-                          ▼                       ▼
-                   ┌─────────────┐         ┌─────────────┐
-                   │    PASS     │         │    FAIL     │
-                   │             │         │             │
-                   │ Mark task   │         │ Create new  │
-                   │ as done     │         │ fix tasks   │
-                   └─────────────┘         └─────────────┘
-                          │                       │
-                          │                       │
-                          ▼                       ▼
-                   ┌─────────────┐         ┌─────────────┐
-                   │ Next task   │         │ AI Agent    │
-                   │ in queue    │◄────────│ fixes issue │
-                   └─────────────┘         └─────────────┘
-                          │
-                          ▼
-                   ┌─────────────┐
-                   │ PRD 100%    │
-                   │ COMPLETE    │
-                   └─────────────┘
-```
-
-### Iterative Development Cycle
-
-The key principle is that **features and their tests are developed together**, not sequentially:
-
-```
-┌─────────────────────────────────────────────────────────────────────────────┐
-│                    ITERATIVE DEVELOPMENT CYCLE                               │
-│                                                                              │
-│   ┌──────────┐      ┌──────────┐      ┌──────────┐      ┌──────────┐       │
-│   │  TASK 1  │      │  TASK 2  │      │  TASK 3  │      │  TASK N  │       │
-│   │          │      │          │      │          │      │          │       │
-│   │ Feature  │ ──►  │ Feature  │ ──►  │  Fix     │ ──►  │ Feature  │       │
-│   │    +     │      │    +     │      │  Tests   │      │    +     │       │
-│   │  Tests   │      │  Tests   │      │    +     │      │  Tests   │       │
-│   │          │      │          │      │  Code    │      │          │       │
-│   └────┬─────┘      └────┬─────┘      └────┬─────┘      └────┬─────┘       │
-│        │                 │                 │                 │              │
-│        ▼                 ▼                 ▼                 ▼              │
-│   ┌──────────┐      ┌──────────┐      ┌──────────┐      ┌──────────┐       │
-│   │  RUN     │      │  RUN     │      │  RUN     │      │  RUN     │       │
-│   │  TESTS   │      │  TESTS   │      │  TESTS   │      │  TESTS   │       │
-│   └────┬─────┘      └────┬─────┘      └────┬─────┘      └────┬─────┘       │
-│        │                 │                 │                 │              │
-│        ▼                 ▼                 ▼                 ▼              │
-│   ┌──────────┐      ┌──────────┐      ┌──────────┐      ┌──────────┐       │
-│   │  PASS ✓  │      │  FAIL ✗  │      │  PASS ✓  │      │  PASS ✓  │       │
-│   │          │      │          │      │          │      │          │       │
-│   │  Next    │      │  Create  │      │  Next    │      │  PRD     │       │
-│   │  Task    │      │  Fix     │      │  Task    │      │  Done!   │       │
-│   └──────────┘      │  Task    │      └──────────┘      └──────────┘       │
-│                     └──────────┘                                            │
-│                          │                                                  │
-│                          └──────────► (loops back to fix)                   │
-│                                                                              │
-└─────────────────────────────────────────────────────────────────────────────┘
-```
 
 ### Project Structure
 
@@ -678,11 +714,11 @@ dev-loop watch
 dev-loop status
 ```
 
-## Workflow Steps
+## Workflow Execution
 
-dev-loop automates the following workflow:
+The complete workflow is shown in the [PRD to Feature Lifecycle](#prd-to-feature-lifecycle) diagram above. Here's how to use it:
 
-### Step 1: Parse PRD into Tasks (Features + Tests)
+### Creating Tasks
 
 When creating tasks from the PRD, each feature task should include its test:
 
@@ -696,39 +732,30 @@ Include Playwright test that:
 4. Takes screenshots at each verification point"
 ```
 
-The AI agent then implements **BOTH**:
-- The feature code (e.g., `prepopulateSchemaMappings` function)
-- The test code (e.g., `wizard-validation.spec.ts` additions)
+The AI agent implements **BOTH** the feature code and test code together.
 
-### Step 2: Expand Complex Tasks
+### Expanding Complex Tasks
 
 ```bash
 # Break down into subtasks (both feature and test subtasks)
 task-master expand --id=1
-
-# Result:
-# 1.1 - Implement login form controller
-# 1.2 - Add session management service
-# 1.3 - Create login form validation
-# 1.4 - Write Playwright login success test
-# 1.5 - Write Playwright login failure test
-# 1.6 - Write Playwright session persistence test
 ```
 
-### Step 3: Execute Feature + Test Tasks with AI
+### Running the Workflow
 
-dev-loop automatically:
-1. Gets the next pending task
-2. Sets task status to `in-progress`
-3. Calls AI provider with task context
-4. Applies generated code changes
-5. Runs tests
-6. Analyzes logs
-7. Marks task as done OR creates fix tasks
+The WorkflowEngine automatically handles the complete lifecycle:
+- Fetches pending tasks via TaskMasterBridge
+- Generates code via AI Provider
+- Optionally requires approval via Intervention System
+- Executes tests via Test Runner
+- Analyzes logs via Log Analyzer
+- Updates state via State Manager
+- Creates fix tasks when issues are detected
+- Loops until PRD is 100% complete
 
-### Step 4: Run Tests
+### Manual Testing
 
-Tests are executed automatically, but you can also run manually:
+While dev-loop runs tests automatically, you can also run them manually:
 
 ```bash
 # Run all tests
@@ -740,33 +767,6 @@ npm test -- tests/playwright/login.spec.ts --timeout=300000
 # Run with visible browser for debugging
 npm test -- --headed
 ```
-
-### Step 5: Analyze Results and Iterate
-
-dev-loop automatically:
-- Checks test results
-- Analyzes application logs
-- Creates fix tasks when issues are found
-
-You can also check manually:
-
-```bash
-# Check test results
-ls test-results/*.png
-
-# Check application logs
-ddev exec tail -100 /var/log/drupal.log | grep -E "(Error|Exception)"
-
-# View dev-loop logs
-dev-loop logs
-```
-
-### Step 6: Complete and Move to Next
-
-When tests pass and logs are clean, dev-loop automatically:
-- Marks task as `done`
-- Fetches next pending task
-- Continues until PRD is 100% complete
 
 ## Test Evolution Pattern
 
