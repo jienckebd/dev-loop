@@ -150,14 +150,45 @@ ${prompt}`;
 
         // Try to extract JSON from code block first
         let jsonText: string | null = null;
-        const codeBlockMatch = text.match(/```(?:json)?\s*(\{[\s\S]*?\})\s*```/);
+        
+        // Try code block with json marker
+        const codeBlockMatch = text.match(/```json\s*(\{[\s\S]*?\})\s*```/);
         if (codeBlockMatch) {
           jsonText = codeBlockMatch[1];
-        } else {
-          // Fallback to raw JSON extraction
-          const jsonMatch = text.match(/\{[\s\S]*\}/);
-          if (jsonMatch) {
-            jsonText = jsonMatch[0];
+        }
+        
+        // Try code block without json marker
+        if (!jsonText) {
+          const plainBlockMatch = text.match(/```\s*(\{[\s\S]*?"files"[\s\S]*?\})\s*```/);
+          if (plainBlockMatch) {
+            jsonText = plainBlockMatch[1];
+          }
+        }
+        
+        // Try to find JSON object with "files" key (our expected format)
+        if (!jsonText) {
+          const filesJsonMatch = text.match(/\{\s*"files"\s*:\s*\[[\s\S]*?\]\s*,\s*"summary"\s*:\s*"[^"]*"\s*\}/);
+          if (filesJsonMatch) {
+            jsonText = filesJsonMatch[0];
+          }
+        }
+        
+        // Fallback to finding any JSON object that starts with {"files":
+        if (!jsonText) {
+          const startIndex = text.indexOf('{"files":');
+          if (startIndex !== -1) {
+            // Find the matching closing brace
+            let depth = 0;
+            let endIndex = startIndex;
+            for (let i = startIndex; i < text.length; i++) {
+              if (text[i] === '{') depth++;
+              if (text[i] === '}') depth--;
+              if (depth === 0) {
+                endIndex = i + 1;
+                break;
+              }
+            }
+            jsonText = text.substring(startIndex, endIndex);
           }
         }
 
