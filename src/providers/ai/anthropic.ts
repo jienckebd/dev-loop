@@ -52,34 +52,15 @@ export class AnthropicProvider implements AIProvider {
   }
 
   private extractKeyRules(content: string): string {
-    // Extract the most critical rules for Drupal development
-    // This is a condensed version to stay within token limits
+    // Return ONLY the absolute minimum rules to reduce token usage
+    // The full .cursorrules is way too large (200k+ tokens)
     return `
-PROJECT RULES (from .cursorrules):
-
-CRITICAL - DO NOT VIOLATE:
-1. NEVER create custom PHP entity classes - use bd.entity_type.*.yml config files instead
-2. NEVER build custom Form API forms - use config_schema_subform with schema definitions
-3. NEVER modify Drupal core or contrib - all changes in docroot/modules/share/
-4. All plugins MUST extend Drupal\\bd\\Plugin\\EntityPluginBase
-5. Define plugin config in bd.schema.yml as: plugin.plugin_configuration.{plugin_type}.{plugin_id}
-
-MODULE RESPONSIBILITIES:
-- bd/ = Core framework: entity types, plugins, schema, services
-- design_system/ = UI/UX: layout builder, display config, theming
-- entity_form_wizard/ = Multi-step form workflows
-- openapi_entity/ = OpenAPI schema to entity generation
-- spapp/ = AJAX navigation, SPA features
-
-COMMANDS (via DDEV):
-- Cache clear: ddev exec bash -c "drush cr"
-- All drush: ddev exec bash -c "drush <command>"
-
-BEFORE WRITING CODE:
-- Search for existing implementations first
-- Check bd.schema.yml for existing schema types
-- Extend existing base classes, don't duplicate
-- Prefer configuration over PHP code
+CRITICAL PROJECT RULES:
+1. NEVER create custom PHP entity classes - use bd.entity_type.*.yml config
+2. NEVER build custom Form API forms - use config_schema_subform  
+3. All changes in docroot/modules/share/ only
+4. Plugins extend Drupal\\bd\\Plugin\\EntityPluginBase
+5. Commands via DDEV: ddev exec bash -c "drush <command>"
 `;
   }
 
