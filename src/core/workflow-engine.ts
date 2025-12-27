@@ -587,9 +587,14 @@ export class WorkflowEngine {
     const lines = content.split('\n');
     const sections: string[] = [];
     const seenRanges: Set<string> = new Set();
+    const maxSections = 5; // Limit number of sections to prevent massive context
+    const maxTotalChars = 10000; // Limit total chars from this file
+    let totalChars = 0;
 
     // First, handle LINE: markers
     for (const keyword of keywords) {
+      if (sections.length >= maxSections || totalChars >= maxTotalChars) break;
+      
       if (keyword.startsWith('LINE:')) {
         const lineNum = parseInt(keyword.replace('LINE:', ''), 10);
         if (!isNaN(lineNum) && lineNum > 0 && lineNum <= lines.length) {
@@ -599,7 +604,9 @@ export class WorkflowEngine {
           if (!seenRanges.has(rangeKey)) {
             seenRanges.add(rangeKey);
             const section = lines.slice(start, end).map((l, i) => `${start + i + 1}|${l}`).join('\n');
-            sections.push(`\n// LINES ${start + 1}-${end} (around line ${lineNum}):\n${section}`);
+            const sectionText = `\n// LINES ${start + 1}-${end} (around line ${lineNum}):\n${section}`;
+            sections.push(sectionText);
+            totalChars += sectionText.length;
           }
         }
       }
@@ -608,9 +615,13 @@ export class WorkflowEngine {
     // Search for keyword occurrences in the file
     const keywordPatterns = keywords.filter(k => !k.startsWith('LINE:'));
     for (const keyword of keywordPatterns) {
+      if (sections.length >= maxSections || totalChars >= maxTotalChars) break;
+      
       try {
         const regex = new RegExp(keyword, 'gi');
         for (let i = 0; i < lines.length; i++) {
+          if (sections.length >= maxSections || totalChars >= maxTotalChars) break;
+          
           if (regex.test(lines[i])) {
             const start = Math.max(0, i - 10);
             const end = Math.min(lines.length, i + 15);
@@ -618,7 +629,9 @@ export class WorkflowEngine {
             if (!seenRanges.has(rangeKey)) {
               seenRanges.add(rangeKey);
               const section = lines.slice(start, end).map((l, idx) => `${start + idx + 1}|${l}`).join('\n');
-              sections.push(`\n// LINES ${start + 1}-${end} (found "${keyword}"):\n${section}`);
+              const sectionText = `\n// LINES ${start + 1}-${end} (found "${keyword}"):\n${section}`;
+              sections.push(sectionText);
+              totalChars += sectionText.length;
             }
             // Reset regex lastIndex
             regex.lastIndex = 0;
@@ -630,7 +643,11 @@ export class WorkflowEngine {
     }
 
     if (sections.length > 0) {
-      return `FILE: ${filePath}\nTotal lines: ${lines.length}\n\n${sections.join('\n\n---\n')}`;
+      const result = `FILE: ${filePath}\nTotal lines: ${lines.length}\n\n${sections.join('\n\n---\n')}`;
+      if (result.length > maxTotalChars) {
+        return result.substring(0, maxTotalChars) + '\n\n... (section limit reached) ...';
+      }
+      return result;
     }
 
     return null;
