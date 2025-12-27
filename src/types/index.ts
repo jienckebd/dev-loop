@@ -1,4 +1,4 @@
-export type TaskStatus = 'pending' | 'in-progress' | 'done';
+export type TaskStatus = 'pending' | 'in-progress' | 'done' | 'blocked';
 
 export type InterventionMode = 'autonomous' | 'review' | 'hybrid';
 
@@ -13,7 +13,7 @@ export interface Task {
   title: string;
   description: string;
   status: TaskStatus;
-  priority: 'high' | 'medium' | 'low';
+  priority: 'critical' | 'high' | 'medium' | 'low';
   dependencies?: string[];
   details?: string;
   subtasks?: Task[];

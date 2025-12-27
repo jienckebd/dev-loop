@@ -8,6 +8,8 @@ export class AnthropicProvider implements AIProvider {
   public name = 'anthropic';
   private client: Anthropic;
   private cursorRules: string | null = null;
+  private maxRetries = 3;
+  private baseDelay = 60000; // 60 seconds base delay for rate limits
 
   constructor(private config: AIProviderConfig) {
     if (!config.apiKey) {
@@ -19,6 +21,20 @@ export class AnthropicProvider implements AIProvider {
     if (config.cursorRulesPath) {
       this.loadCursorRules(config.cursorRulesPath);
     }
+  }
+
+  /**
+   * Sleep for specified milliseconds
+   */
+  private sleep(ms: number): Promise<void> {
+    return new Promise(resolve => setTimeout(resolve, ms));
+  }
+
+  /**
+   * Check if error is a rate limit error
+   */
+  private isRateLimitError(error: Error): boolean {
+    return error.message.includes('429') || error.message.includes('rate_limit');
   }
 
   private loadCursorRules(rulesPath: string): void {
@@ -130,21 +146,24 @@ ${prompt}`;
     // Use higher token limit for PHP/Drupal files
     const maxTokens = isDrupalTask ? (this.config.maxTokens || 16000) : (this.config.maxTokens || 4000);
 
-    try {
-      const response = await this.client.messages.create({
-        model: this.config.model,
-        max_tokens: maxTokens,
-        temperature: this.config.temperature || 0.7,
-        system: systemPrompt,
-        messages: [
-          {
-            role: 'user',
-            content: userPrompt,
-          },
-        ],
-      });
+    // Retry loop for rate limit errors
+    let lastError: Error | null = null;
+    for (let attempt = 0; attempt < this.maxRetries; attempt++) {
+      try {
+        const response = await this.client.messages.create({
+          model: this.config.model,
+          max_tokens: maxTokens,
+          temperature: this.config.temperature || 0.7,
+          system: systemPrompt,
+          messages: [
+            {
+              role: 'user',
+              content: userPrompt,
+            },
+          ],
+        });
 
-      const content = response.content[0];
+        const content = response.content[0];
       if (content.type === 'text') {
         const text = content.text;
 
@@ -218,10 +237,25 @@ ${prompt}`;
         };
       }
 
-      throw new Error('Unexpected response format from Anthropic API');
-    } catch (error) {
-      throw new Error(`Anthropic API error: ${error instanceof Error ? error.message : String(error)}`);
+        throw new Error('Unexpected response format from Anthropic API');
+      } catch (error) {
+        lastError = error instanceof Error ? error : new Error(String(error));
+        
+        // Check if this is a rate limit error
+        if (this.isRateLimitError(lastError)) {
+          const delay = this.baseDelay * Math.pow(2, attempt); // Exponential backoff
+          console.log(`[Anthropic] Rate limited (attempt ${attempt + 1}/${this.maxRetries}), waiting ${delay / 1000}s...`);
+          await this.sleep(delay);
+          continue; // Retry
+        }
+        
+        // For non-rate-limit errors, throw immediately
+        throw new Error(`Anthropic API error: ${lastError.message}`);
+      }
     }
+    
+    // All retries exhausted
+    throw new Error(`Anthropic API rate limit exceeded after ${this.maxRetries} retries: ${lastError?.message}`);
   }
 
   async analyzeError(error: string, context: TaskContext): Promise<LogAnalysis> {
