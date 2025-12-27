@@ -160,7 +160,7 @@ export class WorkflowEngine {
       if (hasErrors) {
         // Create fix task
         await this.updateState({ status: 'creating-fix-task' });
-        
+
         // Build comprehensive error description including log errors
         let errorDescription = '';
         if (!testResult.success) {
@@ -235,7 +235,7 @@ export class WorkflowEngine {
         if (await fs.pathExists(filePath)) {
           let content = await fs.readFile(filePath, 'utf-8');
           let patchesApplied = 0;
-          
+
           for (const patch of file.patches) {
             if (content.includes(patch.search)) {
               content = content.replace(patch.search, patch.replace);
@@ -245,7 +245,7 @@ export class WorkflowEngine {
               console.warn(`[WorkflowEngine] Patch search string not found in ${file.path}:`, patch.search.substring(0, 100));
             }
           }
-          
+
           if (patchesApplied > 0) {
             await fs.writeFile(filePath, content, 'utf-8');
             console.log(`[WorkflowEngine] Applied ${patchesApplied}/${file.patches.length} patches to ${file.path}`);
@@ -258,15 +258,28 @@ export class WorkflowEngine {
         await fs.writeFile(filePath, file.content || '', 'utf-8');
       }
 
-      // Validate PHP syntax if it's a PHP file
-      if (filePath.endsWith('.php') && await fs.pathExists(filePath)) {
-        try {
-          await execAsync(`php -l "${filePath}"`);
-        } catch (error) {
-          console.warn(`PHP syntax check failed for ${filePath}:`, error);
-          // Don't fail - let Drupal handle validation
-        }
+      // Validate syntax for supported languages
+      await this.validateFileSyntax(filePath);
+    }
+  }
+
+  /**
+   * Validate file syntax for supported languages
+   */
+  private async validateFileSyntax(filePath: string): Promise<void> {
+    if (!await fs.pathExists(filePath)) return;
+
+    try {
+      if (filePath.endsWith('.php')) {
+        await execAsync(`php -l "${filePath}"`);
+      } else if (filePath.endsWith('.json')) {
+        const content = await fs.readFile(filePath, 'utf-8');
+        JSON.parse(content);
       }
+      // Add more language validators as needed
+    } catch (error) {
+      console.warn(`Syntax check failed for ${filePath}:`, error instanceof Error ? error.message : String(error));
+      // Don't fail - let the framework handle validation
     }
   }
 
@@ -278,46 +291,50 @@ export class WorkflowEngine {
     const taskText = `${task.title} ${task.description} ${task.details || ''}`;
     const mentionedFiles: string[] = [];
 
-    // Pattern 1: Explicit file paths (docroot/modules/...)
-    const docRootPattern = /(docroot\/[^\s,\)]+\.(php|module|yml|yaml|inc))/gi;
+    // Get codebase config with defaults
+    const codebaseConfig = this.config.codebase || {};
+    const extensions = codebaseConfig.extensions || ['php', 'ts', 'js', 'py', 'yml', 'yaml', 'json'];
+    const searchDirs = codebaseConfig.searchDirs || ['src', 'lib', 'app'];
+    const excludeDirs = codebaseConfig.excludeDirs || ['node_modules', 'vendor', '.git', 'dist', 'build'];
+    const filePathPatterns = codebaseConfig.filePathPatterns || [];
+
+    // Pattern 1: Extract explicit file paths from task text
+    // Generic pattern that matches common path formats
+    const genericPathPattern = new RegExp(
+      `([\\w./\\-]+\\.(${extensions.join('|')}))`,
+      'gi'
+    );
     let match;
-    while ((match = docRootPattern.exec(taskText)) !== null) {
-      if (!mentionedFiles.includes(match[1])) {
-        mentionedFiles.push(match[1]);
-      }
-    }
-
-    // Pattern 2: Module names mentioned (EntityFormService, prepopulateSchemaMappings, etc.)
-    // Map common class/method names to files
-    const classToFileMap: Record<string, string> = {
-      'EntityFormService': 'docroot/modules/share/openapi_entity/src/Service/EntityFormService.php',
-      'prepopulateSchemaMappings': 'docroot/modules/share/openapi_entity/src/Service/EntityFormService.php',
-      'ensureFeedTypesForAllBundles': 'docroot/modules/share/openapi_entity/src/Service/EntityFormService.php',
-      'ensureWebhooksForAllBundles': 'docroot/modules/share/openapi_entity/src/Service/EntityFormService.php',
-      'populateSummaryFields': 'docroot/modules/share/openapi_entity/src/Service/EntityFormService.php',
-      'FormAlterService': 'docroot/modules/share/openapi_entity/src/Service/FormAlterService.php',
-      'openapi_entity.module': 'docroot/modules/share/openapi_entity/openapi_entity.module',
-      'hook_wizard_step_post_save': 'docroot/modules/share/openapi_entity/openapi_entity.module',
-      'ApiSpecProcessor': 'docroot/modules/share/openapi_entity/src/Service/ApiSpecProcessor.php',
-      'WizardStepProcessor': 'docroot/modules/share/openapi_entity/src/Service/WizardStepProcessor.php',
-      'EntityBundleFieldFeedService': 'docroot/modules/share/openapi_entity/src/Service/EntityBundleFieldFeedService.php',
-      'openapi_entity.services.yml': 'docroot/modules/share/openapi_entity/openapi_entity.services.yml',
-      'services.yml': 'docroot/modules/share/openapi_entity/openapi_entity.services.yml',
-    };
-
-    for (const [className, filePath] of Object.entries(classToFileMap)) {
-      if (taskText.includes(className) && !mentionedFiles.includes(filePath)) {
+    while ((match = genericPathPattern.exec(taskText)) !== null) {
+      const filePath = match[1];
+      // Only add if it looks like a path (contains / or is a simple filename)
+      if ((filePath.includes('/') || filePath.includes('.')) && !mentionedFiles.includes(filePath)) {
         mentionedFiles.push(filePath);
       }
     }
 
-    // Pattern 3: Module name extraction (e.g., "openapi_entity module")
-    const modulePattern = /(\w+)(?:\.module|\s+module)/gi;
-    while ((match = modulePattern.exec(taskText)) !== null) {
-      const moduleName = match[1].toLowerCase();
-      const moduleFile = `docroot/modules/share/${moduleName}/${moduleName}.module`;
-      if (!mentionedFiles.includes(moduleFile)) {
-        mentionedFiles.push(moduleFile);
+    // Pattern 2: Apply custom file path patterns from config
+    for (const pattern of filePathPatterns) {
+      try {
+        const regex = new RegExp(pattern, 'gi');
+        while ((match = regex.exec(taskText)) !== null) {
+          if (match[1] && !mentionedFiles.includes(match[1])) {
+            mentionedFiles.push(match[1]);
+          }
+        }
+      } catch {
+        console.warn(`[WorkflowEngine] Invalid file path pattern: ${pattern}`);
+      }
+    }
+
+    // Pattern 3: Dynamic class/function discovery via grep/ripgrep
+    const identifiers = this.extractIdentifiersFromTask(taskText);
+    if (identifiers.length > 0) {
+      const discoveredFiles = await this.discoverFilesForIdentifiers(identifiers, searchDirs, excludeDirs, extensions);
+      for (const file of discoveredFiles) {
+        if (!mentionedFiles.includes(file)) {
+          mentionedFiles.push(file);
+        }
       }
     }
 
@@ -325,20 +342,19 @@ export class WorkflowEngine {
     const existingCodeSections: string[] = [];
     const validFiles: string[] = [];
 
-    // Load mentioned PHP files
+    // Load mentioned files
     for (const file of mentionedFiles) {
       const filePath = path.resolve(process.cwd(), file);
       if (await fs.pathExists(filePath)) {
         try {
           const content = await fs.readFile(filePath, 'utf-8');
           validFiles.push(file);
-          
+
           // For large files, extract relevant sections based on task keywords
           if (content.length > 15000) {
-            // Extract keywords to search for from task
             const keywords = this.extractKeywordsFromTask(task);
             const relevantSections = this.extractRelevantSections(content, keywords, file);
-            
+
             if (relevantSections) {
               contexts.push(`\n### EXISTING FILE: ${file} (relevant sections)\n${relevantSections}`);
               existingCodeSections.push(`\n### ${file} (relevant sections):\n${relevantSections}`);
@@ -362,11 +378,99 @@ export class WorkflowEngine {
 
     return {
       codebaseContext: contexts.length > 0
-        ? `## Existing Code Files (MODIFY THESE, DO NOT CREATE NEW MODULES)\n${contexts.join('\n---\n')}`
+        ? `## Existing Code Files (MODIFY THESE, DO NOT CREATE NEW FILES UNLESS NECESSARY)\n${contexts.join('\n---\n')}`
         : '',
       targetFiles: validFiles.length > 0 ? validFiles.join('\n') : undefined,
       existingCode: existingCodeSections.length > 0 ? existingCodeSections.join('\n---\n') : undefined,
     };
+  }
+
+  /**
+   * Extract potential class/function/method identifiers from task text
+   */
+  private extractIdentifiersFromTask(taskText: string): string[] {
+    const identifiers: string[] = [];
+
+    // Match PascalCase identifiers (class names)
+    const pascalCasePattern = /\b([A-Z][a-zA-Z0-9]+(?:Service|Controller|Manager|Handler|Provider|Factory|Helper|Processor|Builder|Interface|Base|Abstract)?)\b/g;
+    let match;
+    while ((match = pascalCasePattern.exec(taskText)) !== null) {
+      const identifier = match[1];
+      // Filter out common words that happen to be PascalCase
+      const commonWords = ['The', 'This', 'That', 'These', 'Those', 'When', 'Where', 'What', 'Which', 'How', 'Why'];
+      if (!commonWords.includes(identifier) && !identifiers.includes(identifier)) {
+        identifiers.push(identifier);
+      }
+    }
+
+    // Match camelCase function/method names that are likely to be significant
+    const camelCasePattern = /\b((?:get|set|create|update|delete|process|handle|build|validate|ensure|populate|alter|transform)[A-Z][a-zA-Z0-9]*)\b/g;
+    while ((match = camelCasePattern.exec(taskText)) !== null) {
+      if (!identifiers.includes(match[1])) {
+        identifiers.push(match[1]);
+      }
+    }
+
+    // Match snake_case function names (common in Python, PHP hooks, etc.)
+    const snakeCasePattern = /\b((?:hook_|_)[a-z][a-z0-9_]+)\b/g;
+    while ((match = snakeCasePattern.exec(taskText)) !== null) {
+      if (!identifiers.includes(match[1])) {
+        identifiers.push(match[1]);
+      }
+    }
+
+    return identifiers;
+  }
+
+  /**
+   * Discover files containing identifier definitions using grep/ripgrep
+   */
+  private async discoverFilesForIdentifiers(
+    identifiers: string[],
+    searchDirs: string[],
+    excludeDirs: string[],
+    extensions: string[]
+  ): Promise<string[]> {
+    const discoveredFiles: string[] = [];
+
+    // Build exclude pattern for grep
+    const excludePattern = excludeDirs.map(d => `--exclude-dir=${d}`).join(' ');
+    const includePattern = extensions.map(e => `--include=*.${e}`).join(' ');
+
+    for (const identifier of identifiers.slice(0, 10)) { // Limit to first 10 identifiers
+      try {
+        // Try ripgrep first (faster), fall back to grep
+        let command: string;
+        const searchPath = searchDirs.filter(d => fs.existsSync(path.resolve(process.cwd(), d))).join(' ') || '.';
+
+        // Check if ripgrep is available
+        try {
+          await execAsync('which rg');
+          // Ripgrep command
+          const rgExclude = excludeDirs.map(d => `--glob=!${d}`).join(' ');
+          const rgInclude = extensions.map(e => `--glob=*.${e}`).join(' ');
+          command = `rg -l "${identifier}" ${rgExclude} ${rgInclude} ${searchPath} 2>/dev/null || true`;
+        } catch {
+          // Fall back to grep
+          command = `grep -rl "${identifier}" ${excludePattern} ${includePattern} ${searchPath} 2>/dev/null || true`;
+        }
+
+        const { stdout } = await execAsync(command, { maxBuffer: 1024 * 1024 });
+        const files = stdout.trim().split('\n').filter(f => f.length > 0);
+
+        // Limit files per identifier to avoid overwhelming context
+        for (const file of files.slice(0, 3)) {
+          if (!discoveredFiles.includes(file)) {
+            discoveredFiles.push(file);
+          }
+        }
+      } catch {
+        // Ignore grep errors
+      }
+    }
+
+    // Limit total discovered files
+    return discoveredFiles.slice(0, 10);
   }
 
   private async executePreTestHooks(): Promise<void> {
@@ -428,30 +532,19 @@ export class WorkflowEngine {
   private extractKeywordsFromTask(task: Task): string[] {
     const text = `${task.title} ${task.description} ${task.details || ''}`;
     const keywords: string[] = [];
-    
-    // Extract method/function names
-    const methodPattern = /(?:method|function|ensureFeedTypesForAllBundles|ensureWebhooksForAllBundles|prepopulateSchemaMappings|alterApiSpecForm)\b/gi;
-    let match;
-    while ((match = methodPattern.exec(text)) !== null) {
-      keywords.push(match[0]);
-    }
-    
-    // Extract specific search terms from details
-    const searchTerms = ['standalone', 'processor', 'entity_type_id', 'feeds_item'];
-    for (const term of searchTerms) {
-      if (text.toLowerCase().includes(term.toLowerCase())) {
-        keywords.push(term);
-      }
-    }
-    
-    // Add common patterns
+
+    // Extract identifiers (class names, method names)
+    const identifiers = this.extractIdentifiersFromTask(text);
+    keywords.push(...identifiers);
+
+    // Add line number markers if present
     if (text.includes('Line') || text.includes('line')) {
       const lineMatch = text.match(/[Ll]ine\s*(\d+)/);
       if (lineMatch) {
         keywords.push(`LINE:${lineMatch[1]}`);
       }
     }
-    
+
     return keywords;
   }
 
@@ -462,7 +555,7 @@ export class WorkflowEngine {
     const lines = content.split('\n');
     const sections: string[] = [];
     const seenRanges: Set<string> = new Set();
-    
+
     // First, handle LINE: markers
     for (const keyword of keywords) {
       if (keyword.startsWith('LINE:')) {
@@ -479,32 +572,35 @@ export class WorkflowEngine {
         }
       }
     }
-    
+
     // Search for keyword occurrences in the file
     const keywordPatterns = keywords.filter(k => !k.startsWith('LINE:'));
     for (const keyword of keywordPatterns) {
-      const regex = new RegExp(keyword, 'gi');
-      for (let i = 0; i < lines.length; i++) {
-        if (regex.test(lines[i])) {
-          const start = Math.max(0, i - 10);
-          const end = Math.min(lines.length, i + 15);
-          const rangeKey = `${start}-${end}`;
-          if (!seenRanges.has(rangeKey)) {
-            seenRanges.add(rangeKey);
-            const section = lines.slice(start, end).map((l, idx) => `${start + idx + 1}|${l}`).join('\n');
-            sections.push(`\n// LINES ${start + 1}-${end} (found "${keyword}"):\n${section}`);
+      try {
+        const regex = new RegExp(keyword, 'gi');
+        for (let i = 0; i < lines.length; i++) {
+          if (regex.test(lines[i])) {
+            const start = Math.max(0, i - 10);
+            const end = Math.min(lines.length, i + 15);
+            const rangeKey = `${start}-${end}`;
+            if (!seenRanges.has(rangeKey)) {
+              seenRanges.add(rangeKey);
+              const section = lines.slice(start, end).map((l, idx) => `${start + idx + 1}|${l}`).join('\n');
+              sections.push(`\n// LINES ${start + 1}-${end} (found "${keyword}"):\n${section}`);
+            }
+            // Reset regex lastIndex
+            regex.lastIndex = 0;
           }
-          // Reset regex lastIndex
-          regex.lastIndex = 0;
         }
+      } catch {
+        // Invalid regex, skip
       }
     }
-    
+
     if (sections.length > 0) {
       return `FILE: ${filePath}\nTotal lines: ${lines.length}\n\n${sections.join('\n\n---\n')}`;
     }
-    
+
     return null;
   }
 }
-

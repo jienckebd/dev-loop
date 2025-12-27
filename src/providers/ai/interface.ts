@@ -11,5 +11,6 @@ export interface AIProviderConfig {
   model: string;
   temperature?: number;
   maxTokens?: number;
+  // Path to cursor rules file to inject into prompts
+  cursorRulesPath?: string;
 }
-

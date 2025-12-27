@@ -12,6 +12,8 @@ export class AIProviderFactory {
       model: config.ai.model,
       temperature: 0.7,
       maxTokens: 4000,
+      // Pass cursor rules path from config
+      cursorRulesPath: config.rules?.cursorRulesPath,
     };
 
     switch (config.ai.provider) {
@@ -66,4 +68,3 @@ export class AIProviderFactory {
     }
   }
 }
-

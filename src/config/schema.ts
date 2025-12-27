@@ -43,6 +43,21 @@ const configSchema = z.object({
     postTest: z.array(z.string()).optional(),
     postApply: z.array(z.string()).optional(),
   }).optional(),
+  // Cursor rules configuration for injecting project rules into AI prompts
+  rules: z.object({
+    cursorRulesPath: z.string().optional(),
+  }).optional(),
+  // Codebase configuration for dynamic file discovery
+  codebase: z.object({
+    // File extensions to search for when discovering files
+    extensions: z.array(z.string()).optional(),
+    // Directories to search in (relative to project root)
+    searchDirs: z.array(z.string()).optional(),
+    // Directories to exclude from search
+    excludeDirs: z.array(z.string()).optional(),
+    // File path patterns to extract from task text (regex patterns)
+    filePathPatterns: z.array(z.string()).optional(),
+  }).optional(),
 });
 
 export type Config = z.infer<typeof configSchema>;
@@ -50,4 +65,3 @@ export type Config = z.infer<typeof configSchema>;
 export function validateConfig(data: unknown): Config {
   return configSchema.parse(data);
 }
-

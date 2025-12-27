@@ -1,16 +1,70 @@
 import Anthropic from '@anthropic-ai/sdk';
+import * as fs from 'fs-extra';
+import * as path from 'path';
 import { AIProvider, AIProviderConfig } from './interface';
 import { CodeChanges, TaskContext, LogAnalysis } from '../../types';
 
 export class AnthropicProvider implements AIProvider {
   public name = 'anthropic';
   private client: Anthropic;
+  private cursorRules: string | null = null;
 
   constructor(private config: AIProviderConfig) {
     if (!config.apiKey) {
       throw new Error('Anthropic API key is required');
     }
     this.client = new Anthropic({ apiKey: config.apiKey });
+
+    // Load cursor rules if path is provided
+    if (config.cursorRulesPath) {
+      this.loadCursorRules(config.cursorRulesPath);
+    }
+  }
+
+  private loadCursorRules(rulesPath: string): void {
+    try {
+      const fullPath = path.resolve(process.cwd(), rulesPath);
+      if (fs.existsSync(fullPath)) {
+        const content = fs.readFileSync(fullPath, 'utf-8');
+        // Extract key rules for injection (condensed version)
+        this.cursorRules = this.extractKeyRules(content);
+        console.log('[Anthropic] Loaded cursor rules from:', rulesPath);
+      }
+    } catch (error) {
+      console.warn('[Anthropic] Failed to load cursor rules:', error instanceof Error ? error.message : String(error));
+    }
+  }
+
+  private extractKeyRules(content: string): string {
+    // Extract the most critical rules for Drupal development
+    // This is a condensed version to stay within token limits
+    return `
+PROJECT RULES (from .cursorrules):
+
+CRITICAL - DO NOT VIOLATE:
+1. NEVER create custom PHP entity classes - use bd.entity_type.*.yml config files instead
+2. NEVER build custom Form API forms - use config_schema_subform with schema definitions
+3. NEVER modify Drupal core or contrib - all changes in docroot/modules/share/
+4. All plugins MUST extend Drupal\\bd\\Plugin\\EntityPluginBase
+5. Define plugin config in bd.schema.yml as: plugin.plugin_configuration.{plugin_type}.{plugin_id}
+
+MODULE RESPONSIBILITIES:
+- bd/ = Core framework: entity types, plugins, schema, services
+- design_system/ = UI/UX: layout builder, display config, theming
+- entity_form_wizard/ = Multi-step form workflows
+- openapi_entity/ = OpenAPI schema to entity generation
+- spapp/ = AJAX navigation, SPA features
+
+COMMANDS (via DDEV):
+- Cache clear: ddev exec bash -c "drush cr"
+- All drush: ddev exec bash -c "drush <command>"
+
+BEFORE WRITING CODE:
+- Search for existing implementations first
+- Check bd.schema.yml for existing schema types
+- Extend existing base classes, don't duplicate
+- Prefer configuration over PHP code
+`;
   }
 
   async generateCode(prompt: string, context: TaskContext): Promise<CodeChanges> {
@@ -22,31 +76,37 @@ export class AnthropicProvider implements AIProvider {
                          prompt.includes('EntityFormService') ||
                          prompt.includes('WizardStepProcessor');
 
-    const systemPrompt = isDrupalTask
-      ? `You are an expert Drupal developer. Generate PHP code changes following Drupal coding standards.
+    // Build system prompt with cursor rules for Drupal tasks
+    let systemPrompt: string;
 
+    if (isDrupalTask) {
+      const rulesSection = this.cursorRules ? `\n${this.cursorRules}\n` : '';
+
+      systemPrompt = `You are an expert Drupal developer. Generate PHP code changes following Drupal coding standards.
+${rulesSection}
 CRITICAL RULES:
 1. MODIFY EXISTING FILES - Do NOT create new modules. The codebase context shows existing files that need to be modified.
 2. When you see "### EXISTING FILE:" in the context, you MUST use that exact file path with operation "update"
 3. Never create new .info.yml or .module files if they already exist
 4. Use dependency injection via services.yml
 5. Follow hook naming: {module}_{hook}()
-6. Use \Drupal::logger('{module}') for logging
+6. Use \\Drupal::logger('{module}') for logging
 
 Return your response as a JSON object with this structure:
 {
   "files": [
     {
       "path": "exact/path/from/context/file.php",
-      "content": "<?php\n\n// Complete modified file content...",
+      "content": "<?php\\n\\n// Complete modified file content...",
       "operation": "update"
     }
   ],
   "summary": "Brief summary of changes"
 }
 
-IMPORTANT: The "content" field must contain the COMPLETE file content, not just the changed parts.`
-      : `You are an expert software developer. Generate code changes based on the task description.
+IMPORTANT: The "content" field must contain the COMPLETE file content, not just the changed parts.`;
+    } else {
+      systemPrompt = `You are an expert software developer. Generate code changes based on the task description.
 Include both feature implementation and test code together. Return your response as a JSON object with this structure:
 {
   "files": [
@@ -58,6 +118,7 @@ Include both feature implementation and test code together. Return your response
   ],
   "summary": "Brief summary of changes"
 }`;
+    }
 
     const userPrompt = `Task: ${context.task.title}
 Description: ${context.task.description}
@@ -106,12 +167,12 @@ ${prompt}`;
             return parsed as CodeChanges;
           } catch (parseError) {
             console.warn('[Anthropic] JSON parse failed, using fallback:', parseError instanceof Error ? parseError.message : String(parseError));
-            
+
             // Try to extract file path and content from truncated JSON
             // Look for "path": "..." and "content": "..."
             const pathMatch = jsonText.match(/"path"\s*:\s*"([^"]+)"/);
             const contentMatch = text.match(/"content"\s*:\s*"([\s\S]*?)(?:"\s*,\s*"operation"|"\s*}\s*]\s*}|$)/);
-            
+
             if (pathMatch && pathMatch[1].endsWith('.php')) {
               // Extract PHP code from the content field
               let phpContent = '';
@@ -123,7 +184,7 @@ ${prompt}`;
                   .replace(/\\"/g, '"')
                   .replace(/\\\\/g, '\\');
               }
-              
+
               if (phpContent.includes('<?php')) {
                 console.log('[Anthropic] Extracted PHP content from truncated JSON for:', pathMatch[1]);
                 return {
@@ -218,4 +279,3 @@ Provide a JSON response with:
     }
   }
 }
-
