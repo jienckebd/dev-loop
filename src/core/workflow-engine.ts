@@ -160,9 +160,20 @@ export class WorkflowEngine {
       if (hasErrors) {
         // Create fix task
         await this.updateState({ status: 'creating-fix-task' });
-        const errorDescription = testResult.success
-          ? logAnalysis?.summary || 'Log analysis found errors'
-          : testResult.output;
+        
+        // Build comprehensive error description including log errors
+        let errorDescription = '';
+        if (!testResult.success) {
+          errorDescription = testResult.output;
+        }
+        if (logAnalysis && logAnalysis.errors.length > 0) {
+          // Include actual log errors for AI context
+          const logErrors = logAnalysis.errors.slice(0, 10).join('\n');
+          errorDescription += '\n\nLog Errors:\n' + logErrors;
+        }
+        if (!errorDescription) {
+          errorDescription = logAnalysis?.summary || 'Log analysis found errors';
+        }
 
         await this.taskBridge.createFixTask(
           task.id,
@@ -219,18 +230,41 @@ export class WorkflowEngine {
         if (await fs.pathExists(filePath)) {
           await fs.remove(filePath);
         }
+      } else if (file.operation === 'patch' && file.patches) {
+        // Apply search/replace patches to existing file
+        if (await fs.pathExists(filePath)) {
+          let content = await fs.readFile(filePath, 'utf-8');
+          let patchesApplied = 0;
+          
+          for (const patch of file.patches) {
+            if (content.includes(patch.search)) {
+              content = content.replace(patch.search, patch.replace);
+              patchesApplied++;
+              console.log(`[WorkflowEngine] Applied patch ${patchesApplied} to ${file.path}`);
+            } else {
+              console.warn(`[WorkflowEngine] Patch search string not found in ${file.path}:`, patch.search.substring(0, 100));
+            }
+          }
+          
+          if (patchesApplied > 0) {
+            await fs.writeFile(filePath, content, 'utf-8');
+            console.log(`[WorkflowEngine] Applied ${patchesApplied}/${file.patches.length} patches to ${file.path}`);
+          }
+        } else {
+          console.warn(`[WorkflowEngine] Cannot patch non-existent file: ${file.path}`);
+        }
       } else if (file.operation === 'create' || file.operation === 'update') {
         await fs.ensureDir(path.dirname(filePath));
-        await fs.writeFile(filePath, file.content, 'utf-8');
+        await fs.writeFile(filePath, file.content || '', 'utf-8');
+      }
 
-        // Validate PHP syntax if it's a PHP file
-        if (filePath.endsWith('.php')) {
-          try {
-            await execAsync(`php -l "${filePath}"`);
-          } catch (error) {
-            console.warn(`PHP syntax check failed for ${filePath}:`, error);
-            // Don't fail - let Drupal handle validation
-          }
+      // Validate PHP syntax if it's a PHP file
+      if (filePath.endsWith('.php') && await fs.pathExists(filePath)) {
+        try {
+          await execAsync(`php -l "${filePath}"`);
+        } catch (error) {
+          console.warn(`PHP syntax check failed for ${filePath}:`, error);
+          // Don't fail - let Drupal handle validation
         }
       }
     }
@@ -256,13 +290,19 @@ export class WorkflowEngine {
     // Pattern 2: Module names mentioned (EntityFormService, prepopulateSchemaMappings, etc.)
     // Map common class/method names to files
     const classToFileMap: Record<string, string> = {
-      'EntityFormService': 'docroot/modules/share/entity_form_wizard/src/Service/EntityFormService.php',
-      'prepopulateSchemaMappings': 'docroot/modules/share/entity_form_wizard/src/Service/EntityFormService.php',
-      'ensureFeedTypesForAllBundles': 'docroot/modules/share/entity_form_wizard/src/Service/EntityFormService.php',
+      'EntityFormService': 'docroot/modules/share/openapi_entity/src/Service/EntityFormService.php',
+      'prepopulateSchemaMappings': 'docroot/modules/share/openapi_entity/src/Service/EntityFormService.php',
+      'ensureFeedTypesForAllBundles': 'docroot/modules/share/openapi_entity/src/Service/EntityFormService.php',
+      'ensureWebhooksForAllBundles': 'docroot/modules/share/openapi_entity/src/Service/EntityFormService.php',
+      'populateSummaryFields': 'docroot/modules/share/openapi_entity/src/Service/EntityFormService.php',
+      'FormAlterService': 'docroot/modules/share/openapi_entity/src/Service/FormAlterService.php',
       'openapi_entity.module': 'docroot/modules/share/openapi_entity/openapi_entity.module',
       'hook_wizard_step_post_save': 'docroot/modules/share/openapi_entity/openapi_entity.module',
       'ApiSpecProcessor': 'docroot/modules/share/openapi_entity/src/Service/ApiSpecProcessor.php',
       'WizardStepProcessor': 'docroot/modules/share/openapi_entity/src/Service/WizardStepProcessor.php',
+      'EntityBundleFieldFeedService': 'docroot/modules/share/openapi_entity/src/Service/EntityBundleFieldFeedService.php',
+      'openapi_entity.services.yml': 'docroot/modules/share/openapi_entity/openapi_entity.services.yml',
+      'services.yml': 'docroot/modules/share/openapi_entity/openapi_entity.services.yml',
     };
 
     for (const [className, filePath] of Object.entries(classToFileMap)) {
@@ -292,11 +332,22 @@ export class WorkflowEngine {
         try {
           const content = await fs.readFile(filePath, 'utf-8');
           validFiles.push(file);
-          // For large files, extract relevant sections
+          
+          // For large files, extract relevant sections based on task keywords
           if (content.length > 15000) {
-            const truncated = content.substring(0, 15000) + '\n\n... (file truncated, showing first 15000 chars) ...';
-            contexts.push(`\n### EXISTING FILE: ${file}\n${truncated}`);
-            existingCodeSections.push(`\n### ${file}:\n${truncated}`);
+            // Extract keywords to search for from task
+            const keywords = this.extractKeywordsFromTask(task);
+            const relevantSections = this.extractRelevantSections(content, keywords, file);
+            
+            if (relevantSections) {
+              contexts.push(`\n### EXISTING FILE: ${file} (relevant sections)\n${relevantSections}`);
+              existingCodeSections.push(`\n### ${file} (relevant sections):\n${relevantSections}`);
+            } else {
+              // Fallback to showing start of file
+              const truncated = content.substring(0, 15000) + '\n\n... (file truncated, showing first 15000 chars) ...';
+              contexts.push(`\n### EXISTING FILE: ${file}\n${truncated}`);
+              existingCodeSections.push(`\n### ${file}:\n${truncated}`);
+            }
           } else {
             contexts.push(`\n### EXISTING FILE: ${file}\n${content}`);
             existingCodeSections.push(`\n### ${file}:\n${content}`);
@@ -369,6 +420,91 @@ export class WorkflowEngine {
 
   isShutdownRequested(): boolean {
     return this.shutdownRequested;
+  }
+
+  /**
+   * Extract keywords from task for searching file content
+   */
+  private extractKeywordsFromTask(task: Task): string[] {
+    const text = `${task.title} ${task.description} ${task.details || ''}`;
+    const keywords: string[] = [];
+    
+    // Extract method/function names
+    const methodPattern = /(?:method|function|ensureFeedTypesForAllBundles|ensureWebhooksForAllBundles|prepopulateSchemaMappings|alterApiSpecForm)\b/gi;
+    let match;
+    while ((match = methodPattern.exec(text)) !== null) {
+      keywords.push(match[0]);
+    }
+    
+    // Extract specific search terms from details
+    const searchTerms = ['standalone', 'processor', 'entity_type_id', 'feeds_item'];
+    for (const term of searchTerms) {
+      if (text.toLowerCase().includes(term.toLowerCase())) {
+        keywords.push(term);
+      }
+    }
+    
+    // Add common patterns
+    if (text.includes('Line') || text.includes('line')) {
+      const lineMatch = text.match(/[Ll]ine\s*(\d+)/);
+      if (lineMatch) {
+        keywords.push(`LINE:${lineMatch[1]}`);
+      }
+    }
+    
+    return keywords;
+  }
+
+  /**
+   * Extract relevant sections from a large file based on keywords
+   */
+  private extractRelevantSections(content: string, keywords: string[], filePath: string): string | null {
+    const lines = content.split('\n');
+    const sections: string[] = [];
+    const seenRanges: Set<string> = new Set();
+    
+    // First, handle LINE: markers
+    for (const keyword of keywords) {
+      if (keyword.startsWith('LINE:')) {
+        const lineNum = parseInt(keyword.replace('LINE:', ''), 10);
+        if (!isNaN(lineNum) && lineNum > 0 && lineNum <= lines.length) {
+          const start = Math.max(0, lineNum - 20);
+          const end = Math.min(lines.length, lineNum + 20);
+          const rangeKey = `${start}-${end}`;
+          if (!seenRanges.has(rangeKey)) {
+            seenRanges.add(rangeKey);
+            const section = lines.slice(start, end).map((l, i) => `${start + i + 1}|${l}`).join('\n');
+            sections.push(`\n// LINES ${start + 1}-${end} (around line ${lineNum}):\n${section}`);
+          }
+        }
+      }
+    }
+    
+    // Search for keyword occurrences in the file
+    const keywordPatterns = keywords.filter(k => !k.startsWith('LINE:'));
+    for (const keyword of keywordPatterns) {
+      const regex = new RegExp(keyword, 'gi');
+      for (let i = 0; i < lines.length; i++) {
+        if (regex.test(lines[i])) {
+          const start = Math.max(0, i - 10);
+          const end = Math.min(lines.length, i + 15);
+          const rangeKey = `${start}-${end}`;
+          if (!seenRanges.has(rangeKey)) {
+            seenRanges.add(rangeKey);
+            const section = lines.slice(start, end).map((l, idx) => `${start + idx + 1}|${l}`).join('\n');
+            sections.push(`\n// LINES ${start + 1}-${end} (found "${keyword}"):\n${section}`);
+          }
+          // Reset regex lastIndex
+          regex.lastIndex = 0;
+        }
+      }
+    }
+    
+    if (sections.length > 0) {
+      return `FILE: ${filePath}\nTotal lines: ${lines.length}\n\n${sections.join('\n\n---\n')}`;
+    }
+    
+    return null;
   }
 }
 

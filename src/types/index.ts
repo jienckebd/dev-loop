@@ -26,11 +26,17 @@ export interface TaskContext {
   codebaseContext?: string;
 }
 
+export interface CodePatch {
+  search: string;
+  replace: string;
+}
+
 export interface CodeChanges {
   files: Array<{
     path: string;
-    content: string;
-    operation: 'create' | 'update' | 'delete';
+    content?: string;
+    patches?: CodePatch[];
+    operation: 'create' | 'update' | 'delete' | 'patch';
   }>;
   summary: string;
 }

@@ -6,7 +6,7 @@ You are an expert Drupal developer. Generate PHP code changes to implement the f
 
 **Title:** {{task.title}}
 **Description:** {{task.description}}
-**Priority:** {{task.priority}}
+**Details:** {{task.details}}
 
 ## Target Files
 
@@ -25,31 +25,31 @@ You are an expert Drupal developer. Generate PHP code changes to implement the f
 5. **Entity Operations**: Use EntityTypeManager for entity operations
 6. **Form Handling**: Use FormStateInterface for form operations
 7. **Service Injection**: Inject services via constructor, declare in services.yml
-8. **Cache Clearing**: Use `\Drupal::service('cache_tags.invalidator')->invalidateTags()` when needed
 
-## Code Patterns
+## CRITICAL: Output Format for Large Files
 
-- **Service Definition**: Declare in `{module}.services.yml` with proper tags
-- **Hook Implementation**: Implement in `{module}.module` file
-- **Form Alteration**: Use `hook_form_alter()` or form-specific hooks
-- **Entity Hooks**: Use `hook_entity_presave()`, `hook_entity_insert()`, etc.
-- **Wizard Steps**: Use `hook_wizard_step_post_save()` for wizard transitions
-
-## Output Format
-
-Return code changes as JSON with this structure:
+For LARGE PHP files (over 100 lines), use SEARCH/REPLACE patches to avoid truncation:
 
 ```json
 {
   "files": [
     {
       "path": "docroot/modules/share/{module}/src/Service/{File}.php",
-      "content": "<?php\n\nnamespace Drupal\\{module}\\Service;\n\n// Full file content here...",
-      "operation": "update"
+      "patches": [
+        {
+          "search": "// exact code to find - include 3-5 lines of context",
+          "replace": "// replacement code - complete replacement for the searched block"
+        },
+        {
+          "search": "// another exact code block to find",
+          "replace": "// its replacement"
+        }
+      ],
+      "operation": "patch"
     },
     {
-      "path": "docroot/modules/share/{module}/{module}.module",
-      "content": "<?php\n\n// Hook implementations...",
+      "path": "docroot/modules/share/{module}/{module}.services.yml",
+      "content": "# Full file content (only for small files like YAML)",
       "operation": "update"
     }
   ],
@@ -57,13 +57,65 @@ Return code changes as JSON with this structure:
 }
 ```
 
+## Patch Rules
+
+1. **search** must match EXACTLY - copy the exact code from the file including whitespace
+2. Include 3-5 lines of surrounding context in search to ensure uniqueness
+3. Keep patches small and focused - one change per patch
+4. For imports/use statements, add them as a separate patch at the top of the file
+5. For constructor changes, include the entire constructor in both search and replace
+6. Test each patch could be applied in isolation
+
+## Example: Adding Logger to a Service
+
+For a task "Add LoggerInterface to EntityFormService", generate:
+
+```json
+{
+  "files": [
+    {
+      "path": "docroot/modules/share/openapi_entity/src/Service/EntityFormService.php",
+      "patches": [
+        {
+          "search": "use Drupal\\openapi_entity\\Manager;\nuse Drupal\\bf\\Php\\Arr;",
+          "replace": "use Drupal\\openapi_entity\\Manager;\nuse Drupal\\bf\\Php\\Arr;\nuse Psr\\Log\\LoggerInterface;"
+        },
+        {
+          "search": "  protected FieldManager $fieldManager;\n\n  /**\n   * Constructs",
+          "replace": "  protected FieldManager $fieldManager;\n\n  /**\n   * The logger.\n   *\n   * @var \\Psr\\Log\\LoggerInterface\n   */\n  protected LoggerInterface $logger;\n\n  /**\n   * Constructs"
+        },
+        {
+          "search": "public function __construct(EntityTypeManagerInterface $entity_type_manager, MessengerInterface $messenger, Manager $manager, SchemaMappingRecommendationService $schema_mapping_recommendation, FieldManager $field_manager, EntityIdValidator $entity_id_validator) {",
+          "replace": "public function __construct(EntityTypeManagerInterface $entity_type_manager, MessengerInterface $messenger, Manager $manager, SchemaMappingRecommendationService $schema_mapping_recommendation, FieldManager $field_manager, EntityIdValidator $entity_id_validator, LoggerInterface $logger) {"
+        },
+        {
+          "search": "    $this->entityIdValidator = $entity_id_validator;\n  }",
+          "replace": "    $this->entityIdValidator = $entity_id_validator;\n    $this->logger = $logger;\n  }"
+        }
+      ],
+      "operation": "patch"
+    },
+    {
+      "path": "docroot/modules/share/openapi_entity/openapi_entity.services.yml",
+      "patches": [
+        {
+          "search": "arguments: ['@entity_type.manager', '@messenger', '@openapi_entity.manager', '@openapi_entity.schema_mapping_recommendation', '@openapi_entity.field_manager', '@entity.id_validator']",
+          "replace": "arguments: ['@entity_type.manager', '@messenger', '@openapi_entity.manager', '@openapi_entity.schema_mapping_recommendation', '@openapi_entity.field_manager', '@entity.id_validator', '@logger.channel.openapi_entity']"
+        }
+      ],
+      "operation": "patch"
+    }
+  ],
+  "summary": "Added LoggerInterface dependency to EntityFormService"
+}
+```
+
 ## Requirements
 
-1. Read and understand the existing code context
-2. Follow Drupal coding standards and patterns
-3. Maintain backward compatibility where possible
-4. Include proper error handling and logging
-5. Ensure all dependencies are properly injected
-6. Add appropriate comments for complex logic
-7. Generate both feature code and any necessary test updates
+1. Read and understand the existing code context carefully
+2. Use PATCH operations for files over 100 lines
+3. Use UPDATE operations only for small config files (YAML, JSON)
+4. Each patch search string must be UNIQUE in the file
+5. Include proper error handling and logging
+6. Follow Drupal coding standards
 
