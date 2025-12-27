@@ -175,21 +175,27 @@ export class WorkflowEngine {
           errorDescription = logAnalysis?.summary || 'Log analysis found errors';
         }
 
-        await this.taskBridge.createFixTask(
+        const fixTask = await this.taskBridge.createFixTask(
           task.id,
           errorDescription,
           testResult.output
         );
 
-        // Mark original task as pending again
-        await this.taskBridge.updateTaskStatus(task.id, 'pending');
+        if (fixTask) {
+          // Mark original task as pending again for retry
+          await this.taskBridge.updateTaskStatus(task.id, 'pending');
+        } else {
+          // Max retries exceeded - task was marked as blocked
+          console.log(`[WorkflowEngine] Task ${task.id} blocked after max retries, moving to next task`);
+        }
+        
         await this.updateState({ status: 'idle' });
 
         return {
           completed: false,
           noTasks: false,
           taskId: task.id,
-          error: 'Tests failed or errors found in logs',
+          error: fixTask ? 'Tests failed or errors found in logs' : 'Max retries exceeded, task blocked',
         };
       }
 

@@ -10,15 +10,75 @@ const execAsync = promisify(exec);
 export class TaskMasterBridge {
   private tasksPath: string;
   private originalFormat: 'array' | 'tasks' | 'master' = 'master';
+  private taskRetryCount: Map<string, number> = new Map();
+  private maxRetries: number = 3;
 
   constructor(private config: Config) {
     this.tasksPath = path.resolve(process.cwd(), config.taskMaster.tasksPath);
+    // Allow config override for maxRetries
+    this.maxRetries = (config as any).maxRetries || 3;
+  }
+
+  /**
+   * Get retry count for a task
+   */
+  getRetryCount(taskId: string): number {
+    // Get base task ID (without fix- prefix)
+    const baseId = this.getBaseTaskId(taskId);
+    return this.taskRetryCount.get(baseId) || 0;
+  }
+
+  /**
+   * Increment retry count for a task
+   */
+  incrementRetryCount(taskId: string): number {
+    const baseId = this.getBaseTaskId(taskId);
+    const count = (this.taskRetryCount.get(baseId) || 0) + 1;
+    this.taskRetryCount.set(baseId, count);
+    return count;
+  }
+
+  /**
+   * Check if task has exceeded max retries
+   */
+  hasExceededMaxRetries(taskId: string): boolean {
+    return this.getRetryCount(taskId) >= this.maxRetries;
+  }
+
+  /**
+   * Get base task ID (strips fix- prefix and timestamp suffix)
+   */
+  private getBaseTaskId(taskId: string): string {
+    // Handle fix-{originalId}-{timestamp} format
+    const fixMatch = taskId.match(/^fix-(.+)-\d+$/);
+    if (fixMatch) {
+      return this.getBaseTaskId(fixMatch[1]); // Recursive to handle nested fixes
+    }
+    return String(taskId);
   }
 
   async getPendingTasks(): Promise<Task[]> {
     try {
       const tasks = await this.loadTasks();
-      return tasks.filter((t) => t.status === 'pending');
+      const pending = tasks.filter((t) => t.status === 'pending');
+      
+      // Filter out tasks that have exceeded max retries
+      const eligibleTasks = pending.filter(t => !this.hasExceededMaxRetries(t.id));
+      
+      // Sort by priority and prefer original tasks over fix tasks
+      return eligibleTasks.sort((a, b) => {
+        // First, prefer non-fix tasks over fix tasks (original tasks first)
+        const aIsFix = String(a.id).startsWith('fix-');
+        const bIsFix = String(b.id).startsWith('fix-');
+        if (!aIsFix && bIsFix) return -1;
+        if (aIsFix && !bIsFix) return 1;
+        
+        // Then sort by priority
+        const priorityOrder = { critical: 0, high: 1, medium: 2, low: 3 };
+        const aPriority = priorityOrder[a.priority as keyof typeof priorityOrder] ?? 2;
+        const bPriority = priorityOrder[b.priority as keyof typeof priorityOrder] ?? 2;
+        return aPriority - bPriority;
+      });
     } catch (error) {
       throw new Error(`Failed to get pending tasks: ${error instanceof Error ? error.message : String(error)}`);
     }
@@ -63,16 +123,27 @@ export class TaskMasterBridge {
     }
   }
 
-  async createFixTask(originalTaskId: string, errorDescription: string, testOutput: string): Promise<Task> {
+  async createFixTask(originalTaskId: string, errorDescription: string, testOutput: string): Promise<Task | null> {
     const originalTask = await this.getTask(originalTaskId);
     if (!originalTask) {
       throw new Error(`Original task not found: ${originalTaskId}`);
     }
 
+    // Increment retry count and check if we've exceeded max retries
+    const retryCount = this.incrementRetryCount(originalTaskId);
+    if (retryCount > this.maxRetries) {
+      console.log(`[TaskBridge] Task ${originalTaskId} has exceeded max retries (${this.maxRetries}), marking as blocked`);
+      // Mark the task as blocked instead of creating another fix task
+      await this.updateTaskStatus(originalTaskId, 'blocked' as TaskStatus);
+      return null;
+    }
+
+    console.log(`[TaskBridge] Creating fix task for ${originalTaskId} (attempt ${retryCount}/${this.maxRetries})`);
+
     return this.createTask({
       id: `fix-${originalTaskId}-${Date.now()}`,
-      title: `Fix: ${originalTask.title}`,
-      description: `Fix issues in ${originalTask.title}\n\nError: ${errorDescription}\n\nTest Output:\n${testOutput}`,
+      title: `Fix: ${originalTask.title} (attempt ${retryCount})`,
+      description: `Fix issues in ${originalTask.title}\n\nAttempt: ${retryCount}/${this.maxRetries}\n\nError: ${errorDescription}\n\nTest Output:\n${testOutput}`,
       priority: 'high',
       dependencies: [originalTaskId],
     });
