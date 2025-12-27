@@ -22,7 +22,7 @@ export class TaskMasterBridge {
   /**
    * Get retry count for a task
    */
-  getRetryCount(taskId: string): number {
+  getRetryCount(taskId: string | number): number {
     // Get base task ID (without fix- prefix)
     const baseId = this.getBaseTaskId(taskId);
     return this.taskRetryCount.get(baseId) || 0;
@@ -31,7 +31,7 @@ export class TaskMasterBridge {
   /**
    * Increment retry count for a task
    */
-  incrementRetryCount(taskId: string): number {
+  incrementRetryCount(taskId: string | number): number {
     const baseId = this.getBaseTaskId(taskId);
     const count = (this.taskRetryCount.get(baseId) || 0) + 1;
     this.taskRetryCount.set(baseId, count);
@@ -41,30 +41,31 @@ export class TaskMasterBridge {
   /**
    * Check if task has exceeded max retries
    */
-  hasExceededMaxRetries(taskId: string): boolean {
+  hasExceededMaxRetries(taskId: string | number): boolean {
     return this.getRetryCount(taskId) >= this.maxRetries;
   }
 
   /**
    * Get base task ID (strips fix- prefix and timestamp suffix)
    */
-  private getBaseTaskId(taskId: string): string {
+  private getBaseTaskId(taskId: string | number): string {
+    const idStr = String(taskId);
     // Handle fix-{originalId}-{timestamp} format
-    const fixMatch = taskId.match(/^fix-(.+)-\d+$/);
+    const fixMatch = idStr.match(/^fix-(.+)-\d+$/);
     if (fixMatch) {
       return this.getBaseTaskId(fixMatch[1]); // Recursive to handle nested fixes
     }
-    return String(taskId);
+    return idStr;
   }
 
   async getPendingTasks(): Promise<Task[]> {
     try {
       const tasks = await this.loadTasks();
       const pending = tasks.filter((t) => t.status === 'pending');
-      
+
       // Filter out tasks that have exceeded max retries
       const eligibleTasks = pending.filter(t => !this.hasExceededMaxRetries(t.id));
-      
+
       // Sort by priority and prefer original tasks over fix tasks
       return eligibleTasks.sort((a, b) => {
         // First, prefer non-fix tasks over fix tasks (original tasks first)
@@ -72,7 +73,7 @@ export class TaskMasterBridge {
         const bIsFix = String(b.id).startsWith('fix-');
         if (!aIsFix && bIsFix) return -1;
         if (aIsFix && !bIsFix) return 1;
-        
+
         // Then sort by priority
         const priorityOrder = { critical: 0, high: 1, medium: 2, low: 3 };
         const aPriority = priorityOrder[a.priority as keyof typeof priorityOrder] ?? 2;
