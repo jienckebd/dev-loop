@@ -4,6 +4,7 @@ import { Command } from 'commander';
 import { initCommand } from './cli/commands/init';
 import { runCommand } from './cli/commands/run';
 import { watchCommand } from './cli/commands/watch';
+import { stopCommand } from './cli/commands/stop';
 import { statusCommand } from './cli/commands/status';
 import { logsCommand } from './cli/commands/logs';
 
@@ -31,6 +32,11 @@ program
   .description('Daemon mode - continuous execution until PRD complete')
   .option('-c, --config <path>', 'Path to config file', 'devloop.config.js')
   .action(watchCommand);
+
+program
+  .command('stop')
+  .description('Stop the running daemon')
+  .action(stopCommand);
 
 program
   .command('status')

@@ -2,6 +2,7 @@ import chalk from 'chalk';
 import ora from 'ora';
 import { loadConfig } from '../../config/loader';
 import { WorkflowEngine } from '../../core/workflow-engine';
+import { writePidFile, removePidFile } from './stop';
 
 export async function watchCommand(options: { config?: string }): Promise<void> {
   const spinner = ora('Loading configuration').start();
@@ -15,14 +16,18 @@ export async function watchCommand(options: { config?: string }): Promise<void> 
     spinner.succeed('Workflow engine initialized');
 
     console.log(chalk.cyan('Starting daemon mode...'));
-    console.log(chalk.gray('Press Ctrl+C to stop\n'));
+    console.log(chalk.gray('Press Ctrl+C to stop, or run: npx dev-loop stop\n'));
+
+    // Write PID file for stop command
+    await writePidFile();
 
     let iteration = 0;
     let shouldContinue = true;
 
-    const shutdown = () => {
+    const shutdown = async () => {
       shouldContinue = false;
       console.log(chalk.yellow('\nShutting down gracefully...'));
+      await removePidFile();
       engine.shutdown();
       process.exit(0);
     };
