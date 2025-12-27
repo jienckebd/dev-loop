@@ -23,6 +23,7 @@ export class TaskMasterBridge {
    * Get retry count for a task
    */
   getRetryCount(taskId: string | number): number {
+    // Get base task ID (without fix- prefix)
     const baseId = this.getBaseTaskId(taskId);
     return this.taskRetryCount.get(baseId) || 0;
   }
@@ -49,9 +50,10 @@ export class TaskMasterBridge {
    */
   private getBaseTaskId(taskId: string | number): string {
     const idStr = String(taskId);
+    // Handle fix-{originalId}-{timestamp} format
     const fixMatch = idStr.match(/^fix-(.+)-\d+$/);
     if (fixMatch) {
-      return this.getBaseTaskId(fixMatch[1]);
+      return this.getBaseTaskId(fixMatch[1]); // Recursive to handle nested fixes
     }
     return idStr;
   }
@@ -59,29 +61,25 @@ export class TaskMasterBridge {
   async getPendingTasks(): Promise<Task[]> {
     try {
       const tasks = await this.loadTasks();
-      const pending = tasks.filter((t) => t.status === 'pending');
+      // Include both "pending" and "in-progress" tasks (in-progress means it was interrupted)
+      const pending = tasks.filter((t) => t.status === 'pending' || t.status === 'in-progress');
       
       // Filter out tasks that have exceeded max retries
       const eligibleTasks = pending.filter(t => !this.hasExceededMaxRetries(t.id));
       
-      // Filter out tasks whose dependencies are not done
-      const tasksWithMetDependencies = eligibleTasks.filter(t => {
-        if (!t.dependencies || t.dependencies.length === 0) {
-          return true;
-        }
-        return t.dependencies.every(depId => {
-          const depTask = tasks.find(task => String(task.id) === String(depId));
-          return depTask && depTask.status === 'done';
-        });
-      });
-      
       // Sort by priority and prefer original tasks over fix tasks
-      return tasksWithMetDependencies.sort((a, b) => {
+      return eligibleTasks.sort((a, b) => {
+        // First, prefer in-progress tasks (to resume them)
+        if (a.status === 'in-progress' && b.status !== 'in-progress') return -1;
+        if (b.status === 'in-progress' && a.status !== 'in-progress') return 1;
+        
+        // Then, prefer non-fix tasks over fix tasks (original tasks first)
         const aIsFix = String(a.id).startsWith('fix-');
         const bIsFix = String(b.id).startsWith('fix-');
         if (!aIsFix && bIsFix) return -1;
         if (aIsFix && !bIsFix) return 1;
         
+        // Then sort by priority
         const priorityOrder = { critical: 0, high: 1, medium: 2, low: 3 };
         const aPriority = priorityOrder[a.priority as keyof typeof priorityOrder] ?? 2;
         const bPriority = priorityOrder[b.priority as keyof typeof priorityOrder] ?? 2;
@@ -141,6 +139,7 @@ export class TaskMasterBridge {
     const retryCount = this.incrementRetryCount(originalTaskId);
     if (retryCount > this.maxRetries) {
       console.log(`[TaskBridge] Task ${originalTaskId} has exceeded max retries (${this.maxRetries}), marking as blocked`);
+      // Mark the task as blocked instead of creating another fix task
       await this.updateTaskStatus(originalTaskId, 'blocked' as TaskStatus);
       return null;
     }

@@ -188,7 +188,7 @@ export class WorkflowEngine {
           // Max retries exceeded - task was marked as blocked
           console.log(`[WorkflowEngine] Task ${task.id} blocked after max retries, moving to next task`);
         }
-        
+
         await this.updateState({ status: 'idle' });
 
         return {

@@ -240,7 +240,7 @@ ${prompt}`;
         throw new Error('Unexpected response format from Anthropic API');
       } catch (error) {
         lastError = error instanceof Error ? error : new Error(String(error));
-        
+
         // Check if this is a rate limit error
         if (this.isRateLimitError(lastError)) {
           const delay = this.baseDelay * Math.pow(2, attempt); // Exponential backoff
@@ -248,12 +248,12 @@ ${prompt}`;
           await this.sleep(delay);
           continue; // Retry
         }
-        
+
         // For non-rate-limit errors, throw immediately
         throw new Error(`Anthropic API error: ${lastError.message}`);
       }
     }
-    
+
     // All retries exhausted
     throw new Error(`Anthropic API rate limit exceeded after ${this.maxRetries} retries: ${lastError?.message}`);
   }
