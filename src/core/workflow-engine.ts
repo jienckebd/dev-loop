@@ -188,7 +188,7 @@ export class WorkflowEngine {
           // Max retries exceeded - task was marked as blocked
           console.log(`[WorkflowEngine] Task ${task.id} blocked after max retries, moving to next task`);
         }
-
+        
         await this.updateState({ status: 'idle' });
 
         return {
@@ -347,9 +347,19 @@ export class WorkflowEngine {
     const contexts: string[] = [];
     const existingCodeSections: string[] = [];
     const validFiles: string[] = [];
+    
+    // Get max context size from config (default ~80k chars = ~20k tokens)
+    const maxContextChars = (this.config.ai as any)?.maxContextChars || 80000;
+    let totalContextSize = 0;
 
-    // Load mentioned files
+    // Load mentioned files (prioritize first files, which are usually most relevant)
     for (const file of mentionedFiles) {
+      // Stop if we've exceeded max context size
+      if (totalContextSize >= maxContextChars) {
+        console.log(`[WorkflowEngine] Context limit reached (${totalContextSize}/${maxContextChars} chars), skipping remaining files`);
+        break;
+      }
+      
       const filePath = path.resolve(process.cwd(), file);
       if (await fs.pathExists(filePath)) {
         try {
@@ -357,30 +367,46 @@ export class WorkflowEngine {
           validFiles.push(file);
 
           // For large files, extract relevant sections based on task keywords
+          let fileContext: string;
           if (content.length > 15000) {
             const keywords = this.extractKeywordsFromTask(task);
             const relevantSections = this.extractRelevantSections(content, keywords, file);
 
             if (relevantSections) {
-              contexts.push(`\n### EXISTING FILE: ${file} (relevant sections)\n${relevantSections}`);
+              fileContext = `\n### EXISTING FILE: ${file} (relevant sections)\n${relevantSections}`;
               existingCodeSections.push(`\n### ${file} (relevant sections):\n${relevantSections}`);
             } else {
               // Fallback to showing start of file
               const truncated = content.substring(0, 15000) + '\n\n... (file truncated, showing first 15000 chars) ...';
-              contexts.push(`\n### EXISTING FILE: ${file}\n${truncated}`);
+              fileContext = `\n### EXISTING FILE: ${file}\n${truncated}`;
               existingCodeSections.push(`\n### ${file}:\n${truncated}`);
             }
           } else {
-            contexts.push(`\n### EXISTING FILE: ${file}\n${content}`);
+            fileContext = `\n### EXISTING FILE: ${file}\n${content}`;
             existingCodeSections.push(`\n### ${file}:\n${content}`);
           }
+          
+          // Check if adding this file would exceed the limit
+          if (totalContextSize + fileContext.length > maxContextChars) {
+            // Truncate to fit
+            const remaining = maxContextChars - totalContextSize;
+            if (remaining > 1000) {  // Only add if we can include meaningful content
+              fileContext = fileContext.substring(0, remaining) + '\n\n... (context limit reached) ...';
+              contexts.push(fileContext);
+              totalContextSize += fileContext.length;
+            }
+            break;
+          }
+          
+          contexts.push(fileContext);
+          totalContextSize += fileContext.length;
         } catch {
           // Ignore read errors
         }
       }
     }
 
-    console.log(`[WorkflowEngine] Found ${validFiles.length} relevant files:`, validFiles);
+    console.log(`[WorkflowEngine] Found ${validFiles.length} relevant files (${totalContextSize} chars):`, validFiles);
 
     return {
       codebaseContext: contexts.length > 0
