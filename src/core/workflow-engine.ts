@@ -398,6 +398,10 @@ export class WorkflowEngine {
     // Get max context size from config (default ~80k chars = ~20k tokens)
     const maxContextChars = (this.config.ai as any)?.maxContextChars || 80000;
     let totalContextSize = 0;
+    
+    if (this.debug) {
+      console.log(`[DEBUG] Max context chars from config: ${maxContextChars}`);
+    }
 
     // Load mentioned files (prioritize first files, which are usually most relevant)
     for (const file of mentionedFiles) {
