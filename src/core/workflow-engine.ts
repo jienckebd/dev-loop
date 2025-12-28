@@ -398,7 +398,7 @@ export class WorkflowEngine {
     // Get max context size from config (default ~25k chars = ~6k tokens)
     const maxContextChars = this.config.ai.maxContextChars || 25000;
     let totalContextSize = 0;
-    
+
     if (this.debug) {
       console.log(`[DEBUG] Max context chars from config: ${maxContextChars}`);
     }
@@ -590,7 +590,7 @@ export class WorkflowEngine {
               break;
             }
           }
-          
+
           const currentScore = discoveredFiles.get(file) || 0;
           discoveredFiles.set(file, currentScore + score);
         }

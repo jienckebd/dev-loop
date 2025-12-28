@@ -81,6 +81,8 @@ export interface Config {
     model: string;
     fallback?: string;
     apiKey?: string;
+    maxTokens?: number;
+    maxContextChars?: number;
   };
   templates: {
     source: TemplateSource;
@@ -98,6 +100,7 @@ export interface Config {
       error: RegExp | string;
       warning: RegExp | string;
     };
+    ignorePatterns?: (RegExp | string)[];
     useAI: boolean;
   };
   intervention: {
@@ -106,6 +109,21 @@ export interface Config {
   };
   taskMaster: {
     tasksPath: string;
+  };
+  codebase?: {
+    extensions?: string[];
+    searchDirs?: string[];
+    excludeDirs?: string[];
+    ignoreGlobs?: string[];
+    identifierStopwords?: string[];
+    filePathPatterns?: string[];
+  };
+  hooks?: {
+    preTest?: string[];
+    postApply?: string[];
+  };
+  rules?: {
+    cursorRulesPath?: string;
   };
 }
 
