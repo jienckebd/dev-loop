@@ -295,6 +295,27 @@ stateDiagram-v2
    - Terminal-based approval UI
    - Risk assessment for code changes
 
+6. **CodeContextProvider** (`src/core/code-context-provider.ts`) - NEW
+   - Extracts structured context from target files
+   - Provides function/class signatures to AI
+   - Shows import patterns for accurate references
+   - Generates file-specific guidance prompts
+   - Prevents AI from using non-existent functions
+
+7. **ValidationGate** (`src/core/validation-gate.ts`) - NEW
+   - Pre-apply validation before filesystem changes
+   - Verifies patch search strings exist in files
+   - TypeScript syntax validation
+   - Suggests fixes for validation errors
+   - Prevents wasted iterations from invalid patches
+
+8. **PatternLearningSystem** (`src/core/pattern-learner.ts`) - NEW
+   - Remembers common failure patterns
+   - Injects "do not repeat" guidance into prompts
+   - Built-in patterns for common AI errors
+   - Records patterns from test failures
+   - Persists learned patterns in `.devloop/patterns.json`
+
 #### Provider Interfaces
 
 All providers implement standardized interfaces for pluggability:
@@ -509,6 +530,27 @@ module.exports = {
   // Task Master integration
   taskMaster: {
     tasksPath: '.taskmaster/tasks/tasks.json',
+  },
+
+  // Enhanced context for better AI prompts (NEW)
+  context: {
+    includeSkeleton: true,      // Include file skeleton showing available helpers
+    includeImports: true,       // Include import section explicitly
+    maxHelperSignatures: 20,    // Max helper signatures to show
+  },
+
+  // Pre-apply validation to catch errors before filesystem changes (NEW)
+  preValidation: {
+    enabled: true,              // Enable pre-apply validation
+    maxRetries: 2,              // Retries before creating fix task
+    validateSyntax: true,       // TypeScript syntax validation
+  },
+
+  // Pattern learning to prevent repeating mistakes (NEW)
+  patternLearning: {
+    enabled: true,              // Enable pattern learning
+    patternsPath: '.devloop/patterns.json',
+    useBuiltinPatterns: true,   // Include common patterns
   },
 };
 ```
