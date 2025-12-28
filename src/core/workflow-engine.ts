@@ -92,7 +92,7 @@ export class WorkflowEngine {
         codebaseContext,
         targetFiles,
         existingCode,
-        templateType: this.getTemplateType(targetFiles),
+        templateType: this.getTemplateType(targetFiles, task),
       });
 
       console.log('[WorkflowEngine] Calling AI provider to generate code...');
@@ -569,7 +569,20 @@ export class WorkflowEngine {
   /**
    * Determine template type based on config and target files
    */
-  private getTemplateType(targetFiles?: string): 'generic' | string {
+  private getTemplateType(targetFiles?: string, task?: Task): 'generic' | string {
+    // Detect Playwright test tasks
+    const taskText = task ? `${task.title} ${task.description || ''} ${(task as any).details || ''}` : '';
+    const isPlaywrightTask = 
+      targetFiles?.includes('playwright') || 
+      targetFiles?.includes('.spec.ts') ||
+      targetFiles?.includes('.test.ts') ||
+      taskText.toLowerCase().includes('playwright') ||
+      taskText.toLowerCase().includes('test scenario');
+
+    if (isPlaywrightTask) {
+      return 'playwright-test';
+    }
+
     // Use framework type from config if available
     const frameworkType = (this.config as any).framework?.type;
     if (frameworkType) {

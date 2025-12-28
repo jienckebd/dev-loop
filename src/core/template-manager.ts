@@ -28,6 +28,19 @@ export class TemplateManager {
     existingCode?: string;
     templateType?: string; // Now supports any framework type, not just 'generic' | 'drupal'
   }): Promise<string> {
+    // Check for Playwright test template first (in custom path)
+    if (context.templateType === 'playwright-test') {
+      try {
+        const playwrightTemplate = await fs.readFile(
+          path.resolve(process.cwd(), '.taskmaster/templates/playwright-test.md'),
+          'utf-8'
+        );
+        return this.substituteVariables(playwrightTemplate, context);
+      } catch {
+        console.warn('[TemplateManager] Playwright test template not found at .taskmaster/templates/playwright-test.md, falling back to default');
+      }
+    }
+
     // Determine template file based on framework config
     let templateFile = 'generate-tasks.md';
 
@@ -45,7 +58,7 @@ export class TemplateManager {
     }
 
     // Use framework-specific template if available in builtin templates
-    if (context.templateType && context.templateType !== 'generic') {
+    if (context.templateType && context.templateType !== 'generic' && context.templateType !== 'playwright-test') {
       const frameworkTemplateFile = `${context.templateType}-task.md`;
       try {
         const template = await this.loadTemplate(frameworkTemplateFile);
