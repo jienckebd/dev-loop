@@ -10,12 +10,14 @@ export class AnthropicProvider implements AIProvider {
   private cursorRules: string | null = null;
   private maxRetries = 3;
   private baseDelay = 60000; // 60 seconds base delay for rate limits
+  private debug = false;
 
   constructor(private config: AIProviderConfig) {
     if (!config.apiKey) {
       throw new Error('Anthropic API key is required');
     }
     this.client = new Anthropic({ apiKey: config.apiKey });
+    this.debug = (config as any).debug || process.env.DEBUG === 'true';
 
     // Load cursor rules if path is provided
     if (config.cursorRulesPath) {
@@ -123,6 +125,22 @@ Description: ${context.task.description}
 ${context.codebaseContext ? `Codebase Context:\n${context.codebaseContext}\n` : ''}
 
 ${prompt}`;
+
+    // Debug: Log prompts for visibility
+    if (this.debug) {
+      console.log('\n[DEBUG] ===== AI PROMPT START =====');
+      console.log('[DEBUG] System prompt length:', systemPrompt.length, 'chars');
+      console.log('[DEBUG] User prompt length:', userPrompt.length, 'chars');
+      console.log('[DEBUG] Task:', context.task.title);
+      console.log('[DEBUG] Task details:', context.task.details?.substring(0, 200) || 'N/A');
+      console.log('[DEBUG] Codebase context length:', context.codebaseContext?.length || 0, 'chars');
+      console.log('[DEBUG] Template prompt length:', prompt.length, 'chars');
+      
+      // Show first 500 chars of template prompt for debugging
+      console.log('[DEBUG] Template prompt preview:');
+      console.log(prompt.substring(0, 500) + (prompt.length > 500 ? '...' : ''));
+      console.log('[DEBUG] ===== AI PROMPT END =====\n');
+    }
 
     // Use higher token limit for PHP/Drupal files
     const maxTokens = isDrupalTask ? (this.config.maxTokens || 16000) : (this.config.maxTokens || 4000);

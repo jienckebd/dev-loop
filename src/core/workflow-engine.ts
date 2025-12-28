@@ -504,13 +504,14 @@ export class WorkflowEngine {
     const excludePattern = excludeDirs.map(d => `--exclude-dir=${d}`).join(' ');
     const includePattern = extensions.map(e => `--include=*.${e}`).join(' ');
 
-    // Common words to skip - these match too many files
+    // Common words to skip - these match too many files and are not specific enough
+    // Keep domain-specific terms like EntityFormService, WizardManager, etc.
     const stopwords = new Set([
-      'File', 'Move', 'Step', 'Steps', 'Configure', 'Verify', 'Create', 'Update',
-      'Delete', 'Add', 'Remove', 'Get', 'Set', 'Load', 'Save', 'Check', 'Validate',
-      'Process', 'Handle', 'Build', 'Execute', 'Run', 'Start', 'Stop', 'Implement',
-      'Test', 'Tests', 'Config', 'Settings', 'Options', 'Data', 'Info', 'Field',
-      'Entity', 'Bundle', 'Type', 'Form', 'View', 'Display', 'Render', 'Output'
+      'File', 'Move', 'Step', 'Steps', 'Configure', 'Verify', 'Implement',
+      'Delete', 'Add', 'Remove', 'Get', 'Set', 'Load', 'Check',
+      'Execute', 'Run', 'Start', 'Stop', 'All', 'Only', 'Forward',
+      'Settings', 'Options', 'Data', 'Info', 'Visibility', 'Conditions',
+      'Timing', 'Playwright', 'Tests', 'Navigation'
     ]);
 
     // Prioritize high-value identifiers (class names, function names, file names)
