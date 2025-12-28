@@ -3,11 +3,15 @@ import ora from 'ora';
 import { loadConfig } from '../../config/loader';
 import { WorkflowEngine } from '../../core/workflow-engine';
 
-export async function runCommand(options: { config?: string }): Promise<void> {
+export async function runCommand(options: { config?: string; debug?: boolean }): Promise<void> {
   const spinner = ora('Loading configuration').start();
 
   try {
     const config = await loadConfig(options.config);
+    // Enable debug mode if flag is set
+    if (options.debug) {
+      (config as any).debug = true;
+    }
     spinner.succeed('Configuration loaded');
 
     spinner.start('Initializing workflow engine');

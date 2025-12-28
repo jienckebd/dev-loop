@@ -10,8 +10,8 @@ export async function watchCommand(options: { config?: string; debug?: boolean }
 
   try {
     const config = await loadConfig(options.config);
-    // Enable debug mode in config
-    if (debug) {
+    // Enable debug mode if flag is set OR if config has debug enabled
+    if (debug || (config as any).debug) {
       (config as any).debug = true;
     }
     spinner.succeed('Configuration loaded');

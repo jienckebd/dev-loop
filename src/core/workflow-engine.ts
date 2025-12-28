@@ -7,7 +7,7 @@ import { Task, WorkflowState, CodeChanges, TaskContext } from '../types';
 import { TaskMasterBridge } from './task-bridge';
 import { StateManager } from './state-manager';
 import { TemplateManager } from './template-manager';
-import { InterventionSystem, ApprovalResult } from './intervention';
+import { InterventionSystem } from './intervention';
 import { AIProviderFactory } from '../providers/ai/factory';
 import { TestRunnerFactory } from '../providers/test-runners/factory';
 import { LogAnalyzerFactory } from '../providers/log-analyzers/factory';
@@ -16,6 +16,7 @@ import { SmokeTestValidator, SmokeTestConfig, SmokeTestResult } from '../provide
 import { CodeContextProvider } from './code-context-provider';
 import { ValidationGate } from './validation-gate';
 import { PatternLearningSystem } from './pattern-learner';
+import { DebugMetrics } from './debug-metrics';
 
 const execAsync = promisify(exec);
 
@@ -38,6 +39,7 @@ export class WorkflowEngine {
   private codeContextProvider: CodeContextProvider;
   private validationGate: ValidationGate;
   private patternLearner: PatternLearningSystem;
+  private debugMetrics?: DebugMetrics;
   private shutdownRequested = false;
   private debug = false;
 
@@ -67,6 +69,12 @@ export class WorkflowEngine {
       (config as any).patternLearning?.patternsPath,
       this.debug
     );
+
+    // Initialize debug metrics if enabled
+    if ((config as any).metrics?.enabled !== false) {
+      const metricsPath = (config as any).metrics?.path || '.devloop/metrics.json';
+      this.debugMetrics = new DebugMetrics(metricsPath);
+    }
   }
 
   async runOnce(): Promise<WorkflowResult> {
@@ -87,11 +95,30 @@ export class WorkflowEngine {
         currentTask: task,
       });
 
+      // Start metrics tracking
+      const startTime = Date.now();
+      if (this.debugMetrics) {
+        this.debugMetrics.startRun(parseInt(task.id, 10), task.title);
+        this.debugMetrics.setTaskInfo(parseInt(task.id, 10), task.title);
+      }
+
       // Update task status to in-progress
       await this.taskBridge.updateTaskStatus(task.id, 'in-progress');
 
       // Generate code using AI
       const { codebaseContext, targetFiles, existingCode } = await this.getCodebaseContext(task);
+      
+      // Record context metrics
+      if (this.debugMetrics) {
+        const filesIncluded = targetFiles ? targetFiles.split('\n').filter(f => f.trim()).length : 0;
+        const filesTruncated = 0; // TODO: track truncation if we add that capability
+        this.debugMetrics.recordContext(
+          codebaseContext?.length || 0,
+          filesIncluded,
+          filesTruncated
+        );
+      }
+      
       const context: TaskContext = {
         task,
         codebaseContext,
@@ -146,6 +173,9 @@ export class WorkflowEngine {
 
       console.log('[WorkflowEngine] Calling AI provider to generate code...');
       console.log('[WorkflowEngine] Task:', context.task.title);
+      
+      // Record AI call timing
+      const aiCallStart = Date.now();
       if (this.debug) {
         console.log('\n[DEBUG] ===== TASK EXECUTION START =====');
         console.log(`[DEBUG] Task ID: ${task.id}`);
@@ -165,6 +195,20 @@ export class WorkflowEngine {
         console.log('[DEBUG] ===== TASK EXECUTION DETAILS =====\n');
       }
       const changes = await this.aiProvider.generateCode(template, context);
+      const aiCallDuration = Date.now() - aiCallStart;
+      
+      // Record AI call metrics
+      if (this.debugMetrics) {
+        this.debugMetrics.recordTiming('aiCall', aiCallDuration);
+        // Record token usage if available
+        if ('getLastTokens' in this.aiProvider && typeof this.aiProvider.getLastTokens === 'function') {
+          const tokens = (this.aiProvider as any).getLastTokens();
+          if (tokens.input || tokens.output) {
+            this.debugMetrics.recordTokens(tokens.input || 0, tokens.output || 0);
+          }
+        }
+      }
+      
       console.log('[WorkflowEngine] AI response received, files:', changes.files?.length || 0);
       if (this.debug && changes.summary) {
         console.log(`[DEBUG] AI summary: ${changes.summary}`);
@@ -180,6 +224,11 @@ export class WorkflowEngine {
         const approval = await this.intervention.requestApproval(changes);
         if (!approval.approved) {
           // Reject changes, mark task as pending again
+          const totalDuration = Date.now() - startTime;
+          if (this.debugMetrics) {
+            this.debugMetrics.recordTiming('total', totalDuration);
+            this.debugMetrics.completeRun('failed');
+          }
           await this.taskBridge.updateTaskStatus(task.id, 'pending');
           await this.updateState({ status: 'idle' });
           return {
@@ -238,6 +287,14 @@ export class WorkflowEngine {
       console.log('[WorkflowEngine] Applying changes to filesystem...');
       const applyResult = await this.applyChanges(changes);
 
+      // Record patch metrics
+      if (this.debugMetrics && changes.files) {
+        const totalPatches = changes.files.reduce((sum, file) => sum + (file.patches?.length || 0), 0);
+        const succeeded = totalPatches - applyResult.failedPatches.length;
+        const failed = applyResult.failedPatches.length;
+        this.debugMetrics.recordPatches(totalPatches, succeeded, failed);
+      }
+
       if (!applyResult.success) {
         console.error('[WorkflowEngine] Some patches failed to apply');
         // Include failed patches in error context for next task
@@ -255,6 +312,14 @@ export class WorkflowEngine {
         if (fixTask) {
           await this.taskBridge.updateTaskStatus(task.id, 'pending');
         }
+        
+        // Complete metrics with failure
+        const totalDuration = Date.now() - startTime;
+        if (this.debugMetrics) {
+          this.debugMetrics.recordTiming('total', totalDuration);
+          this.debugMetrics.completeRun('failed');
+        }
+        
         await this.updateState({ status: 'idle' });
         return {
           completed: false,
@@ -286,19 +351,33 @@ export class WorkflowEngine {
       console.log('[WorkflowEngine] Running tests...');
 
       // Run tests
+      const testRunStart = Date.now();
       const testResult = await this.testRunner.run({
         command: this.config.testing.command,
         timeout: this.config.testing.timeout,
         artifactsDir: this.config.testing.artifactsDir,
       });
+      const testRunDuration = Date.now() - testRunStart;
+
+      // Record test run metrics
+      if (this.debugMetrics) {
+        this.debugMetrics.recordTiming('testRun', testRunDuration);
+      }
 
       // Update state: AnalyzingLogs
       await this.updateState({ status: 'analyzing-logs' });
 
       // Analyze logs if configured
+      const logAnalysisStart = Date.now();
       let logAnalysis = null;
       if (this.config.logs.sources.length > 0) {
         logAnalysis = await this.logAnalyzer.analyze(this.config.logs.sources);
+      }
+      const logAnalysisDuration = Date.now() - logAnalysisStart;
+
+      // Record log analysis metrics
+      if (this.debugMetrics) {
+        this.debugMetrics.recordTiming('logAnalysis', logAnalysisDuration);
       }
 
       // Run smoke tests if configured
@@ -386,6 +465,13 @@ export class WorkflowEngine {
           console.log(`[WorkflowEngine] Task ${task.id} blocked after max retries, moving to next task`);
         }
 
+        // Complete metrics with failure
+        const totalDuration = Date.now() - startTime;
+        if (this.debugMetrics) {
+          this.debugMetrics.recordTiming('total', totalDuration);
+          this.debugMetrics.completeRun('failed');
+        }
+
         await this.updateState({ status: 'idle' });
 
         return {
@@ -402,6 +488,13 @@ export class WorkflowEngine {
       // Mark task as done
       await this.taskBridge.updateTaskStatus(task.id, 'done');
 
+      // Complete metrics with success
+      const totalDuration = Date.now() - startTime;
+      if (this.debugMetrics) {
+        this.debugMetrics.recordTiming('total', totalDuration);
+        this.debugMetrics.completeRun('completed');
+      }
+
       // Update workflow state
       const state = await this.stateManager.getWorkflowState();
       await this.updateState({
@@ -416,6 +509,10 @@ export class WorkflowEngine {
         taskId: task.id,
       };
     } catch (error) {
+      // Complete metrics with failure on exception
+      if (this.debugMetrics) {
+        this.debugMetrics.completeRun('failed');
+      }
       await this.updateState({ status: 'idle' });
       return {
         completed: false,

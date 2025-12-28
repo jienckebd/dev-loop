@@ -12,6 +12,7 @@ export class AnthropicProvider implements AIProvider {
   private maxRetries = 3;
   private baseDelay = 60000; // 60 seconds base delay for rate limits
   private debug = false;
+  private lastTokens: { input?: number; output?: number } = {};
 
   constructor(private config: AIProviderConfig) {
     if (!config.apiKey) {
@@ -30,6 +31,13 @@ export class AnthropicProvider implements AIProvider {
       this.frameworkConfig = config.frameworkConfig;
       console.log('[Anthropic] Using framework config:', this.frameworkConfig.type || 'generic');
     }
+  }
+
+  /**
+   * Get last token usage from the most recent API call
+   */
+  public getLastTokens(): { input?: number; output?: number } {
+    return { ...this.lastTokens };
   }
 
   /**
@@ -164,6 +172,14 @@ ${prompt}`;
         });
 
         const content = response.content[0];
+
+        // Store token usage for metrics
+        if (response.usage) {
+          this.lastTokens = {
+            input: response.usage.input_tokens,
+            output: response.usage.output_tokens,
+          };
+        }
 
         // Debug: Log response metadata
         if (this.debug) {

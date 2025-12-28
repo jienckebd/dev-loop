@@ -7,6 +7,11 @@ const logSourceSchema = z.object({
 });
 
 const configSchema = z.object({
+  debug: z.boolean().default(false),
+  metrics: z.object({
+    enabled: z.boolean().default(true),
+    path: z.string().default('.devloop/metrics.json'),
+  }).optional(),
   ai: z.object({
     provider: z.enum(['anthropic', 'openai', 'gemini', 'ollama']),
     model: z.string(),

@@ -40,6 +40,7 @@ export async function initCommand(options: { template?: string }): Promise<void>
     }
 
     const config: Config = {
+      debug: false,
       ai: {
         provider: answers.aiProvider,
         model: answers.aiModel,

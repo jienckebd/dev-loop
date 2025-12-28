@@ -7,6 +7,7 @@ import { watchCommand } from './cli/commands/watch';
 import { stopCommand } from './cli/commands/stop';
 import { statusCommand } from './cli/commands/status';
 import { logsCommand } from './cli/commands/logs';
+import { metricsCommand } from './cli/commands/metrics';
 
 const program = new Command();
 
@@ -25,6 +26,7 @@ program
   .command('run')
   .description('Execute one iteration of the workflow loop')
   .option('-c, --config <path>', 'Path to config file', 'devloop.config.js')
+  .option('-d, --debug', 'Enable debug mode with verbose output')
   .action(runCommand);
 
 program
@@ -51,6 +53,17 @@ program
   .option('-c, --config <path>', 'Path to config file', 'devloop.config.js')
   .option('--analyze', 'Run log analysis')
   .action(logsCommand);
+
+program
+  .command('metrics')
+  .description('View debug metrics and trends over time')
+  .option('-c, --config <path>', 'Path to config file', 'devloop.config.js')
+  .option('--last <n>', 'Show last N runs', (v) => parseInt(v, 10))
+  .option('--task <id>', 'Show metrics for specific task', (v) => parseInt(v, 10))
+  .option('--summary', 'Show summary only')
+  .option('--json', 'Output as JSON')
+  .option('--clear', 'Clear all metrics')
+  .action(metricsCommand);
 
 program.parse();
 

@@ -6,30 +6,60 @@ A TypeScript CLI application that orchestrates the complete PRD-to-validated-cod
 
 ## Overview
 
-dev-loop transforms Product Requirements Documents (PRDs) into fully tested, production-ready code through an automated orchestration loop:
+dev-loop transforms Product Requirements Documents (PRDs) into fully tested, production-ready code through an automated orchestration loop. It coordinates AI providers, test runners, and log analyzers to build features and tests together, running continuously until all requirements are implemented and validated.
 
-**Core Workflow:**
-1. **Task Creation**: Parse PRD into tasks that bundle feature code + test code together via TaskMasterBridge
-2. **Orchestration**: WorkflowEngine fetches tasks, manages state, and coordinates all components
-3. **Code Generation**: AI Provider generates both feature implementation and test code simultaneously
-4. **Approval**: Intervention System optionally requires human approval (autonomous/review/hybrid modes)
-5. **Validation**: Test Runner executes tests and collects artifacts (screenshots, videos, logs)
-6. **Analysis**: Log Analyzer detects issues through pattern matching and AI-powered analysis
-7. **Iteration**: State Manager updates status, creates fix tasks when needed, and loops until PRD is 100% complete
+## Quick Start
 
-**Key Architecture Components:**
-- **WorkflowEngine**: State machine orchestrating the entire lifecycle
-- **TaskMasterBridge**: Wrapper around task-master-ai for task management
-- **AI Providers**: Anthropic Claude, OpenAI GPT, Google Gemini, Ollama (with fallback support)
-- **Test Runners**: Playwright and Cypress with artifact collection
-- **Log Analyzers**: Hybrid pattern matching + AI analysis for issue detection
-- **Intervention System**: Configurable approval gates (autonomous/review/hybrid)
-- **State Manager**: Persistent state tracking across restarts
-- **Template Manager**: Flexible prompt templates (builtin/ai-dev-tasks/custom)
+### Prerequisites
 
-## PRD to Feature Lifecycle
+- **Node.js 20+** - Required for Task Master and modern dependencies
+- **AI API Key** - Anthropic, OpenAI, or other provider API key
+- **Test Framework** - Playwright or Cypress (depending on your config)
 
-The complete workflow from Product Requirements Document to validated feature implementation:
+### Installation
+
+```bash
+# Install globally
+npm install -g dev-loop
+
+# Or use locally
+npm install
+npm run build
+npm start -- --help
+```
+
+### Setup
+
+```bash
+# Ensure Node.js 20+ is active
+nvm use 20
+
+# Create .env with API key
+echo "ANTHROPIC_API_KEY=your_key_here" > .env
+
+# Initialize dev-loop in your project
+dev-loop init
+```
+
+### First Run
+
+```bash
+# Initialize Task Master (if not already done)
+task-master init
+
+# Parse PRD into tasks
+task-master parse-prd --input=path/to/prd.md
+
+# Run one iteration
+dev-loop run
+
+# Or run in daemon mode (continuous)
+dev-loop watch
+```
+
+## Configuration
+
+Create a `devloop.config.js` file in your project root. Here's a comprehensive configuration example:
 
 ```
 ┌─────────────────────────────────────────────────────────────────────────────┐
@@ -486,6 +516,12 @@ Create a `devloop.config.js` file in your project root:
 
 ```javascript
 module.exports = {
+  // Debug mode - enable verbose output and metrics tracking
+  debug: false,
+  metrics: {
+    enabled: true,
+    path: '.devloop/metrics.json',
+  },
   // AI Provider configuration
   ai: {
     provider: 'anthropic', // 'anthropic' | 'openai' | 'gemini' | 'ollama'
@@ -574,6 +610,14 @@ dev-loop status
 
 # View/analyze logs
 dev-loop logs
+
+# View debug metrics and trends
+dev-loop metrics
+dev-loop metrics --last 10
+dev-loop metrics --task 122
+dev-loop metrics --summary
+dev-loop metrics --json
+dev-loop metrics --clear
 ```
 
 ### Task Master Commands (via wrapper)
@@ -616,6 +660,93 @@ task-master update-task --id=<id> --prompt="..."
 - 📝 **Template System**: Built-in, ai-dev-tasks, or custom prompt templates
 - 🔁 **Daemon Mode**: Continuous execution until PRD complete
 - 📤 **CI Integration**: JSON, JUnit XML, and Markdown output formats
+- 📈 **Debug Metrics**: Track execution trends over time
+
+## Advanced Features
+
+### Debug Mode
+
+Debug mode provides detailed output and metrics tracking to help understand system behavior.
+
+**Enable via config:**
+```javascript
+module.exports = {
+  debug: true,
+  metrics: {
+    enabled: true,
+    path: '.devloop/metrics.json',
+  },
+};
+```
+
+**Enable via CLI:**
+```bash
+dev-loop run --debug
+dev-loop watch --debug
+```
+
+**Debug output includes:**
+- Full AI prompts (system and user prompts)
+- Token usage (input/output tokens)
+- API request/response details
+- File discovery and context gathering details
+- Patch search/replace strings
+- Validation step details
+- Pattern learning matches
+- Timing for each phase (AI call, test run, log analysis)
+
+**View metrics:**
+```bash
+# View summary and recent runs
+dev-loop metrics
+
+# View last N runs
+dev-loop metrics --last 10
+
+# View metrics for specific task
+dev-loop metrics --task 122
+
+# View summary only
+dev-loop metrics --summary
+
+# Output as JSON
+dev-loop metrics --json
+
+# Clear all metrics
+dev-loop metrics --clear
+```
+
+Metrics are stored in `.devloop/metrics.json` and track:
+- Timing: AI call duration, test run duration, log analysis duration, total duration
+- Tokens: Input and output tokens per run
+- Context: Context size, files included, files truncated
+- Patches: Attempted, succeeded, failed counts
+- Validation: Pre-validation results, syntax errors
+- Patterns: Patterns matched and applied
+
+### Code Context Provider
+
+Automatically extracts rich context from target files:
+- Function/class signatures
+- Import patterns
+- File skeletons showing available helpers
+- File-specific guidance for AI
+
+### Pre-Apply Validation
+
+Validates code changes before applying to filesystem:
+- Verifies patch search strings exist in files
+- TypeScript/PHP syntax validation
+- Function reference checking
+- Prevents wasted iterations from invalid patches
+
+### Pattern Learning System
+
+Remembers common failure patterns and injects "do not repeat" guidance:
+- Built-in patterns for common AI errors
+- Records patterns from test failures, log analysis, and validation errors
+- Persists learned patterns in `.devloop/patterns.json`
+- Automatically applies relevant patterns to subsequent prompts
 
 ## Intervention Modes
 
