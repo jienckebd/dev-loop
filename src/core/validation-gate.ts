@@ -46,6 +46,19 @@ export class ValidationGate {
     for (const file of changes.files) {
       const filePath = path.resolve(process.cwd(), file.path);
 
+      // Warn about update operations on test files (should use patch instead)
+      if (file.operation === 'update' && await fs.pathExists(filePath)) {
+        if (file.path.includes('.spec.ts') || file.path.includes('.test.ts')) {
+          errors.push({
+            type: 'syntax',
+            file: file.path,
+            message: 'Test files should use operation "patch" not "update" to avoid replacing existing code',
+            suggestion: 'Change operation to "patch" and use search/replace to add new test scenarios.',
+          });
+          continue;
+        }
+      }
+
       // Validate file exists for patch/update operations
       if (file.operation === 'patch' || file.operation === 'update') {
         if (!await fs.pathExists(filePath)) {
