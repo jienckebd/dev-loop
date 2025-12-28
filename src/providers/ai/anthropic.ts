@@ -173,10 +173,12 @@ ${prompt}`;
           }
         }
         
-        // Fallback to finding any JSON object that starts with {"files":
+        // Fallback to finding any JSON object that contains "files" array
         if (!jsonText) {
-          const startIndex = text.indexOf('{"files":');
-          if (startIndex !== -1) {
+          // Look for { followed by optional whitespace and "files"
+          const jsonStartMatch = text.match(/\{\s*"files"\s*:/);
+          if (jsonStartMatch && jsonStartMatch.index !== undefined) {
+            const startIndex = jsonStartMatch.index;
             // Find the matching closing brace
             let depth = 0;
             let endIndex = startIndex;
