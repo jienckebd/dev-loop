@@ -83,12 +83,12 @@ function printRecentRuns(runs: any[], summary: any): void {
   }
 
   console.log(chalk.cyan.bold('Recent Runs:'));
-  
+
   // Calculate success rate from runs
   const completed = runs.filter(r => r.status === 'completed').length;
   const attempted = runs.filter(r => r.status !== 'pending').length;
   const successRate = attempted > 0 ? (completed / attempted * 100).toFixed(1) : '0.0';
-  
+
   console.log(chalk.gray(`  Success rate: ${successRate}% (${completed}/${attempted} completed)`));
   console.log('');
 
@@ -100,7 +100,7 @@ function printRecentRuns(runs: any[], summary: any): void {
   for (const run of runs) {
     const taskId = run.taskId?.toString().padEnd(6) || 'N/A  ';
     const title = (run.taskTitle || 'N/A').substring(0, 36).padEnd(36);
-    const status = run.status === 'completed' 
+    const status = run.status === 'completed'
       ? chalk.green('✓ done  ')
       : run.status === 'failed'
       ? chalk.red('✗ failed')
@@ -124,7 +124,7 @@ function printTaskRuns(runs: any[], taskId: number): void {
     console.log('');
     console.log(chalk.gray(`Run at ${run.timestamp}`));
     console.log(`  Status: ${run.status === 'completed' ? chalk.green('✓ completed') : run.status === 'failed' ? chalk.red('✗ failed') : chalk.yellow('○ pending')}`);
-    
+
     if (run.timing) {
       console.log(chalk.cyan('  Timing:'));
       if (run.timing.aiCallMs) console.log(`    AI Call: ${formatDuration(run.timing.aiCallMs)}`);

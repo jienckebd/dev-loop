@@ -100,7 +100,7 @@ const configSchema = z.object({
     // Custom template path for framework-specific task templates
     templatePath: z.string().optional(),
   }).optional(),
-  
+
   // Enhanced context configuration for better AI prompts
   context: z.object({
     // Include file skeleton in prompts (shows available helpers)
@@ -110,7 +110,7 @@ const configSchema = z.object({
     // Max helper signatures to show
     maxHelperSignatures: z.number().default(20),
   }).optional(),
-  
+
   // Pre-apply validation configuration
   preValidation: z.object({
     // Enable pre-apply validation
@@ -122,7 +122,7 @@ const configSchema = z.object({
     // Validate function references exist (more expensive)
     validateReferences: z.boolean().default(false),
   }).optional(),
-  
+
   // Pattern learning configuration
   patternLearning: z.object({
     // Enable pattern learning

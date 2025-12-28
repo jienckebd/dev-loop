@@ -61,7 +61,7 @@ export class WorkflowEngine {
     this.testRunner = TestRunnerFactory.create(config);
     this.logAnalyzer = LogAnalyzerFactory.create(config);
     this.smokeTestValidator = new SmokeTestValidator(this.debug);
-    
+
     // NEW: Enhanced context and validation components
     this.codeContextProvider = new CodeContextProvider(this.debug);
     this.validationGate = new ValidationGate(this.debug);
@@ -107,7 +107,7 @@ export class WorkflowEngine {
 
       // Generate code using AI
       const { codebaseContext, targetFiles, existingCode } = await this.getCodebaseContext(task);
-      
+
       // Record context metrics
       if (this.debugMetrics) {
         const filesIncluded = targetFiles ? targetFiles.split('\n').filter(f => f.trim()).length : 0;
@@ -118,7 +118,7 @@ export class WorkflowEngine {
           filesTruncated
         );
       }
-      
+
       const context: TaskContext = {
         task,
         codebaseContext,
@@ -173,7 +173,7 @@ export class WorkflowEngine {
 
       console.log('[WorkflowEngine] Calling AI provider to generate code...');
       console.log('[WorkflowEngine] Task:', context.task.title);
-      
+
       // Record AI call timing
       const aiCallStart = Date.now();
       if (this.debug) {
@@ -196,7 +196,7 @@ export class WorkflowEngine {
       }
       const changes = await this.aiProvider.generateCode(template, context);
       const aiCallDuration = Date.now() - aiCallStart;
-      
+
       // Record AI call metrics
       if (this.debugMetrics) {
         this.debugMetrics.recordTiming('aiCall', aiCallDuration);
@@ -208,7 +208,7 @@ export class WorkflowEngine {
           }
         }
       }
-      
+
       console.log('[WorkflowEngine] AI response received, files:', changes.files?.length || 0);
       if (this.debug && changes.summary) {
         console.log(`[DEBUG] AI summary: ${changes.summary}`);
@@ -244,13 +244,13 @@ export class WorkflowEngine {
       if ((this.config as any).preValidation?.enabled !== false) {
         console.log('[WorkflowEngine] Running pre-apply validation...');
         const validationResult = await this.validationGate.validate(changes);
-        
+
         if (!validationResult.valid) {
           console.error('[WorkflowEngine] Pre-apply validation FAILED:');
           for (const error of validationResult.errors) {
             console.error(`  - ${error.type}: ${error.message}`);
           }
-          
+
           // Record patterns for learning
           for (const error of validationResult.errors) {
             await this.patternLearner.recordPattern(
@@ -259,7 +259,7 @@ export class WorkflowEngine {
               error.suggestion
             );
           }
-          
+
           // Create fix task with validation errors
           const errorDescription = this.validationGate.formatErrorsForAI(validationResult);
           const fixTask = await this.taskBridge.createFixTask(
@@ -267,11 +267,19 @@ export class WorkflowEngine {
             `Pre-apply validation failed:\n${errorDescription}`,
             validationResult.errors.map(e => e.message).join('\n')
           );
-          
+
           if (fixTask) {
             await this.taskBridge.updateTaskStatus(task.id, 'pending');
           }
-          
+
+          // Complete metrics with failure
+          const totalDuration = Date.now() - startTime;
+          if (this.debugMetrics) {
+            this.debugMetrics.recordValidation(false, validationResult.errors.length);
+            this.debugMetrics.recordTiming('total', totalDuration);
+            this.debugMetrics.completeRun('failed');
+          }
+
           await this.updateState({ status: 'idle' });
           return {
             completed: false,
@@ -279,6 +287,11 @@ export class WorkflowEngine {
             taskId: task.id,
             error: 'Pre-apply validation failed',
           };
+        }
+        
+        // Record successful validation
+        if (this.debugMetrics) {
+          this.debugMetrics.recordValidation(true, 0);
         }
         console.log('[WorkflowEngine] Pre-apply validation passed');
       }
@@ -312,14 +325,14 @@ export class WorkflowEngine {
         if (fixTask) {
           await this.taskBridge.updateTaskStatus(task.id, 'pending');
         }
-        
+
         // Complete metrics with failure
         const totalDuration = Date.now() - startTime;
         if (this.debugMetrics) {
           this.debugMetrics.recordTiming('total', totalDuration);
           this.debugMetrics.completeRun('failed');
         }
-        
+
         await this.updateState({ status: 'idle' });
         return {
           completed: false,
@@ -775,8 +788,8 @@ export class WorkflowEngine {
   private getTemplateType(targetFiles?: string, task?: Task): 'generic' | string {
     // Detect Playwright test tasks
     const taskText = task ? `${task.title} ${task.description || ''} ${(task as any).details || ''}` : '';
-    const isPlaywrightTask = 
-      targetFiles?.includes('playwright') || 
+    const isPlaywrightTask =
+      targetFiles?.includes('playwright') ||
       targetFiles?.includes('.spec.ts') ||
       targetFiles?.includes('.test.ts') ||
       taskText.toLowerCase().includes('playwright') ||

@@ -160,7 +160,7 @@ export class DebugMetrics {
   private updateSummary(): void {
     const runs = this.metrics.runs;
     const completed = runs.filter(r => r.status === 'completed').length;
-    
+
     this.metrics.summary = {
       totalRuns: runs.length,
       successRate: runs.length > 0 ? completed / runs.length : 0,
