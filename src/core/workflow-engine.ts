@@ -93,8 +93,17 @@ export class WorkflowEngine {
 
       console.log('[WorkflowEngine] Calling AI provider to generate code...');
       console.log('[WorkflowEngine] Task:', context.task.title);
+      if (this.debug) {
+        console.log(`[DEBUG] AI Provider: ${this.aiProvider.name || 'unknown'}`);
+        console.log(`[DEBUG] Model: ${(this.config.ai as any)?.model || 'default'}`);
+        console.log(`[DEBUG] Max tokens: ${(this.config.ai as any)?.maxTokens || 'default'}`);
+        console.log(`[DEBUG] Context size: ${(context as any).existingCode?.length || 0} chars`);
+      }
       const changes = await this.aiProvider.generateCode(template, context);
       console.log('[WorkflowEngine] AI response received, files:', changes.files?.length || 0);
+      if (this.debug && changes.summary) {
+        console.log(`[DEBUG] AI summary: ${changes.summary}`);
+      }
 
       // Update state: ApplyingChanges
       await this.updateState({ status: 'applying-changes' });
@@ -487,6 +496,10 @@ export class WorkflowEngine {
   ): Promise<string[]> {
     const discoveredFiles: Map<string, number> = new Map(); // file -> relevance score
 
+    // Get ignore globs from config
+    const codebaseConfig = this.config.codebase || {};
+    const ignoreGlobs: string[] = (codebaseConfig as any).ignoreGlobs || [];
+
     // Build exclude pattern for grep
     const excludePattern = excludeDirs.map(d => `--exclude-dir=${d}`).join(' ');
     const includePattern = extensions.map(e => `--include=*.${e}`).join(' ');
@@ -510,7 +523,7 @@ export class WorkflowEngine {
         try {
           await execAsync('which rg');
           // Ripgrep command with case-sensitive match for better precision
-          const rgExclude = excludeDirs.map(d => `--glob=!${d}`).join(' ');
+          const rgExclude = [...excludeDirs.map(d => `--glob=!${d}`), ...ignoreGlobs.map(g => `--glob=!${g}`)].join(' ');
           const rgInclude = extensions.map(e => `--glob=*.${e}`).join(' ');
           command = `rg -l -s "${identifier}" ${rgExclude} ${rgInclude} ${searchPath} 2>/dev/null || true`;
         } catch {
@@ -527,10 +540,10 @@ export class WorkflowEngine {
 
         // Score files by how many identifiers they contain
         for (const file of files) {
-          // Skip config/tmp files and test fixtures
-          if (file.includes('/config/tmp/') || file.includes('/fixtures/') || file.includes('/test1/')) {
+          // Check against ignore globs
+          if (this.matchesIgnoreGlob(file, ignoreGlobs)) {
             if (this.debug) {
-              console.log(`[DEBUG] Skipping low-relevance file: ${file}`);
+              console.log(`[DEBUG] Skipping ignored file: ${file}`);
             }
             continue;
           }
@@ -607,6 +620,30 @@ export class WorkflowEngine {
 
   isShutdownRequested(): boolean {
     return this.shutdownRequested;
+  }
+
+  /**
+   * Check if a file path matches any of the ignore glob patterns
+   */
+  private matchesIgnoreGlob(filePath: string, ignoreGlobs: string[]): boolean {
+    for (const glob of ignoreGlobs) {
+      // Convert glob to regex (simple implementation)
+      const regexPattern = glob
+        .replace(/\*\*/g, '.*')           // ** matches anything
+        .replace(/\*/g, '[^/]*')          // * matches anything except /
+        .replace(/\?/g, '.')              // ? matches single char
+        .replace(/\./g, '\\.');           // Escape dots
+
+      try {
+        const regex = new RegExp(regexPattern);
+        if (regex.test(filePath)) {
+          return true;
+        }
+      } catch {
+        // Invalid regex, skip
+      }
+    }
+    return false;
   }
 
   /**
