@@ -508,9 +508,11 @@ export class WorkflowEngine {
   ): Promise<string[]> {
     const discoveredFiles: Map<string, number> = new Map(); // file -> relevance score
 
-    // Get ignore globs from config
+    // Get ignore globs from config, but skip them for test-related tasks
     const codebaseConfig = this.config.codebase || {};
-    const ignoreGlobs: string[] = (codebaseConfig as any).ignoreGlobs || [];
+    const taskText = identifiers.join(' ').toLowerCase();
+    const isTestTask = taskText.includes('test') || taskText.includes('playwright') || taskText.includes('spec');
+    const ignoreGlobs: string[] = isTestTask ? [] : ((codebaseConfig as any).ignoreGlobs || []);
 
     // Build exclude pattern for grep
     const excludePattern = excludeDirs.map(d => `--exclude-dir=${d}`).join(' ');
