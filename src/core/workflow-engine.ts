@@ -193,7 +193,7 @@ export class WorkflowEngine {
           authCommand: this.config.validation.authCommand,
         };
         smokeTestResult = await this.smokeTestValidator.validate(smokeConfig);
-        
+
         if (!smokeTestResult.success) {
           console.log('[WorkflowEngine] Smoke tests FAILED:');
           for (const error of smokeTestResult.errors) {
@@ -227,7 +227,7 @@ export class WorkflowEngine {
           // Include smoke test errors - these are runtime errors caught by HTTP validation
           const smokeErrors = smokeTestResult.errors.slice(0, 10).join('\n');
           errorDescription += '\n\nSmoke Test Errors (Runtime HTTP Validation):\n' + smokeErrors;
-          
+
           // Include response previews for debugging
           for (const result of smokeTestResult.results.filter(r => !r.success)) {
             if (result.responsePreview) {

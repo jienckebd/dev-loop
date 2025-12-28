@@ -1,6 +1,6 @@
 /**
  * Smoke Test Validator
- * 
+ *
  * Makes HTTP requests to configured URLs and validates that they don't return
  * 500 errors or contain PHP error messages. This catches runtime errors that
  * syntax checking cannot detect.
