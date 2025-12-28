@@ -12,6 +12,7 @@ import { AIProviderFactory } from '../providers/ai/factory';
 import { TestRunnerFactory } from '../providers/test-runners/factory';
 import { LogAnalyzerFactory } from '../providers/log-analyzers/factory';
 import { AIProvider } from '../providers/ai/interface';
+import { SmokeTestValidator, SmokeTestConfig, SmokeTestResult } from '../providers/validators/smoke-test';
 
 const execAsync = promisify(exec);
 
@@ -30,6 +31,7 @@ export class WorkflowEngine {
   private aiProvider: AIProvider;
   private testRunner: any;
   private logAnalyzer: any;
+  private smokeTestValidator: SmokeTestValidator;
   private shutdownRequested = false;
   private debug = false;
 
@@ -48,6 +50,7 @@ export class WorkflowEngine {
     this.aiProvider = AIProviderFactory.createWithFallback(config);
     this.testRunner = TestRunnerFactory.create(config);
     this.logAnalyzer = LogAnalyzerFactory.create(config);
+    this.smokeTestValidator = new SmokeTestValidator(this.debug);
   }
 
   async runOnce(): Promise<WorkflowResult> {
@@ -179,15 +182,38 @@ export class WorkflowEngine {
         logAnalysis = await this.logAnalyzer.analyze(this.config.logs.sources);
       }
 
-      // Check if tests passed and no critical errors in logs
+      // Run smoke tests if configured
+      let smokeTestResult: SmokeTestResult | null = null;
+      if (this.config.validation?.enabled && this.config.validation.urls?.length > 0) {
+        console.log('[WorkflowEngine] Running smoke tests...');
+        const smokeConfig: SmokeTestConfig = {
+          baseUrl: this.config.validation.baseUrl,
+          urls: this.config.validation.urls,
+          timeout: this.config.validation.timeout,
+          authCommand: this.config.validation.authCommand,
+        };
+        smokeTestResult = await this.smokeTestValidator.validate(smokeConfig);
+        
+        if (!smokeTestResult.success) {
+          console.log('[WorkflowEngine] Smoke tests FAILED:');
+          for (const error of smokeTestResult.errors) {
+            console.log(`  - ${error}`);
+          }
+        } else {
+          console.log('[WorkflowEngine] Smoke tests passed');
+        }
+      }
+
+      // Check if tests passed and no critical errors in logs or smoke tests
       const hasErrors = !testResult.success ||
-        (logAnalysis && logAnalysis.errors.length > 0);
+        (logAnalysis && logAnalysis.errors.length > 0) ||
+        (smokeTestResult && !smokeTestResult.success);
 
       if (hasErrors) {
         // Create fix task
         await this.updateState({ status: 'creating-fix-task' });
 
-        // Build comprehensive error description including log errors
+        // Build comprehensive error description including log errors and smoke test failures
         let errorDescription = '';
         if (!testResult.success) {
           errorDescription = testResult.output;
@@ -196,6 +222,18 @@ export class WorkflowEngine {
           // Include actual log errors for AI context
           const logErrors = logAnalysis.errors.slice(0, 10).join('\n');
           errorDescription += '\n\nLog Errors:\n' + logErrors;
+        }
+        if (smokeTestResult && !smokeTestResult.success) {
+          // Include smoke test errors - these are runtime errors caught by HTTP validation
+          const smokeErrors = smokeTestResult.errors.slice(0, 10).join('\n');
+          errorDescription += '\n\nSmoke Test Errors (Runtime HTTP Validation):\n' + smokeErrors;
+          
+          // Include response previews for debugging
+          for (const result of smokeTestResult.results.filter(r => !r.success)) {
+            if (result.responsePreview) {
+              errorDescription += `\n\n--- Response from ${result.url} (HTTP ${result.status}) ---\n${result.responsePreview.substring(0, 1000)}`;
+            }
+          }
         }
         if (!errorDescription) {
           errorDescription = logAnalysis?.summary || 'Log analysis found errors';

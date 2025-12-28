@@ -25,6 +25,19 @@ const configSchema = z.object({
     timeout: z.number(),
     artifactsDir: z.string(),
   }),
+  // Smoke test validation - validates runtime behavior via HTTP requests
+  validation: z.object({
+    // Whether to run smoke tests after code changes
+    enabled: z.boolean().default(true),
+    // Base URL for smoke tests
+    baseUrl: z.string(),
+    // URLs to test (relative to baseUrl)
+    urls: z.array(z.string()),
+    // Timeout for each request in ms
+    timeout: z.number().optional(),
+    // Command to get authentication (e.g., "ddev exec drush uli")
+    authCommand: z.string().optional(),
+  }).optional(),
   logs: z.object({
     sources: z.array(logSourceSchema),
     patterns: z.object({

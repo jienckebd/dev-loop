@@ -125,5 +125,12 @@ export interface Config {
   rules?: {
     cursorRulesPath?: string;
   };
+  validation?: {
+    enabled: boolean;
+    baseUrl: string;
+    urls: string[];
+    timeout?: number;
+    authCommand?: string;
+  };
 }
 
