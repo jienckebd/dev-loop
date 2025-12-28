@@ -12,6 +12,8 @@ const configSchema = z.object({
     model: z.string(),
     fallback: z.string().optional(),
     apiKey: z.string().optional(),
+    maxTokens: z.number().optional(),
+    maxContextChars: z.number().optional(),
   }),
   templates: z.object({
     source: z.enum(['builtin', 'ai-dev-tasks', 'custom']),
@@ -29,6 +31,7 @@ const configSchema = z.object({
       error: z.union([z.string(), z.instanceof(RegExp)]),
       warning: z.union([z.string(), z.instanceof(RegExp)]),
     }),
+    ignorePatterns: z.array(z.string()).optional(),
     useAI: z.boolean(),
   }),
   intervention: z.object({
@@ -57,6 +60,10 @@ const configSchema = z.object({
     excludeDirs: z.array(z.string()).optional(),
     // File path patterns to extract from task text (regex patterns)
     filePathPatterns: z.array(z.string()).optional(),
+    // Glob patterns to ignore during file discovery
+    ignoreGlobs: z.array(z.string()).optional(),
+    // Stopwords to filter out from identifier search
+    identifierStopwords: z.array(z.string()).optional(),
   }).optional(),
 });
 

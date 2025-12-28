@@ -395,8 +395,8 @@ export class WorkflowEngine {
     const existingCodeSections: string[] = [];
     const validFiles: string[] = [];
 
-    // Get max context size from config (default ~80k chars = ~20k tokens)
-    const maxContextChars = (this.config.ai as any)?.maxContextChars || 80000;
+    // Get max context size from config (default ~25k chars = ~6k tokens)
+    const maxContextChars = this.config.ai.maxContextChars || 25000;
     let totalContextSize = 0;
     
     if (this.debug) {
