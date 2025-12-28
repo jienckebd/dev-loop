@@ -31,8 +31,13 @@ export class WorkflowEngine {
   private testRunner: any;
   private logAnalyzer: any;
   private shutdownRequested = false;
+  private debug = false;
 
   constructor(private config: Config) {
+    this.debug = (config as any).debug || false;
+    if (this.debug) {
+      console.log('[DEBUG] WorkflowEngine initialized with debug mode');
+    }
     this.taskBridge = new TaskMasterBridge(config);
     this.stateManager = new StateManager(config);
     this.templateManager = new TemplateManager(
@@ -421,6 +426,9 @@ export class WorkflowEngine {
     }
 
     console.log(`[WorkflowEngine] Found ${validFiles.length} relevant files (${totalContextSize} chars):`, validFiles);
+    if (this.debug && mentionedFiles.length > validFiles.length) {
+      console.log(`[DEBUG] Files mentioned but not found/skipped: ${mentionedFiles.filter(f => !validFiles.includes(f)).join(', ')}`);
+    }
 
     return {
       codebaseContext: contexts.length > 0
@@ -477,13 +485,22 @@ export class WorkflowEngine {
     excludeDirs: string[],
     extensions: string[]
   ): Promise<string[]> {
-    const discoveredFiles: string[] = [];
+    const discoveredFiles: Map<string, number> = new Map(); // file -> relevance score
 
     // Build exclude pattern for grep
     const excludePattern = excludeDirs.map(d => `--exclude-dir=${d}`).join(' ');
     const includePattern = extensions.map(e => `--include=*.${e}`).join(' ');
 
-    for (const identifier of identifiers.slice(0, 10)) { // Limit to first 10 identifiers
+    // Prioritize high-value identifiers (class names, function names, file names)
+    const prioritizedIdentifiers = identifiers
+      .filter(id => id.length > 3) // Skip very short identifiers
+      .slice(0, 5); // Limit to first 5 identifiers
+
+    if (this.debug) {
+      console.log(`[DEBUG] Searching for identifiers: ${prioritizedIdentifiers.join(', ')}`);
+    }
+
+    for (const identifier of prioritizedIdentifiers) {
       try {
         // Try ripgrep first (faster), fall back to grep
         let command: string;
@@ -492,10 +509,10 @@ export class WorkflowEngine {
         // Check if ripgrep is available
         try {
           await execAsync('which rg');
-          // Ripgrep command
+          // Ripgrep command with case-sensitive match for better precision
           const rgExclude = excludeDirs.map(d => `--glob=!${d}`).join(' ');
           const rgInclude = extensions.map(e => `--glob=*.${e}`).join(' ');
-          command = `rg -l "${identifier}" ${rgExclude} ${rgInclude} ${searchPath} 2>/dev/null || true`;
+          command = `rg -l -s "${identifier}" ${rgExclude} ${rgInclude} ${searchPath} 2>/dev/null || true`;
         } catch {
           // Fall back to grep
           command = `grep -rl "${identifier}" ${excludePattern} ${includePattern} ${searchPath} 2>/dev/null || true`;
@@ -504,19 +521,39 @@ export class WorkflowEngine {
         const { stdout } = await execAsync(command, { maxBuffer: 1024 * 1024 });
         const files = stdout.trim().split('\n').filter(f => f.length > 0);
 
-        // Limit files per identifier to avoid overwhelming context
-        for (const file of files.slice(0, 3)) {
-          if (!discoveredFiles.includes(file)) {
-            discoveredFiles.push(file);
+        if (this.debug) {
+          console.log(`[DEBUG] Identifier "${identifier}" found in ${files.length} files`);
+        }
+
+        // Score files by how many identifiers they contain
+        for (const file of files) {
+          // Skip config/tmp files and test fixtures
+          if (file.includes('/config/tmp/') || file.includes('/fixtures/') || file.includes('/test1/')) {
+            if (this.debug) {
+              console.log(`[DEBUG] Skipping low-relevance file: ${file}`);
+            }
+            continue;
           }
+          
+          const currentScore = discoveredFiles.get(file) || 0;
+          discoveredFiles.set(file, currentScore + 1);
         }
       } catch {
         // Ignore grep errors
       }
     }
 
+    // Sort by relevance score (files matching more identifiers rank higher)
+    const sortedFiles = Array.from(discoveredFiles.entries())
+      .sort((a, b) => b[1] - a[1])
+      .map(([file]) => file);
+
+    if (this.debug) {
+      console.log(`[DEBUG] Discovered files (by relevance):`, sortedFiles.slice(0, 10));
+    }
+
     // Limit total discovered files
-    return discoveredFiles.slice(0, 10);
+    return sortedFiles.slice(0, 8);
   }
 
   private async executePreTestHooks(): Promise<void> {
