@@ -172,6 +172,18 @@ ${prompt}`;
           }
         }
         
+        // Handle truncated code blocks (no closing ```)
+        if (!jsonText) {
+          const truncatedMatch = text.match(/```json\s*([\s\S]*)$/);
+          if (truncatedMatch) {
+            const blockContent = truncatedMatch[1].trim();
+            if (blockContent.startsWith('{') && blockContent.includes('"files"')) {
+              console.warn('[Anthropic] Response appears truncated (no closing ```), attempting to repair JSON');
+              jsonText = blockContent;
+            }
+          }
+        }
+        
         // Try to find JSON object with "files" key (our expected format)
         if (!jsonText) {
           const filesJsonMatch = text.match(/\{\s*"files"\s*:\s*\[[\s\S]*?\]\s*,\s*"summary"\s*:\s*"[^"]*"\s*\}/);
@@ -206,7 +218,20 @@ ${prompt}`;
             const parsed = JSON.parse(jsonText);
             return parsed as CodeChanges;
           } catch (parseError) {
-            console.warn('[Anthropic] JSON parse failed, using fallback:', parseError instanceof Error ? parseError.message : String(parseError));
+            // Try to repair truncated JSON by closing open structures
+            console.warn('[Anthropic] JSON parse failed, attempting repair...', parseError instanceof Error ? parseError.message : String(parseError));
+            const repaired = this.repairTruncatedJson(jsonText);
+            if (repaired) {
+              try {
+                const parsed = JSON.parse(repaired);
+                console.log('[Anthropic] Successfully repaired truncated JSON');
+                return parsed as CodeChanges;
+              } catch {
+                // Continue to other fallbacks
+              }
+            }
+            
+            console.warn('[Anthropic] JSON repair failed, using extraction fallback');
 
             // Try to extract file path and content from truncated JSON
             // Look for "path": "..." and "content": "..."
@@ -331,6 +356,68 @@ Provide a JSON response with:
         warnings: [],
         summary: 'Failed to analyze error',
       };
+    }
+  }
+
+  /**
+   * Attempts to repair truncated JSON by closing open structures
+   */
+  private repairTruncatedJson(json: string): string | null {
+    let repaired = json.trim();
+    
+    // Count open brackets and braces
+    let openBraces = 0;
+    let openBrackets = 0;
+    let inString = false;
+    let escaped = false;
+    
+    for (let i = 0; i < repaired.length; i++) {
+      const char = repaired[i];
+      
+      if (escaped) {
+        escaped = false;
+        continue;
+      }
+      
+      if (char === '\\') {
+        escaped = true;
+        continue;
+      }
+      
+      if (char === '"') {
+        inString = !inString;
+        continue;
+      }
+      
+      if (!inString) {
+        if (char === '{') openBraces++;
+        if (char === '}') openBraces--;
+        if (char === '[') openBrackets++;
+        if (char === ']') openBrackets--;
+      }
+    }
+    
+    // If we're in a string, try to close it
+    if (inString) {
+      repaired += '"';
+    }
+    
+    // Close open brackets and braces
+    while (openBrackets > 0) {
+      repaired += ']';
+      openBrackets--;
+    }
+    while (openBraces > 0) {
+      repaired += '}';
+      openBraces--;
+    }
+    
+    // Try to parse the repaired JSON
+    try {
+      JSON.parse(repaired);
+      return repaired;
+    } catch {
+      return null;
     }
   }
 }
