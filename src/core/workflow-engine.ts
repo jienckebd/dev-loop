@@ -13,6 +13,9 @@ import { TestRunnerFactory } from '../providers/test-runners/factory';
 import { LogAnalyzerFactory } from '../providers/log-analyzers/factory';
 import { AIProvider } from '../providers/ai/interface';
 import { SmokeTestValidator, SmokeTestConfig, SmokeTestResult } from '../providers/validators/smoke-test';
+import { CodeContextProvider } from './code-context-provider';
+import { ValidationGate } from './validation-gate';
+import { PatternLearningSystem } from './pattern-learner';
 
 const execAsync = promisify(exec);
 
@@ -32,6 +35,9 @@ export class WorkflowEngine {
   private testRunner: any;
   private logAnalyzer: any;
   private smokeTestValidator: SmokeTestValidator;
+  private codeContextProvider: CodeContextProvider;
+  private validationGate: ValidationGate;
+  private patternLearner: PatternLearningSystem;
   private shutdownRequested = false;
   private debug = false;
 
@@ -45,13 +51,22 @@ export class WorkflowEngine {
     this.templateManager = new TemplateManager(
       config.templates.source,
       config.templates.customPath,
-      (config as any).framework // Pass framework config for template selection
+      (config as any).framework, // Pass framework config for template selection
+      this.debug
     );
     this.intervention = new InterventionSystem(config);
     this.aiProvider = AIProviderFactory.createWithFallback(config);
     this.testRunner = TestRunnerFactory.create(config);
     this.logAnalyzer = LogAnalyzerFactory.create(config);
     this.smokeTestValidator = new SmokeTestValidator(this.debug);
+    
+    // NEW: Enhanced context and validation components
+    this.codeContextProvider = new CodeContextProvider(this.debug);
+    this.validationGate = new ValidationGate(this.debug);
+    this.patternLearner = new PatternLearningSystem(
+      (config as any).patternLearning?.patternsPath,
+      this.debug
+    );
   }
 
   async runOnce(): Promise<WorkflowResult> {
@@ -82,7 +97,39 @@ export class WorkflowEngine {
         codebaseContext,
       };
 
-      // Get template with context substitution
+      // NEW: Generate file-specific guidance from CodeContextProvider
+      let fileGuidance = '';
+      if ((this.config as any).context?.includeSkeleton !== false && targetFiles) {
+        const primaryFile = targetFiles.split('\n')[0];
+        if (primaryFile) {
+          try {
+            fileGuidance = await this.codeContextProvider.generateFileGuidance(primaryFile);
+            if (this.debug) {
+              console.log(`[DEBUG] Generated file guidance for ${primaryFile} (${fileGuidance.length} chars)`);
+            }
+          } catch (err) {
+            console.warn('[WorkflowEngine] Could not generate file guidance:', err);
+          }
+        }
+      }
+
+      // NEW: Generate pattern guidance from PatternLearner
+      let patternGuidance = '';
+      if ((this.config as any).patternLearning?.enabled !== false) {
+        try {
+          patternGuidance = await this.patternLearner.generateGuidancePrompt(
+            task,
+            targetFiles?.split('\n')
+          );
+          if (this.debug && patternGuidance) {
+            console.log(`[DEBUG] Generated pattern guidance (${patternGuidance.length} chars)`);
+          }
+        } catch (err) {
+          console.warn('[WorkflowEngine] Could not generate pattern guidance:', err);
+        }
+      }
+
+      // Get template with context substitution (now includes file and pattern guidance)
       const template = await this.templateManager.getTaskGenerationTemplateWithContext({
         task: {
           title: task.title,
@@ -93,6 +140,8 @@ export class WorkflowEngine {
         targetFiles,
         existingCode,
         templateType: this.getTemplateType(targetFiles, task),
+        fileGuidance,
+        patternGuidance,
       });
 
       console.log('[WorkflowEngine] Calling AI provider to generate code...');
@@ -140,6 +189,49 @@ export class WorkflowEngine {
             error: approval.reason || 'Changes rejected by user',
           };
         }
+      }
+
+      // NEW: Pre-apply validation
+      if ((this.config as any).preValidation?.enabled !== false) {
+        console.log('[WorkflowEngine] Running pre-apply validation...');
+        const validationResult = await this.validationGate.validate(changes);
+        
+        if (!validationResult.valid) {
+          console.error('[WorkflowEngine] Pre-apply validation FAILED:');
+          for (const error of validationResult.errors) {
+            console.error(`  - ${error.type}: ${error.message}`);
+          }
+          
+          // Record patterns for learning
+          for (const error of validationResult.errors) {
+            await this.patternLearner.recordPattern(
+              error.message,
+              error.file,
+              error.suggestion
+            );
+          }
+          
+          // Create fix task with validation errors
+          const errorDescription = this.validationGate.formatErrorsForAI(validationResult);
+          const fixTask = await this.taskBridge.createFixTask(
+            task.id,
+            `Pre-apply validation failed:\n${errorDescription}`,
+            validationResult.errors.map(e => e.message).join('\n')
+          );
+          
+          if (fixTask) {
+            await this.taskBridge.updateTaskStatus(task.id, 'pending');
+          }
+          
+          await this.updateState({ status: 'idle' });
+          return {
+            completed: false,
+            noTasks: false,
+            taskId: task.id,
+            error: 'Pre-apply validation failed',
+          };
+        }
+        console.log('[WorkflowEngine] Pre-apply validation passed');
       }
 
       // Apply changes to filesystem
@@ -264,6 +356,20 @@ export class WorkflowEngine {
         }
         if (!errorDescription) {
           errorDescription = logAnalysis?.summary || 'Log analysis found errors';
+        }
+
+        // NEW: Record patterns from test failures for learning
+        if ((this.config as any).patternLearning?.enabled !== false) {
+          try {
+            await this.patternLearner.recordPattern(
+              errorDescription.substring(0, 500),
+              targetFiles?.split('\n')[0]
+            );
+          } catch (err) {
+            if (this.debug) {
+              console.warn('[WorkflowEngine] Could not record pattern:', err);
+            }
+          }
         }
 
         const fixTask = await this.taskBridge.createFixTask(

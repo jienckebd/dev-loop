@@ -1,0 +1,297 @@
+import * as fs from 'fs-extra';
+import * as path from 'path';
+import { exec } from 'child_process';
+import { promisify } from 'util';
+import { CodeChanges, CodePatch } from '../types';
+
+const execAsync = promisify(exec);
+
+export interface ValidationError {
+  type: 'syntax' | 'missing_function' | 'missing_import' | 'patch_not_found' | 'file_not_found';
+  file: string;
+  message: string;
+  suggestion?: string;
+  patchIndex?: number;
+}
+
+export interface ValidationResult {
+  valid: boolean;
+  errors: ValidationError[];
+  warnings: string[];
+}
+
+/**
+ * ValidationGate validates code changes before they are applied to the filesystem.
+ * This prevents wasted iterations where invalid code is applied and tests fail.
+ * 
+ * Validations performed:
+ * 1. Patch search strings exist in target files
+ * 2. TypeScript syntax is valid (for .ts files)
+ * 3. Referenced functions exist (optional, more expensive)
+ */
+export class ValidationGate {
+  private debug: boolean;
+
+  constructor(debug = false) {
+    this.debug = debug;
+  }
+
+  /**
+   * Validate all code changes before applying.
+   */
+  async validate(changes: CodeChanges): Promise<ValidationResult> {
+    const errors: ValidationError[] = [];
+    const warnings: string[] = [];
+
+    for (const file of changes.files) {
+      const filePath = path.resolve(process.cwd(), file.path);
+
+      // Validate file exists for patch/update operations
+      if (file.operation === 'patch' || file.operation === 'update') {
+        if (!await fs.pathExists(filePath)) {
+          if (file.operation === 'patch') {
+            errors.push({
+              type: 'file_not_found',
+              file: file.path,
+              message: `Cannot patch non-existent file: ${file.path}`,
+              suggestion: 'Use operation "create" to create a new file, or check the file path.',
+            });
+            continue;
+          }
+          // For update, we'll create the file if it doesn't exist
+        }
+      }
+
+      // Validate patches
+      if (file.operation === 'patch' && file.patches) {
+        const patchErrors = await this.validatePatches(filePath, file.patches);
+        errors.push(...patchErrors);
+      }
+
+      // Validate syntax for TypeScript files
+      if ((file.operation === 'create' || file.operation === 'update') && file.content) {
+        if (file.path.endsWith('.ts') || file.path.endsWith('.tsx')) {
+          const syntaxErrors = await this.validateTypeScriptSyntax(file.content, file.path);
+          errors.push(...syntaxErrors);
+        }
+      }
+    }
+
+    return {
+      valid: errors.length === 0,
+      errors,
+      warnings,
+    };
+  }
+
+  /**
+   * Validate that patch search strings exist in the target file.
+   */
+  async validatePatches(filePath: string, patches: CodePatch[]): Promise<ValidationError[]> {
+    const errors: ValidationError[] = [];
+
+    if (!await fs.pathExists(filePath)) {
+      return []; // Already handled in main validate
+    }
+
+    const content = await fs.readFile(filePath, 'utf-8');
+
+    for (let i = 0; i < patches.length; i++) {
+      const patch = patches[i];
+      
+      if (!content.includes(patch.search)) {
+        // Try to find similar content to suggest
+        const suggestion = this.findSimilarContent(content, patch.search);
+        
+        errors.push({
+          type: 'patch_not_found',
+          file: path.relative(process.cwd(), filePath),
+          patchIndex: i + 1,
+          message: `Patch ${i + 1}: Search string not found in file`,
+          suggestion: suggestion || 'Ensure the search string matches EXACTLY, including whitespace and line endings.',
+        });
+      }
+    }
+
+    return errors;
+  }
+
+  /**
+   * Try to find similar content in file to help debug failed patches.
+   */
+  private findSimilarContent(content: string, search: string): string | undefined {
+    // Get first meaningful line of search string
+    const firstLine = search.split('\n')
+      .map(l => l.trim())
+      .filter(l => l.length > 10)[0];
+
+    if (!firstLine) {
+      return undefined;
+    }
+
+    // Search for similar lines
+    const lines = content.split('\n');
+    const threshold = 0.6; // 60% similarity
+
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i].trim();
+      if (this.similarity(line, firstLine) > threshold) {
+        const contextStart = Math.max(0, i - 2);
+        const contextEnd = Math.min(lines.length, i + 3);
+        const context = lines.slice(contextStart, contextEnd).join('\n');
+        return `Similar content found at line ${i + 1}:\n${context}`;
+      }
+    }
+
+    return undefined;
+  }
+
+  /**
+   * Simple string similarity using Jaccard index of character bigrams.
+   */
+  private similarity(a: string, b: string): number {
+    if (a === b) return 1;
+    if (a.length < 2 || b.length < 2) return 0;
+
+    const getBigrams = (s: string): Set<string> => {
+      const bigrams = new Set<string>();
+      for (let i = 0; i < s.length - 1; i++) {
+        bigrams.add(s.substring(i, i + 2));
+      }
+      return bigrams;
+    };
+
+    const aBigrams = getBigrams(a.toLowerCase());
+    const bBigrams = getBigrams(b.toLowerCase());
+    
+    let intersection = 0;
+    for (const bigram of aBigrams) {
+      if (bBigrams.has(bigram)) {
+        intersection++;
+      }
+    }
+
+    return intersection / (aBigrams.size + bBigrams.size - intersection);
+  }
+
+  /**
+   * Validate TypeScript syntax using tsc or a simple regex check.
+   */
+  async validateTypeScriptSyntax(content: string, filePath: string): Promise<ValidationError[]> {
+    const errors: ValidationError[] = [];
+
+    // Quick regex-based checks for common syntax errors
+    const syntaxChecks = [
+      {
+        pattern: /\bfunction\s+\(/,
+        message: 'Anonymous function declared with "function" keyword but no name',
+        suggestion: 'Add a function name or use arrow function syntax',
+      },
+      {
+        pattern: /\}\s*\}\s*\}\s*$/,
+        message: 'Possible extra closing braces at end of file',
+        suggestion: 'Check brace matching',
+      },
+      {
+        pattern: /^\s*}\s*;?\s*$/m,
+        check: (content: string) => {
+          // Count opening and closing braces
+          const opens = (content.match(/\{/g) || []).length;
+          const closes = (content.match(/\}/g) || []).length;
+          return opens !== closes;
+        },
+        message: 'Mismatched braces detected',
+        suggestion: 'Check that all opening braces have matching closing braces',
+      },
+    ];
+
+    for (const check of syntaxChecks) {
+      if ('check' in check && check.check) {
+        if (check.check(content)) {
+          errors.push({
+            type: 'syntax',
+            file: filePath,
+            message: check.message,
+            suggestion: check.suggestion,
+          });
+        }
+      } else if (check.pattern.test(content)) {
+        errors.push({
+          type: 'syntax',
+          file: filePath,
+          message: check.message,
+          suggestion: check.suggestion,
+        });
+      }
+    }
+
+    // Try to use tsc for real syntax validation if available
+    try {
+      // Write content to temp file
+      const tempFile = path.join(process.cwd(), '.devloop', 'temp-validate.ts');
+      await fs.ensureDir(path.dirname(tempFile));
+      await fs.writeFile(tempFile, content, 'utf-8');
+
+      try {
+        // Run tsc --noEmit to check syntax
+        await execAsync(`npx tsc --noEmit --skipLibCheck ${tempFile}`, {
+          cwd: process.cwd(),
+          timeout: 10000,
+        });
+      } catch (error: any) {
+        // Parse tsc error output
+        if (error.stderr || error.stdout) {
+          const output = error.stderr || error.stdout;
+          const errorLines = output.split('\n').filter((l: string) => l.includes('error TS'));
+          
+          if (errorLines.length > 0) {
+            errors.push({
+              type: 'syntax',
+              file: filePath,
+              message: `TypeScript compilation errors: ${errorLines.slice(0, 3).join('; ')}`,
+              suggestion: 'Fix TypeScript syntax errors before applying',
+            });
+          }
+        }
+      } finally {
+        // Clean up temp file
+        await fs.remove(tempFile).catch(() => {});
+      }
+    } catch {
+      // tsc not available or failed, rely on regex checks only
+      if (this.debug) {
+        console.log('[ValidationGate] tsc validation skipped (not available)');
+      }
+    }
+
+    return errors;
+  }
+
+  /**
+   * Format validation errors for AI consumption.
+   */
+  formatErrorsForAI(result: ValidationResult): string {
+    if (result.valid) {
+      return '';
+    }
+
+    const sections: string[] = [
+      '## VALIDATION FAILED - Fix these errors before proceeding:',
+      '',
+    ];
+
+    for (const error of result.errors) {
+      sections.push(`### ${error.type.toUpperCase()}: ${error.file}`);
+      sections.push(`- **Error**: ${error.message}`);
+      if (error.patchIndex) {
+        sections.push(`- **Patch Index**: ${error.patchIndex}`);
+      }
+      if (error.suggestion) {
+        sections.push(`- **Suggestion**: ${error.suggestion}`);
+      }
+      sections.push('');
+    }
+
+    return sections.join('\n');
+  }
+}

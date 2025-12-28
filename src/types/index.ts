@@ -156,5 +156,37 @@ export interface Config {
   };
   // Framework-specific configuration
   framework?: FrameworkConfig;
+  
+  // Enhanced context configuration
+  context?: {
+    // Include file skeleton in prompts (shows available helpers)
+    includeSkeleton?: boolean;
+    // Include import section explicitly
+    includeImports?: boolean;
+    // Max helper signatures to show
+    maxHelperSignatures?: number;
+  };
+  
+  // Pre-apply validation configuration
+  preValidation?: {
+    // Enable pre-apply validation
+    enabled?: boolean;
+    // Max validation retries before creating fix task
+    maxRetries?: number;
+    // Validate TypeScript syntax
+    validateSyntax?: boolean;
+    // Validate function references exist
+    validateReferences?: boolean;
+  };
+  
+  // Pattern learning configuration
+  patternLearning?: {
+    // Enable pattern learning
+    enabled?: boolean;
+    // Path to patterns file
+    patternsPath?: string;
+    // Include builtin patterns
+    useBuiltinPatterns?: boolean;
+  };
 }
 

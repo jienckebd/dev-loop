@@ -95,6 +95,38 @@ const configSchema = z.object({
     // Custom template path for framework-specific task templates
     templatePath: z.string().optional(),
   }).optional(),
+  
+  // Enhanced context configuration for better AI prompts
+  context: z.object({
+    // Include file skeleton in prompts (shows available helpers)
+    includeSkeleton: z.boolean().default(true),
+    // Include import section explicitly
+    includeImports: z.boolean().default(true),
+    // Max helper signatures to show
+    maxHelperSignatures: z.number().default(20),
+  }).optional(),
+  
+  // Pre-apply validation configuration
+  preValidation: z.object({
+    // Enable pre-apply validation
+    enabled: z.boolean().default(true),
+    // Max validation retries before creating fix task
+    maxRetries: z.number().default(2),
+    // Validate TypeScript syntax
+    validateSyntax: z.boolean().default(true),
+    // Validate function references exist (more expensive)
+    validateReferences: z.boolean().default(false),
+  }).optional(),
+  
+  // Pattern learning configuration
+  patternLearning: z.object({
+    // Enable pattern learning
+    enabled: z.boolean().default(true),
+    // Path to patterns file
+    patternsPath: z.string().default('.devloop/patterns.json'),
+    // Include builtin patterns
+    useBuiltinPatterns: z.boolean().default(true),
+  }).optional(),
 });
 
 export type Config = z.infer<typeof configSchema>;
