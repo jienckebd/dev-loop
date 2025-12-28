@@ -8,11 +8,24 @@ const execAsync = promisify(exec);
 
 export class PatternMatcher implements LogAnalyzer {
   public name = 'pattern-matcher';
+  private ignorePatterns: RegExp[] = [];
 
   constructor(
     private errorPattern: RegExp | string,
-    private warningPattern: RegExp | string
-  ) {}
+    private warningPattern: RegExp | string,
+    ignorePatterns?: (RegExp | string)[]
+  ) {
+    // Convert ignore patterns to RegExp
+    if (ignorePatterns) {
+      this.ignorePatterns = ignorePatterns.map(p => 
+        typeof p === 'string' ? new RegExp(p, 'i') : p
+      );
+    }
+  }
+
+  private shouldIgnore(line: string): boolean {
+    return this.ignorePatterns.some(pattern => pattern.test(line));
+  }
 
   async analyze(sources: LogSource[]): Promise<LogAnalysis> {
     const errors: string[] = [];
@@ -50,8 +63,12 @@ export class PatternMatcher implements LogAnalyzer {
         ? new RegExp(this.warningPattern, 'i')
         : this.warningPattern;
 
-      // Match patterns
+      // Match patterns, excluding ignored lines
       for (const line of lines) {
+        // Skip lines that match ignore patterns
+        if (this.shouldIgnore(line)) {
+          continue;
+        }
         if (errorRegex.test(line)) {
           errors.push(line.trim());
         }

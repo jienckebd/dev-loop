@@ -9,7 +9,8 @@ export class LogAnalyzerFactory {
   static create(config: Config): LogAnalyzer {
     const patternMatcher = new PatternMatcher(
       config.logs.patterns.error,
-      config.logs.patterns.warning
+      config.logs.patterns.warning,
+      (config.logs as any).ignorePatterns  // Optional ignore patterns
     );
 
     if (config.logs.useAI) {
