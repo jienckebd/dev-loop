@@ -193,7 +193,7 @@ export class WorkflowEngine {
           // Max retries exceeded - task was marked as blocked
           console.log(`[WorkflowEngine] Task ${task.id} blocked after max retries, moving to next task`);
         }
-        
+
         await this.updateState({ status: 'idle' });
 
         return {
@@ -295,7 +295,7 @@ export class WorkflowEngine {
       return true;
     } catch (error) {
       console.error(`[WorkflowEngine] Syntax error in ${filePath}:`, error instanceof Error ? error.message : String(error));
-      
+
       // Revert the file using git checkout
       try {
         await execAsync(`git checkout "${filePath}"`);
@@ -303,7 +303,7 @@ export class WorkflowEngine {
       } catch (revertError) {
         console.warn(`[WorkflowEngine] Could not revert ${filePath}:`, revertError instanceof Error ? revertError.message : String(revertError));
       }
-      
+
       return false;
     }
   }
@@ -366,7 +366,7 @@ export class WorkflowEngine {
     const contexts: string[] = [];
     const existingCodeSections: string[] = [];
     const validFiles: string[] = [];
-    
+
     // Get max context size from config (default ~80k chars = ~20k tokens)
     const maxContextChars = (this.config.ai as any)?.maxContextChars || 80000;
     let totalContextSize = 0;
@@ -378,7 +378,7 @@ export class WorkflowEngine {
         console.log(`[WorkflowEngine] Context limit reached (${totalContextSize}/${maxContextChars} chars), skipping remaining files`);
         break;
       }
-      
+
       const filePath = path.resolve(process.cwd(), file);
       if (await fs.pathExists(filePath)) {
         try {
@@ -404,7 +404,7 @@ export class WorkflowEngine {
             fileContext = `\n### EXISTING FILE: ${file}\n${content}`;
             existingCodeSections.push(`\n### ${file}:\n${content}`);
           }
-          
+
           // Check if adding this file would exceed the limit
           if (totalContextSize + fileContext.length > maxContextChars) {
             // Truncate to fit
@@ -416,7 +416,7 @@ export class WorkflowEngine {
             }
             break;
           }
-          
+
           contexts.push(fileContext);
           totalContextSize += fileContext.length;
         } catch {
@@ -534,7 +534,7 @@ export class WorkflowEngine {
             }
             continue;
           }
-          
+
           const currentScore = discoveredFiles.get(file) || 0;
           discoveredFiles.set(file, currentScore + 1);
         }
@@ -645,7 +645,7 @@ export class WorkflowEngine {
     // First, handle LINE: markers
     for (const keyword of keywords) {
       if (sections.length >= maxSections || totalChars >= maxTotalChars) break;
-      
+
       if (keyword.startsWith('LINE:')) {
         const lineNum = parseInt(keyword.replace('LINE:', ''), 10);
         if (!isNaN(lineNum) && lineNum > 0 && lineNum <= lines.length) {
@@ -667,12 +667,12 @@ export class WorkflowEngine {
     const keywordPatterns = keywords.filter(k => !k.startsWith('LINE:'));
     for (const keyword of keywordPatterns) {
       if (sections.length >= maxSections || totalChars >= maxTotalChars) break;
-      
+
       try {
         const regex = new RegExp(keyword, 'gi');
         for (let i = 0; i < lines.length; i++) {
           if (sections.length >= maxSections || totalChars >= maxTotalChars) break;
-          
+
           if (regex.test(lines[i])) {
             const start = Math.max(0, i - 10);
             const end = Math.min(lines.length, i + 15);

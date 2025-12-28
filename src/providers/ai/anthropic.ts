@@ -57,7 +57,7 @@ export class AnthropicProvider implements AIProvider {
     return `
 CRITICAL PROJECT RULES:
 1. NEVER create custom PHP entity classes - use bd.entity_type.*.yml config
-2. NEVER build custom Form API forms - use config_schema_subform  
+2. NEVER build custom Form API forms - use config_schema_subform
 3. All changes in docroot/modules/share/ only
 4. Plugins extend Drupal\\bd\\Plugin\\EntityPluginBase
 5. Commands via DDEV: ddev exec bash -c "drush <command>"
@@ -150,7 +150,7 @@ ${prompt}`;
 
         // Try to extract JSON from code block first
         let jsonText: string | null = null;
-        
+
         // Try code block with json marker - use greedy matching to get the whole JSON
         const codeBlockMatch = text.match(/```json\s*([\s\S]*?)\s*```/);
         if (codeBlockMatch) {
@@ -160,7 +160,7 @@ ${prompt}`;
             jsonText = blockContent;
           }
         }
-        
+
         // Try code block without json marker
         if (!jsonText) {
           const plainBlockMatch = text.match(/```\s*([\s\S]*?)\s*```/);
@@ -171,7 +171,7 @@ ${prompt}`;
             }
           }
         }
-        
+
         // Handle truncated code blocks (no closing ```)
         if (!jsonText) {
           const truncatedMatch = text.match(/```json\s*([\s\S]*)$/);
@@ -183,7 +183,7 @@ ${prompt}`;
             }
           }
         }
-        
+
         // Try to find JSON object with "files" key (our expected format)
         if (!jsonText) {
           const filesJsonMatch = text.match(/\{\s*"files"\s*:\s*\[[\s\S]*?\]\s*,\s*"summary"\s*:\s*"[^"]*"\s*\}/);
@@ -191,7 +191,7 @@ ${prompt}`;
             jsonText = filesJsonMatch[0];
           }
         }
-        
+
         // Fallback to finding any JSON object that contains "files" array
         if (!jsonText) {
           // Look for { followed by optional whitespace and "files"
@@ -230,7 +230,7 @@ ${prompt}`;
                 // Continue to other fallbacks
               }
             }
-            
+
             console.warn('[Anthropic] JSON repair failed, using extraction fallback');
 
             // Try to extract file path and content from truncated JSON
@@ -364,31 +364,31 @@ Provide a JSON response with:
    */
   private repairTruncatedJson(json: string): string | null {
     let repaired = json.trim();
-    
+
     // Count open brackets and braces
     let openBraces = 0;
     let openBrackets = 0;
     let inString = false;
     let escaped = false;
-    
+
     for (let i = 0; i < repaired.length; i++) {
       const char = repaired[i];
-      
+
       if (escaped) {
         escaped = false;
         continue;
       }
-      
+
       if (char === '\\') {
         escaped = true;
         continue;
       }
-      
+
       if (char === '"') {
         inString = !inString;
         continue;
       }
-      
+
       if (!inString) {
         if (char === '{') openBraces++;
         if (char === '}') openBraces--;
@@ -396,12 +396,12 @@ Provide a JSON response with:
         if (char === ']') openBrackets--;
       }
     }
-    
+
     // If we're in a string, try to close it
     if (inString) {
       repaired += '"';
     }
-    
+
     // Close open brackets and braces
     while (openBrackets > 0) {
       repaired += ']';
@@ -411,7 +411,7 @@ Provide a JSON response with:
       repaired += '}';
       openBraces--;
     }
-    
+
     // Try to parse the repaired JSON
     try {
       JSON.parse(repaired);
