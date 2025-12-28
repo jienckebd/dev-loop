@@ -151,17 +151,24 @@ ${prompt}`;
         // Try to extract JSON from code block first
         let jsonText: string | null = null;
         
-        // Try code block with json marker
-        const codeBlockMatch = text.match(/```json\s*(\{[\s\S]*?\})\s*```/);
+        // Try code block with json marker - use greedy matching to get the whole JSON
+        const codeBlockMatch = text.match(/```json\s*([\s\S]*?)\s*```/);
         if (codeBlockMatch) {
-          jsonText = codeBlockMatch[1];
+          // Extract just the JSON object from the code block content
+          const blockContent = codeBlockMatch[1].trim();
+          if (blockContent.startsWith('{')) {
+            jsonText = blockContent;
+          }
         }
         
         // Try code block without json marker
         if (!jsonText) {
-          const plainBlockMatch = text.match(/```\s*(\{[\s\S]*?"files"[\s\S]*?\})\s*```/);
+          const plainBlockMatch = text.match(/```\s*([\s\S]*?)\s*```/);
           if (plainBlockMatch) {
-            jsonText = plainBlockMatch[1];
+            const blockContent = plainBlockMatch[1].trim();
+            if (blockContent.startsWith('{') && blockContent.includes('"files"')) {
+              jsonText = blockContent;
+            }
           }
         }
         
