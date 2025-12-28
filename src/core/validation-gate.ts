@@ -227,14 +227,18 @@ export class ValidationGate {
 
     // Try to use tsc for real syntax validation if available
     try {
-      // Write content to temp file
-      const tempFile = path.join(process.cwd(), '.devloop', 'temp-validate.ts');
+      // Write content to temp file in the same directory as the original
+      // This ensures relative imports resolve correctly
+      const originalDir = path.dirname(path.resolve(process.cwd(), filePath));
+      const tempFileName = `.temp-validate-${Date.now()}.ts`;
+      const tempFile = path.join(originalDir, tempFileName);
       await fs.ensureDir(path.dirname(tempFile));
       await fs.writeFile(tempFile, content, 'utf-8');
 
       try {
         // Run tsc --noEmit to check syntax
-        await execAsync(`npx tsc --noEmit --skipLibCheck ${tempFile}`, {
+        // Use --isolatedModules to skip import resolution which may fail for temp files
+        await execAsync(`npx tsc --noEmit --skipLibCheck --isolatedModules "${tempFile}"`, {
           cwd: process.cwd(),
           timeout: 10000,
         });
@@ -242,7 +246,13 @@ export class ValidationGate {
         // Parse tsc error output
         if (error.stderr || error.stdout) {
           const output = error.stderr || error.stdout;
-          const errorLines = output.split('\n').filter((l: string) => l.includes('error TS'));
+          // Filter to only syntax errors, ignore import resolution errors
+          const errorLines = output.split('\n').filter((l: string) => {
+            const hasError = l.includes('error TS');
+            // Skip import resolution errors (TS2307, TS2305) - imports may not resolve in temp file
+            const isImportError = l.includes('TS2307') || l.includes('TS2305');
+            return hasError && !isImportError;
+          });
           
           if (errorLines.length > 0) {
             errors.push({

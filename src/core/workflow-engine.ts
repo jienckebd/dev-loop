@@ -288,7 +288,7 @@ export class WorkflowEngine {
             error: 'Pre-apply validation failed',
           };
         }
-        
+
         // Record successful validation
         if (this.debugMetrics) {
           this.debugMetrics.recordValidation(true, 0);
