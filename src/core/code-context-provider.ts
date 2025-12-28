@@ -300,4 +300,69 @@ export class CodeContextProvider {
 
     return sections.join('\n');
   }
+
+  /**
+   * Extract exact lines from a file around a search pattern.
+   * Used to provide precise context for patch operations.
+   */
+  async extractLinesAroundPattern(
+    filePath: string,
+    searchPattern: string,
+    contextLines: number = 3
+  ): Promise<{ found: boolean; lines: string; startLine: number } | null> {
+    const absolutePath = path.isAbsolute(filePath)
+      ? filePath
+      : path.resolve(process.cwd(), filePath);
+
+    if (!await fs.pathExists(absolutePath)) {
+      return null;
+    }
+
+    const content = await fs.readFile(absolutePath, 'utf-8');
+    const allLines = content.split('\n');
+    
+    // Find the line containing the pattern
+    const searchLower = searchPattern.toLowerCase();
+    for (let i = 0; i < allLines.length; i++) {
+      if (allLines[i].toLowerCase().includes(searchLower)) {
+        const start = Math.max(0, i - contextLines);
+        const end = Math.min(allLines.length, i + contextLines + 1);
+        const extractedLines = allLines.slice(start, end).join('\n');
+        
+        return {
+          found: true,
+          lines: extractedLines,
+          startLine: start + 1,  // 1-indexed
+        };
+      }
+    }
+
+    return { found: false, lines: '', startLine: 0 };
+  }
+
+  /**
+   * Get exact lines from a file by line numbers.
+   */
+  async getExactLines(
+    filePath: string,
+    startLine: number,
+    endLine: number
+  ): Promise<string | null> {
+    const absolutePath = path.isAbsolute(filePath)
+      ? filePath
+      : path.resolve(process.cwd(), filePath);
+
+    if (!await fs.pathExists(absolutePath)) {
+      return null;
+    }
+
+    const content = await fs.readFile(absolutePath, 'utf-8');
+    const allLines = content.split('\n');
+    
+    // Convert to 0-indexed
+    const start = Math.max(0, startLine - 1);
+    const end = Math.min(allLines.length, endLine);
+    
+    return allLines.slice(start, end).join('\n');
+  }
 }
