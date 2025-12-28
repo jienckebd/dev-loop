@@ -345,17 +345,24 @@ export class WorkflowEngine {
     const filePathPatterns = codebaseConfig.filePathPatterns || [];
 
     // Pattern 1: Extract explicit file paths from task text
-    // Generic pattern that matches common path formats
+    // These are ALWAYS included regardless of ignore patterns
+    // Generic pattern that matches common path formats (including .ts for Playwright tests)
+    const allExtensions = [...extensions, 'ts', 'js', 'spec.ts', 'test.ts'];
     const genericPathPattern = new RegExp(
-      `([\\w./\\-]+\\.(${extensions.join('|')}))`,
+      `([\\w./\\-]+\\.(${allExtensions.join('|')}))`,
       'gi'
     );
     let match;
+    const explicitlyMentionedFiles: string[] = []; // Track files explicitly in task
     while ((match = genericPathPattern.exec(taskText)) !== null) {
       const filePath = match[1];
       // Only add if it looks like a path (contains / or is a simple filename)
       if ((filePath.includes('/') || filePath.includes('.')) && !mentionedFiles.includes(filePath)) {
         mentionedFiles.push(filePath);
+        explicitlyMentionedFiles.push(filePath);
+        if (this.debug) {
+          console.log(`[DEBUG] Explicitly mentioned file from task: ${filePath}`);
+        }
       }
     }
 
