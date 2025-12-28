@@ -504,9 +504,18 @@ export class WorkflowEngine {
     const excludePattern = excludeDirs.map(d => `--exclude-dir=${d}`).join(' ');
     const includePattern = extensions.map(e => `--include=*.${e}`).join(' ');
 
+    // Common words to skip - these match too many files
+    const stopwords = new Set([
+      'File', 'Move', 'Step', 'Steps', 'Configure', 'Verify', 'Create', 'Update',
+      'Delete', 'Add', 'Remove', 'Get', 'Set', 'Load', 'Save', 'Check', 'Validate',
+      'Process', 'Handle', 'Build', 'Execute', 'Run', 'Start', 'Stop', 'Implement',
+      'Test', 'Tests', 'Config', 'Settings', 'Options', 'Data', 'Info', 'Field',
+      'Entity', 'Bundle', 'Type', 'Form', 'View', 'Display', 'Render', 'Output'
+    ]);
+
     // Prioritize high-value identifiers (class names, function names, file names)
     const prioritizedIdentifiers = identifiers
-      .filter(id => id.length > 3) // Skip very short identifiers
+      .filter(id => id.length > 3 && !stopwords.has(id)) // Skip short and common words
       .slice(0, 5); // Limit to first 5 identifiers
 
     if (this.debug) {
@@ -548,8 +557,17 @@ export class WorkflowEngine {
             continue;
           }
 
+          // Give higher scores to files in priority directories (first searchDirs)
+          let score = 1;
+          for (let i = 0; i < searchDirs.length; i++) {
+            if (file.includes(searchDirs[i])) {
+              score = 10 - i; // First dir gets 10 points, second gets 9, etc.
+              break;
+            }
+          }
+          
           const currentScore = discoveredFiles.get(file) || 0;
-          discoveredFiles.set(file, currentScore + 1);
+          discoveredFiles.set(file, currentScore + score);
         }
       } catch {
         // Ignore grep errors
