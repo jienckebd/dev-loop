@@ -44,7 +44,8 @@ export class WorkflowEngine {
     this.stateManager = new StateManager(config);
     this.templateManager = new TemplateManager(
       config.templates.source,
-      config.templates.customPath
+      config.templates.customPath,
+      (config as any).framework // Pass framework config for template selection
     );
     this.intervention = new InterventionSystem(config);
     this.aiProvider = AIProviderFactory.createWithFallback(config);
@@ -91,7 +92,7 @@ export class WorkflowEngine {
         codebaseContext,
         targetFiles,
         existingCode,
-        templateType: targetFiles ? 'drupal' : 'generic',
+        templateType: this.getTemplateType(targetFiles),
       });
 
       console.log('[WorkflowEngine] Calling AI provider to generate code...');
@@ -566,6 +567,25 @@ export class WorkflowEngine {
   }
 
   /**
+   * Determine template type based on config and target files
+   */
+  private getTemplateType(targetFiles?: string): 'generic' | string {
+    // Use framework type from config if available
+    const frameworkType = (this.config as any).framework?.type;
+    if (frameworkType) {
+      return frameworkType;
+    }
+
+    // Fallback to generic if no target files
+    if (!targetFiles) {
+      return 'generic';
+    }
+
+    // Generic fallback - no hardcoded framework detection
+    return 'generic';
+  }
+
+  /**
    * Extract potential class/function/method identifiers from task text
    */
   private extractIdentifiersFromTask(taskText: string): string[] {
@@ -591,11 +611,17 @@ export class WorkflowEngine {
       }
     }
 
-    // Match snake_case function names (common in Python, PHP hooks, etc.)
-    const snakeCasePattern = /\b((?:hook_|_)[a-z][a-z0-9_]+)\b/g;
-    while ((match = snakeCasePattern.exec(taskText)) !== null) {
-      if (!identifiers.includes(match[1])) {
-        identifiers.push(match[1]);
+    // Match snake_case function names using config patterns if available
+    const frameworkPatterns = (this.config as any).framework?.identifierPatterns || [];
+    const snakeCasePatterns = frameworkPatterns.length > 0
+      ? frameworkPatterns.map((p: string) => new RegExp(p, 'g'))
+      : [/\b(_[a-z][a-z0-9_]+)\b/g]; // Default: generic underscore-prefixed identifiers
+
+    for (const pattern of snakeCasePatterns) {
+      while ((match = pattern.exec(taskText)) !== null) {
+        if (!identifiers.includes(match[1])) {
+          identifiers.push(match[1]);
+        }
       }
     }
 

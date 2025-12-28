@@ -11,9 +11,11 @@ export class AIProviderFactory {
       apiKey: config.ai.apiKey || process.env[this.getApiKeyEnvVar(config.ai.provider)] || '',
       model: config.ai.model,
       temperature: 0.7,
-      maxTokens: 4000,
+      maxTokens: config.ai.maxTokens || 4000,
       // Pass cursor rules path from config
       cursorRulesPath: config.rules?.cursorRulesPath,
+      // Pass framework config for task detection and prompt customization
+      frameworkConfig: (config as any).framework,
     };
 
     switch (config.ai.provider) {

@@ -1,9 +1,17 @@
 import * as fs from 'fs-extra';
 import * as path from 'path';
-import { TemplateSource } from '../types';
+import { TemplateSource, FrameworkConfig } from '../types';
 
 export class TemplateManager {
-  constructor(private source: TemplateSource, private customPath?: string) {}
+  private frameworkConfig?: FrameworkConfig;
+
+  constructor(
+    private source: TemplateSource,
+    private customPath?: string,
+    frameworkConfig?: FrameworkConfig
+  ) {
+    this.frameworkConfig = frameworkConfig;
+  }
 
   async getPRDTemplate(): Promise<string> {
     return this.loadTemplate('create-prd.md');
@@ -18,24 +26,57 @@ export class TemplateManager {
     codebaseContext?: string;
     targetFiles?: string;
     existingCode?: string;
-    templateType?: 'generic' | 'drupal';
+    templateType?: string; // Now supports any framework type, not just 'generic' | 'drupal'
   }): Promise<string> {
-    // Use Drupal template if specified or if target files suggest Drupal
-    const useDrupalTemplate = context.templateType === 'drupal' || 
-      (context.targetFiles && /\.(php|module|yml)$/.test(context.targetFiles));
-    
-    const templateFile = useDrupalTemplate ? 'drupal-task.md' : 'generate-tasks.md';
-    let template = await this.loadTemplate(templateFile);
+    // Determine template file based on framework config
+    let templateFile = 'generate-tasks.md';
 
-    // Simple variable substitution
-    template = template.replace(/\{\{task\.title\}\}/g, context.task.title);
-    template = template.replace(/\{\{task\.description\}\}/g, context.task.description);
-    template = template.replace(/\{\{task\.priority\}\}/g, context.task.priority);
-    template = template.replace(/\{\{codebaseContext\}\}/g, context.codebaseContext || '');
-    template = template.replace(/\{\{targetFiles\}\}/g, context.targetFiles || '');
-    template = template.replace(/\{\{existingCode\}\}/g, context.existingCode || '');
+    // Check if framework has a custom template path
+    if (this.frameworkConfig?.templatePath) {
+      try {
+        const customTemplate = await fs.readFile(
+          path.resolve(process.cwd(), this.frameworkConfig.templatePath),
+          'utf-8'
+        );
+        return this.substituteVariables(customTemplate, context);
+      } catch {
+        console.warn(`[TemplateManager] Framework template not found: ${this.frameworkConfig.templatePath}, using default`);
+      }
+    }
 
-    return template;
+    // Use framework-specific template if available in builtin templates
+    if (context.templateType && context.templateType !== 'generic') {
+      const frameworkTemplateFile = `${context.templateType}-task.md`;
+      try {
+        const template = await this.loadTemplate(frameworkTemplateFile);
+        return this.substituteVariables(template, context);
+      } catch {
+        // Framework template not found, fall back to generic
+        console.log(`[TemplateManager] No template for ${context.templateType}, using generic`);
+      }
+    }
+
+    const template = await this.loadTemplate(templateFile);
+    return this.substituteVariables(template, context);
+  }
+
+  private substituteVariables(
+    template: string,
+    context: {
+      task: { title: string; description: string; priority: string };
+      codebaseContext?: string;
+      targetFiles?: string;
+      existingCode?: string;
+    }
+  ): string {
+    let result = template;
+    result = result.replace(/\{\{task\.title\}\}/g, context.task.title);
+    result = result.replace(/\{\{task\.description\}\}/g, context.task.description);
+    result = result.replace(/\{\{task\.priority\}\}/g, context.task.priority);
+    result = result.replace(/\{\{codebaseContext\}\}/g, context.codebaseContext || '');
+    result = result.replace(/\{\{targetFiles\}\}/g, context.targetFiles || '');
+    result = result.replace(/\{\{existingCode\}\}/g, context.existingCode || '');
+    return result;
   }
 
   private async loadTemplate(filename: string): Promise<string> {

@@ -78,6 +78,23 @@ const configSchema = z.object({
     // Stopwords to filter out from identifier search
     identifierStopwords: z.array(z.string()).optional(),
   }).optional(),
+  // Framework-specific configuration (makes dev-loop framework-agnostic)
+  framework: z.object({
+    // Framework type for template selection (e.g., 'drupal', 'laravel', 'rails', 'nextjs')
+    type: z.string().optional(),
+    // Custom rules to inject into AI prompts for this framework
+    rules: z.array(z.string()).optional(),
+    // Patterns to detect framework-specific tasks (regex patterns matched against task text)
+    taskPatterns: z.array(z.string()).optional(),
+    // File path patterns for extracting paths from error messages (regex patterns)
+    errorPathPatterns: z.array(z.string()).optional(),
+    // Error message guidance - maps error substrings to helpful guidance
+    errorGuidance: z.record(z.string(), z.string()).optional(),
+    // Identifier patterns for extracting function/class names (regex patterns)
+    identifierPatterns: z.array(z.string()).optional(),
+    // Custom template path for framework-specific task templates
+    templatePath: z.string().optional(),
+  }).optional(),
 });
 
 export type Config = z.infer<typeof configSchema>;

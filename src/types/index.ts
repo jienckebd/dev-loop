@@ -60,6 +60,28 @@ export interface LogSource {
   command?: string;
 }
 
+/**
+ * Framework-specific configuration for AI prompts and task detection.
+ * This allows dev-loop to be framework-agnostic while supporting
+ * framework-specific behavior via project configuration.
+ */
+export interface FrameworkConfig {
+  // Framework type (e.g., 'drupal', 'laravel', 'rails', 'nextjs')
+  type?: string;
+  // Custom rules to inject into AI prompts for this framework
+  rules?: string[];
+  // Patterns to detect framework-specific tasks (regex patterns)
+  taskPatterns?: string[];
+  // File path patterns for extracting paths from error messages
+  errorPathPatterns?: string[];
+  // Error message guidance - maps error substrings to helpful guidance
+  errorGuidance?: Record<string, string>;
+  // Identifier patterns for extracting function/class names
+  identifierPatterns?: string[];
+  // Custom template path for framework-specific task templates
+  templatePath?: string;
+}
+
 export interface LogAnalysis {
   errors: string[];
   warnings: string[];
@@ -132,5 +154,7 @@ export interface Config {
     timeout?: number;
     authCommand?: string;
   };
+  // Framework-specific configuration
+  framework?: FrameworkConfig;
 }
 

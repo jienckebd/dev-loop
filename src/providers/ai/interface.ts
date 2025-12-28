@@ -1,4 +1,4 @@
-import { CodeChanges, TaskContext, LogAnalysis } from '../../types';
+import { CodeChanges, TaskContext, LogAnalysis, FrameworkConfig } from '../../types';
 
 export interface AIProvider {
   name: string;
@@ -13,4 +13,6 @@ export interface AIProviderConfig {
   maxTokens?: number;
   // Path to cursor rules file to inject into prompts
   cursorRulesPath?: string;
+  // Framework-specific configuration for task detection and prompts
+  frameworkConfig?: FrameworkConfig;
 }

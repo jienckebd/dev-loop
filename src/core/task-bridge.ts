@@ -196,20 +196,26 @@ export class TaskMasterBridge {
   }
 
   /**
-   * Extract file paths from error messages
+   * Extract file paths from error messages using config patterns
    */
   private extractFilePaths(text: string): string[] {
     const paths: string[] = [];
-    const patterns = [
-      /docroot\/[^\s:]+\.php/g,
-      /\/var\/www\/html\/[^\s:]+\.php/g,
+
+    // Use framework config patterns if available, otherwise use generic patterns
+    const configPatterns = (this.config as any).framework?.errorPathPatterns || [];
+    const defaultPatterns = [
+      /([a-zA-Z0-9_\-./]+\.[a-z]+):\d+/g, // Generic: file.ext:linenum
     ];
+
+    const patterns = configPatterns.length > 0
+      ? configPatterns.map((p: string) => new RegExp(p, 'g'))
+      : defaultPatterns;
 
     for (const pattern of patterns) {
       let match;
       while ((match = pattern.exec(text)) !== null) {
-        const filePath = match[0].replace('/var/www/html/', '');
-        if (!paths.includes(filePath)) {
+        const filePath = match[1] || match[0];
+        if (!paths.includes(filePath) && filePath.includes('/')) {
           paths.push(filePath);
         }
       }
@@ -219,25 +225,32 @@ export class TaskMasterBridge {
   }
 
   /**
-   * Provide specific guidance based on error patterns
+   * Provide specific guidance based on error patterns (config-driven)
    */
   private getErrorGuidance(error: string): string {
     const guidance: string[] = [];
 
+    // Use framework config guidance if available
+    const configGuidance = (this.config as any).framework?.errorGuidance as Record<string, string> | undefined;
+    if (configGuidance) {
+      for (const [pattern, message] of Object.entries(configGuidance)) {
+        if (error.includes(pattern)) {
+          guidance.push(message);
+        }
+      }
+    }
+
+    // Generic guidance patterns (framework-agnostic)
     if (error.includes('PATCH_FAILED') || error.includes('Search string not found')) {
       guidance.push('PATCH FAILURE: The search string does not match the actual file content. Copy the EXACT code from the existing file context, including all whitespace and newlines.');
     }
 
-    if (error.includes('dirname(DRUPAL_ROOT)') || error.includes('/docroot/etc/')) {
-      guidance.push('PATH ERROR: The etc/ folder is at PROJECT ROOT, not inside docroot/. Use dirname(DRUPAL_ROOT) not DRUPAL_ROOT for paths to etc/ folder.');
+    if (error.includes('undefined method') || error.includes('Call to undefined') || error.includes('is not defined')) {
+      guidance.push('UNDEFINED METHOD/FUNCTION: A method or function is being called that does not exist. Either implement it OR remove the call.');
     }
 
-    if (error.includes('undefined method') || error.includes('Call to undefined')) {
-      guidance.push('UNDEFINED METHOD: A method is being called that does not exist. Either implement the method OR remove the call. Do NOT add partial implementations that call other missing methods.');
-    }
-
-    if (error.includes('syntax error') || error.includes('Parse error')) {
-      guidance.push('SYNTAX ERROR: The generated code has PHP syntax errors. Ensure all braces, parentheses, and semicolons are balanced.');
+    if (error.includes('syntax error') || error.includes('Parse error') || error.includes('SyntaxError')) {
+      guidance.push('SYNTAX ERROR: The generated code has syntax errors. Ensure all braces, parentheses, and semicolons are balanced.');
     }
 
     return guidance.length > 0 ? '\n\n**Specific Guidance:**\n' + guidance.map(g => `- ${g}`).join('\n') : '';

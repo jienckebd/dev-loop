@@ -2,12 +2,13 @@ import Anthropic from '@anthropic-ai/sdk';
 import * as fs from 'fs-extra';
 import * as path from 'path';
 import { AIProvider, AIProviderConfig } from './interface';
-import { CodeChanges, TaskContext, LogAnalysis } from '../../types';
+import { CodeChanges, TaskContext, LogAnalysis, FrameworkConfig } from '../../types';
 
 export class AnthropicProvider implements AIProvider {
   public name = 'anthropic';
   private client: Anthropic;
   private cursorRules: string | null = null;
+  private frameworkConfig: FrameworkConfig | null = null;
   private maxRetries = 3;
   private baseDelay = 60000; // 60 seconds base delay for rate limits
   private debug = false;
@@ -22,6 +23,12 @@ export class AnthropicProvider implements AIProvider {
     // Load cursor rules if path is provided
     if (config.cursorRulesPath) {
       this.loadCursorRules(config.cursorRulesPath);
+    }
+
+    // Load framework config if provided
+    if (config.frameworkConfig) {
+      this.frameworkConfig = config.frameworkConfig;
+      console.log('[Anthropic] Using framework config:', this.frameworkConfig.type || 'generic');
     }
   }
 
@@ -54,49 +61,43 @@ export class AnthropicProvider implements AIProvider {
   }
 
   private extractKeyRules(content: string): string {
-    // Return ONLY the absolute minimum rules to reduce token usage
-    // The full .cursorrules is way too large (200k+ tokens)
-    return `
-CRITICAL PROJECT RULES:
-1. NEVER create custom PHP entity classes - use bd.entity_type.*.yml config
-2. NEVER build custom Form API forms - use config_schema_subform
-3. All changes in docroot/modules/share/ only
-4. Plugins extend Drupal\\bd\\Plugin\\EntityPluginBase
-5. Commands via DDEV: ddev exec bash -c "drush <command>"
-`;
+    // If framework config has rules, use those instead of extracting from cursor rules
+    if (this.frameworkConfig?.rules && this.frameworkConfig.rules.length > 0) {
+      const numberedRules = this.frameworkConfig.rules
+        .map((rule, i) => `${i + 1}. ${rule}`)
+        .join('\n');
+      return `\nCRITICAL PROJECT RULES:\n${numberedRules}\n`;
+    }
+
+    // Default: return a generic message pointing to cursor rules
+    // (no hardcoded framework-specific rules)
+    return '\n(Project rules loaded from cursor rules file)\n';
   }
 
   async generateCode(prompt: string, context: TaskContext): Promise<CodeChanges> {
-    // Detect if this is a Drupal/PHP task
-    const isDrupalTask = context.codebaseContext?.includes('docroot/modules') ||
-                         context.codebaseContext?.includes('.php') ||
-                         prompt.includes('Drupal') ||
-                         prompt.includes('hook_') ||
-                         prompt.includes('EntityFormService') ||
-                         prompt.includes('WizardStepProcessor');
+    // Detect if this is a framework-specific task using config patterns
+    const isFrameworkTask = this.detectFrameworkTask(prompt, context);
 
-    // Build system prompt with cursor rules for Drupal tasks
+    // Build system prompt with cursor rules for framework tasks
     let systemPrompt: string;
 
-    if (isDrupalTask) {
+    if (isFrameworkTask && this.frameworkConfig) {
       const rulesSection = this.cursorRules ? `\n${this.cursorRules}\n` : '';
+      const frameworkType = this.frameworkConfig.type || 'framework';
 
-      systemPrompt = `You are an expert Drupal developer. Generate PHP code changes following Drupal coding standards.
+      systemPrompt = `You are an expert ${frameworkType} developer. Generate code changes following ${frameworkType} coding standards.
 ${rulesSection}
 CRITICAL RULES:
-1. MODIFY EXISTING FILES - Do NOT create new modules. The codebase context shows existing files that need to be modified.
+1. MODIFY EXISTING FILES - Do NOT create new modules/packages. The codebase context shows existing files that need to be modified.
 2. When you see "### EXISTING FILE:" in the context, you MUST use that exact file path with operation "update"
-3. Never create new .info.yml or .module files if they already exist
-4. Use dependency injection via services.yml
-5. Follow hook naming: {module}_{hook}()
-6. Use \\Drupal::logger('{module}') for logging
+3. Never create new config files if they already exist
 
 Return your response as a JSON object with this structure:
 {
   "files": [
     {
-      "path": "exact/path/from/context/file.php",
-      "content": "<?php\\n\\n// Complete modified file content...",
+      "path": "exact/path/from/context/file",
+      "content": "// Complete modified file content...",
       "operation": "update"
     }
   ],
@@ -142,8 +143,8 @@ ${prompt}`;
       console.log('[DEBUG] ===== AI PROMPT END =====\n');
     }
 
-    // Use higher token limit for PHP/Drupal files
-    const maxTokens = isDrupalTask ? (this.config.maxTokens || 16000) : (this.config.maxTokens || 4000);
+    // Use higher token limit for framework-specific tasks
+    const maxTokens = isFrameworkTask ? (this.config.maxTokens || 16000) : (this.config.maxTokens || 4000);
 
     // Retry loop for rate limit errors
     let lastError: Error | null = null;
@@ -303,8 +304,8 @@ ${prompt}`;
         }
 
         // Fallback: create a single file with the response for debugging
-        const fileExtension = isDrupalTask ? 'php' : 'ts';
-        const filePath = isDrupalTask ? 'generated-code.php' : 'generated-code.ts';
+        const fileExtension = isFrameworkTask ? (this.frameworkConfig?.type === 'drupal' ? 'php' : 'ts') : 'ts';
+        const filePath = `generated-code.${fileExtension}`;
         console.warn('[Anthropic] Using raw response fallback - code will need manual review');
         return {
           files: [
@@ -392,6 +393,39 @@ Provide a JSON response with:
         summary: 'Failed to analyze error',
       };
     }
+  }
+
+  /**
+   * Detect if this is a framework-specific task using config patterns
+   */
+  private detectFrameworkTask(prompt: string, context: TaskContext): boolean {
+    if (!this.frameworkConfig?.taskPatterns || this.frameworkConfig.taskPatterns.length === 0) {
+      return false;
+    }
+
+    const textToSearch = [
+      prompt,
+      context.codebaseContext || '',
+      context.task.title,
+      context.task.description,
+    ].join(' ');
+
+    // Check if any of the configured patterns match
+    for (const pattern of this.frameworkConfig.taskPatterns) {
+      try {
+        const regex = new RegExp(pattern, 'i');
+        if (regex.test(textToSearch)) {
+          return true;
+        }
+      } catch {
+        // If pattern is not valid regex, treat as literal string
+        if (textToSearch.includes(pattern)) {
+          return true;
+        }
+      }
+    }
+
+    return false;
   }
 
   /**
