@@ -163,8 +163,25 @@ ${prompt}`;
         });
 
         const content = response.content[0];
+        
+        // Debug: Log response metadata
+        if (this.debug) {
+          console.log('\n[DEBUG] ===== AI RESPONSE START =====');
+          console.log('[DEBUG] Stop reason:', response.stop_reason);
+          console.log('[DEBUG] Input tokens:', response.usage?.input_tokens || 'N/A');
+          console.log('[DEBUG] Output tokens:', response.usage?.output_tokens || 'N/A');
+          console.log('[DEBUG] Model:', response.model);
+        }
+
       if (content.type === 'text') {
         const text = content.text;
+        
+        if (this.debug) {
+          console.log('[DEBUG] Response text length:', text.length, 'chars');
+          console.log('[DEBUG] Response preview (first 500 chars):');
+          console.log(text.substring(0, 500) + (text.length > 500 ? '...' : ''));
+          console.log('[DEBUG] ===== AI RESPONSE END =====\n');
+        }
 
         // Try to extract JSON from code block first
         let jsonText: string | null = null;

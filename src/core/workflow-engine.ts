@@ -94,10 +94,22 @@ export class WorkflowEngine {
       console.log('[WorkflowEngine] Calling AI provider to generate code...');
       console.log('[WorkflowEngine] Task:', context.task.title);
       if (this.debug) {
+        console.log('\n[DEBUG] ===== TASK EXECUTION START =====');
+        console.log(`[DEBUG] Task ID: ${task.id}`);
+        console.log(`[DEBUG] Task Title: ${task.title}`);
+        console.log(`[DEBUG] Task Priority: ${task.priority}`);
+        console.log(`[DEBUG] Task Description: ${task.description?.substring(0, 200) || 'N/A'}`);
+        console.log(`[DEBUG] Task Details: ${(task as any).details?.substring(0, 300) || 'N/A'}`);
+        console.log(`[DEBUG] Test Strategy: ${(task as any).testStrategy || 'N/A'}`);
+        console.log(`[DEBUG] Dependencies: ${(task as any).dependencies || 'none'}`);
+        console.log('[DEBUG] ---');
         console.log(`[DEBUG] AI Provider: ${this.aiProvider.name || 'unknown'}`);
         console.log(`[DEBUG] Model: ${(this.config.ai as any)?.model || 'default'}`);
         console.log(`[DEBUG] Max tokens: ${(this.config.ai as any)?.maxTokens || 'default'}`);
-        console.log(`[DEBUG] Context size: ${(context as any).existingCode?.length || 0} chars`);
+        console.log(`[DEBUG] Codebase context size: ${codebaseContext?.length || 0} chars`);
+        console.log(`[DEBUG] Target files:\n${targetFiles || 'none'}`);
+        console.log(`[DEBUG] Existing code size: ${existingCode?.length || 0} chars`);
+        console.log('[DEBUG] ===== TASK EXECUTION DETAILS =====\n');
       }
       const changes = await this.aiProvider.generateCode(template, context);
       console.log('[WorkflowEngine] AI response received, files:', changes.files?.length || 0);
@@ -504,15 +516,14 @@ export class WorkflowEngine {
     const excludePattern = excludeDirs.map(d => `--exclude-dir=${d}`).join(' ');
     const includePattern = extensions.map(e => `--include=*.${e}`).join(' ');
 
-    // Common words to skip - these match too many files and are not specific enough
-    // Keep domain-specific terms like EntityFormService, WizardManager, etc.
-    const stopwords = new Set([
-      'File', 'Move', 'Step', 'Steps', 'Configure', 'Verify', 'Implement',
-      'Delete', 'Add', 'Remove', 'Get', 'Set', 'Load', 'Check',
-      'Execute', 'Run', 'Start', 'Stop', 'All', 'Only', 'Forward',
-      'Settings', 'Options', 'Data', 'Info', 'Visibility', 'Conditions',
-      'Timing', 'Playwright', 'Tests', 'Navigation'
-    ]);
+    // Common words to skip - configurable in devloop.config.js codebase.identifierStopwords
+    const configStopwords: string[] = (codebaseConfig as any).identifierStopwords || [];
+    // Only use config stopwords if provided, otherwise use minimal defaults
+    const defaultStopwords = configStopwords.length > 0 ? [] : [
+      'File', 'Move', 'Step', 'Configure', 'Verify', 'Implement', 'Create', 'Update',
+      'Delete', 'Add', 'Remove', 'Get', 'Set', 'Load', 'Check', 'Execute', 'Run'
+    ];
+    const stopwords = new Set([...defaultStopwords, ...configStopwords]);
 
     // Prioritize high-value identifiers (class names, function names, file names)
     const prioritizedIdentifiers = identifiers
