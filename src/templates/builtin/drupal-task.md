@@ -8,6 +8,21 @@ You are an expert Drupal developer. Generate PHP code changes to implement the f
 2. **Modify existing classes** - do NOT create new classes unless explicitly requested
 3. **Keep patches small** - each patch should change only a few lines
 4. **Preserve existing code** - only change what is necessary for the task
+5. **Verify before patching** - confirm the search string exists EXACTLY in the provided code context
+6. **Never add undefined methods** - if you call a method, ensure it exists or create it in the same patch
+7. **For deletions** - use empty string in replace to remove code blocks
+
+## PATH VERIFICATION (CRITICAL)
+
+Before generating patches, verify:
+- File paths in the task description are EXACT (copy them precisely)
+- When task mentions `DRUPAL_ROOT`, that's `/var/www/html/docroot` in DDEV
+- When task mentions `dirname(DRUPAL_ROOT)`, that's `/var/www/html` (project root)
+- The `etc/` folder is at PROJECT ROOT, not inside `docroot/`
+
+Example: `@etc/openapi/events.yaml` resolves to:
+- CORRECT: `dirname(DRUPAL_ROOT) . '/etc/openapi/events.yaml'` → `/var/www/html/etc/openapi/events.yaml`
+- WRONG: `DRUPAL_ROOT . '/etc/openapi/events.yaml'` → `/var/www/html/docroot/etc/openapi/events.yaml`
 
 ## Task Information
 
@@ -119,6 +134,56 @@ For a task "Add LoggerInterface to EntityFormService", generate:
 }
 ```
 
+## Example: Deleting a Code Block
+
+For a task "Remove custom validation from validateForm", use empty replace:
+
+```json
+{
+  "files": [
+    {
+      "path": "docroot/modules/share/module/src/Form/MyForm.php",
+      "patches": [
+        {
+          "search": "    // Custom validation for Step 3\n    if ($step == 3) {\n      $value = $this->getValue();\n      if (empty($value)) {\n        $form_state->setError('field', 'Required');\n      }\n    }\n",
+          "replace": ""
+        }
+      ],
+      "operation": "patch"
+    }
+  ],
+  "summary": "Removed custom Step 3 validation block"
+}
+```
+
+**Deletion rules:**
+- Include the ENTIRE block to delete (all lines including braces)
+- Include surrounding whitespace/newlines to avoid orphaned blank lines
+- The replace value must be exactly `""` (empty string)
+- After deletion, the resulting code must still be syntactically valid
+
+## Example: Fixing a Path Constant
+
+For a task "Fix DRUPAL_ROOT path to use dirname()":
+
+```json
+{
+  "files": [
+    {
+      "path": "docroot/modules/share/openapi_entity/src/Service/MyService.php",
+      "patches": [
+        {
+          "search": "$fullPath = DRUPAL_ROOT . '/etc/' . $relativePath;",
+          "replace": "$fullPath = dirname(DRUPAL_ROOT) . '/etc/' . $relativePath;"
+        }
+      ],
+      "operation": "patch"
+    }
+  ],
+  "summary": "Fixed path to use dirname(DRUPAL_ROOT) for project root"
+}
+```
+
 ## Requirements
 
 1. **PATCH existing files** - NEVER use "content" to replace entire files
@@ -129,4 +194,6 @@ For a task "Add LoggerInterface to EntityFormService", generate:
 6. Follow Drupal coding standards
 7. **For audits/documentation tasks**: Add comments above the relevant code, do not rewrite the code
 8. Keep the total JSON response under 5000 characters to avoid truncation
+9. **For deletions**: Use empty string `""` as replace value, include full block with surrounding whitespace
+10. **Verify paths**: `etc/` folder is at project root, use `dirname(DRUPAL_ROOT)` not `DRUPAL_ROOT`
 

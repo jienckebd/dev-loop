@@ -17,7 +17,7 @@ export class PatternMatcher implements LogAnalyzer {
   ) {
     // Convert ignore patterns to RegExp
     if (ignorePatterns) {
-      this.ignorePatterns = ignorePatterns.map(p => 
+      this.ignorePatterns = ignorePatterns.map(p =>
         typeof p === 'string' ? new RegExp(p, 'i') : p
       );
     }

@@ -135,7 +135,7 @@ ${prompt}`;
       console.log('[DEBUG] Task details:', context.task.details?.substring(0, 200) || 'N/A');
       console.log('[DEBUG] Codebase context length:', context.codebaseContext?.length || 0, 'chars');
       console.log('[DEBUG] Template prompt length:', prompt.length, 'chars');
-      
+
       // Show first 500 chars of template prompt for debugging
       console.log('[DEBUG] Template prompt preview:');
       console.log(prompt.substring(0, 500) + (prompt.length > 500 ? '...' : ''));
@@ -163,7 +163,7 @@ ${prompt}`;
         });
 
         const content = response.content[0];
-        
+
         // Debug: Log response metadata
         if (this.debug) {
           console.log('\n[DEBUG] ===== AI RESPONSE START =====');
@@ -175,7 +175,7 @@ ${prompt}`;
 
       if (content.type === 'text') {
         const text = content.text;
-        
+
         if (this.debug) {
           console.log('[DEBUG] Response text length:', text.length, 'chars');
           console.log('[DEBUG] Response preview (first 500 chars):');

@@ -143,8 +143,34 @@ export class WorkflowEngine {
 
       // Apply changes to filesystem
       console.log('[WorkflowEngine] Applying changes to filesystem...');
-      await this.applyChanges(changes);
-      console.log('[WorkflowEngine] Changes applied');
+      const applyResult = await this.applyChanges(changes);
+
+      if (!applyResult.success) {
+        console.error('[WorkflowEngine] Some patches failed to apply');
+        // Include failed patches in error context for next task
+        const patchErrors = applyResult.failedPatches.join('\n');
+        console.error('[WorkflowEngine] Failed patches:\n' + patchErrors);
+
+        // Create fix task with patch failure details
+        await this.updateState({ status: 'creating-fix-task' });
+        const fixTask = await this.taskBridge.createFixTask(
+          task.id,
+          `Patches failed to apply:\n${patchErrors}\n\nThe search strings in the patches did not match the actual file content. Review the existing code context and generate patches with EXACT matching search strings.`,
+          patchErrors
+        );
+
+        if (fixTask) {
+          await this.taskBridge.updateTaskStatus(task.id, 'pending');
+        }
+        await this.updateState({ status: 'idle' });
+        return {
+          completed: false,
+          noTasks: false,
+          taskId: task.id,
+          error: 'Patches failed to apply - search strings not found in files',
+        };
+      }
+      console.log('[WorkflowEngine] Changes applied successfully');
 
       // Execute post-apply hooks (e.g., cache clearing for Drupal)
       if (this.config.hooks?.postApply && this.config.hooks.postApply.length > 0) {
@@ -292,7 +318,9 @@ export class WorkflowEngine {
     }
   }
 
-  private async applyChanges(changes: CodeChanges): Promise<void> {
+  private async applyChanges(changes: CodeChanges): Promise<{ success: boolean; failedPatches: string[] }> {
+    const failedPatches: string[] = [];
+
     for (const file of changes.files) {
       const filePath = path.resolve(process.cwd(), file.path);
 
@@ -306,22 +334,44 @@ export class WorkflowEngine {
           let content = await fs.readFile(filePath, 'utf-8');
           let patchesApplied = 0;
 
-          for (const patch of file.patches) {
+          for (let i = 0; i < file.patches.length; i++) {
+            const patch = file.patches[i];
+
+            // Pre-flight verification: check if search string exists
             if (content.includes(patch.search)) {
               content = content.replace(patch.search, patch.replace);
               patchesApplied++;
               console.log(`[WorkflowEngine] Applied patch ${patchesApplied} to ${file.path}`);
             } else {
-              console.warn(`[WorkflowEngine] Patch search string not found in ${file.path}:`, patch.search.substring(0, 100));
+              // Log detailed failure information for AI to learn from
+              const searchPreview = patch.search.substring(0, 150).replace(/\n/g, '\\n');
+              const errorMsg = `PATCH_FAILED: File ${file.path}, patch ${i + 1}: Search string not found. Looking for: "${searchPreview}"`;
+              console.error(`[WorkflowEngine] ${errorMsg}`);
+              failedPatches.push(errorMsg);
+
+              // Try to find similar content to help debug
+              const firstLine = patch.search.split('\n')[0].trim();
+              if (firstLine.length > 10) {
+                const similarLines = content.split('\n')
+                  .map((line, idx) => ({ line: line.trim(), idx }))
+                  .filter(({ line }) => line.includes(firstLine.substring(0, 20)));
+                if (similarLines.length > 0) {
+                  console.error(`[WorkflowEngine] Similar content found at lines: ${similarLines.map(s => s.idx + 1).join(', ')}`);
+                }
+              }
             }
           }
 
           if (patchesApplied > 0) {
             await fs.writeFile(filePath, content, 'utf-8');
             console.log(`[WorkflowEngine] Applied ${patchesApplied}/${file.patches.length} patches to ${file.path}`);
+          } else if (file.patches.length > 0) {
+            console.error(`[WorkflowEngine] NO patches applied to ${file.path} - all ${file.patches.length} patches failed`);
           }
         } else {
-          console.warn(`[WorkflowEngine] Cannot patch non-existent file: ${file.path}`);
+          const errorMsg = `FILE_NOT_FOUND: Cannot patch non-existent file: ${file.path}`;
+          console.error(`[WorkflowEngine] ${errorMsg}`);
+          failedPatches.push(errorMsg);
         }
       } else if (file.operation === 'create' || file.operation === 'update') {
         await fs.ensureDir(path.dirname(filePath));
@@ -332,8 +382,14 @@ export class WorkflowEngine {
       const isValid = await this.validateFileSyntax(filePath);
       if (!isValid) {
         console.error(`[WorkflowEngine] File ${file.path} has syntax errors, reverted`);
+        failedPatches.push(`SYNTAX_ERROR: File ${file.path} has syntax errors and was reverted`);
       }
     }
+
+    return {
+      success: failedPatches.length === 0,
+      failedPatches
+    };
   }
 
   /**

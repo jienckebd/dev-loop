@@ -63,22 +63,22 @@ export class TaskMasterBridge {
       const tasks = await this.loadTasks();
       // Include both "pending" and "in-progress" tasks (in-progress means it was interrupted)
       const pending = tasks.filter((t) => t.status === 'pending' || t.status === 'in-progress');
-      
+
       // Filter out tasks that have exceeded max retries
       const eligibleTasks = pending.filter(t => !this.hasExceededMaxRetries(t.id));
-      
+
       // Sort by priority and prefer original tasks over fix tasks
       return eligibleTasks.sort((a, b) => {
         // First, prefer in-progress tasks (to resume them)
         if (a.status === 'in-progress' && b.status !== 'in-progress') return -1;
         if (b.status === 'in-progress' && a.status !== 'in-progress') return 1;
-        
+
         // Then, prefer non-fix tasks over fix tasks (original tasks first)
         const aIsFix = String(a.id).startsWith('fix-');
         const bIsFix = String(b.id).startsWith('fix-');
         if (!aIsFix && bIsFix) return -1;
         if (aIsFix && !bIsFix) return 1;
-        
+
         // Then sort by priority
         const priorityOrder = { critical: 0, high: 1, medium: 2, low: 3 };
         const aPriority = priorityOrder[a.priority as keyof typeof priorityOrder] ?? 2;
@@ -146,13 +146,101 @@ export class TaskMasterBridge {
 
     console.log(`[TaskBridge] Creating fix task for ${originalTaskId} (attempt ${retryCount}/${this.maxRetries})`);
 
+    // Extract line numbers from error messages for better context
+    const lineNumbers = this.extractLineNumbers(errorDescription + '\n' + testOutput);
+    const lineContext = lineNumbers.length > 0
+      ? `\n\nRelevant line numbers to check: ${lineNumbers.join(', ')}`
+      : '';
+
+    // Extract file paths from error messages
+    const filePaths = this.extractFilePaths(errorDescription + '\n' + testOutput);
+    const fileContext = filePaths.length > 0
+      ? `\n\nFiles mentioned in errors:\n${filePaths.map(f => `- ${f}`).join('\n')}`
+      : '';
+
+    // Detect common error patterns and add specific guidance
+    const guidance = this.getErrorGuidance(errorDescription);
+
     return this.createTask({
       id: `fix-${originalTaskId}-${Date.now()}`,
       title: `Fix: ${originalTask.title} (attempt ${retryCount})`,
-      description: `Fix issues in ${originalTask.title}\n\nAttempt: ${retryCount}/${this.maxRetries}\n\nError: ${errorDescription}\n\nTest Output:\n${testOutput}`,
-      priority: 'high',
+      description: `Fix issues in ${originalTask.title}\n\nAttempt: ${retryCount}/${this.maxRetries}\n\nError: ${errorDescription}${lineContext}${fileContext}${guidance}\n\nTest Output:\n${testOutput}`,
+      priority: 'critical', // Fix tasks are always critical
       dependencies: [originalTaskId],
+      details: originalTask.details, // Preserve original task details
     });
+  }
+
+  /**
+   * Extract line numbers from error messages
+   */
+  private extractLineNumbers(text: string): number[] {
+    const lineNumbers: number[] = [];
+    const patterns = [
+      /line\s+(\d+)/gi,
+      /:\s*(\d+)\s*:/g,
+      /at\s+.*:(\d+)/gi,
+    ];
+
+    for (const pattern of patterns) {
+      let match;
+      while ((match = pattern.exec(text)) !== null) {
+        const num = parseInt(match[1], 10);
+        if (num > 0 && num < 10000 && !lineNumbers.includes(num)) {
+          lineNumbers.push(num);
+        }
+      }
+    }
+
+    return lineNumbers.sort((a, b) => a - b);
+  }
+
+  /**
+   * Extract file paths from error messages
+   */
+  private extractFilePaths(text: string): string[] {
+    const paths: string[] = [];
+    const patterns = [
+      /docroot\/[^\s:]+\.php/g,
+      /\/var\/www\/html\/[^\s:]+\.php/g,
+    ];
+
+    for (const pattern of patterns) {
+      let match;
+      while ((match = pattern.exec(text)) !== null) {
+        const filePath = match[0].replace('/var/www/html/', '');
+        if (!paths.includes(filePath)) {
+          paths.push(filePath);
+        }
+      }
+    }
+
+    return paths;
+  }
+
+  /**
+   * Provide specific guidance based on error patterns
+   */
+  private getErrorGuidance(error: string): string {
+    const guidance: string[] = [];
+
+    if (error.includes('PATCH_FAILED') || error.includes('Search string not found')) {
+      guidance.push('PATCH FAILURE: The search string does not match the actual file content. Copy the EXACT code from the existing file context, including all whitespace and newlines.');
+    }
+
+    if (error.includes('dirname(DRUPAL_ROOT)') || error.includes('/docroot/etc/')) {
+      guidance.push('PATH ERROR: The etc/ folder is at PROJECT ROOT, not inside docroot/. Use dirname(DRUPAL_ROOT) not DRUPAL_ROOT for paths to etc/ folder.');
+    }
+
+    if (error.includes('undefined method') || error.includes('Call to undefined')) {
+      guidance.push('UNDEFINED METHOD: A method is being called that does not exist. Either implement the method OR remove the call. Do NOT add partial implementations that call other missing methods.');
+    }
+
+    if (error.includes('syntax error') || error.includes('Parse error')) {
+      guidance.push('SYNTAX ERROR: The generated code has PHP syntax errors. Ensure all braces, parentheses, and semicolons are balanced.');
+    }
+
+    return guidance.length > 0 ? '\n\n**Specific Guidance:**\n' + guidance.map(g => `- ${g}`).join('\n') : '';
   }
 
   private async loadTasks(): Promise<Task[]> {
