@@ -4,11 +4,16 @@ import { loadConfig } from '../../config/loader';
 import { WorkflowEngine } from '../../core/workflow-engine';
 import { writePidFile, removePidFile } from './stop';
 
-export async function watchCommand(options: { config?: string }): Promise<void> {
+export async function watchCommand(options: { config?: string; debug?: boolean }): Promise<void> {
   const spinner = ora('Loading configuration').start();
+  const debug = options.debug || false;
 
   try {
     const config = await loadConfig(options.config);
+    // Enable debug mode in config
+    if (debug) {
+      (config as any).debug = true;
+    }
     spinner.succeed('Configuration loaded');
 
     spinner.start('Initializing workflow engine');
@@ -16,6 +21,9 @@ export async function watchCommand(options: { config?: string }): Promise<void> 
     spinner.succeed('Workflow engine initialized');
 
     console.log(chalk.cyan('Starting daemon mode...'));
+    if (debug) {
+      console.log(chalk.magenta('[DEBUG MODE ENABLED]'));
+    }
     console.log(chalk.gray('Press Ctrl+C to stop, or run: npx dev-loop stop\n'));
 
     // Write PID file for stop command

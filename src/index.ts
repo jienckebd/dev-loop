@@ -31,6 +31,7 @@ program
   .command('watch')
   .description('Daemon mode - continuous execution until PRD complete')
   .option('-c, --config <path>', 'Path to config file', 'devloop.config.js')
+  .option('-d, --debug', 'Enable debug mode with verbose output')
   .action(watchCommand);
 
 program

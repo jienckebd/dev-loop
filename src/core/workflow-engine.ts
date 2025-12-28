@@ -265,15 +265,19 @@ export class WorkflowEngine {
       }
 
       // Validate syntax for supported languages
-      await this.validateFileSyntax(filePath);
+      const isValid = await this.validateFileSyntax(filePath);
+      if (!isValid) {
+        console.error(`[WorkflowEngine] File ${file.path} has syntax errors, reverted`);
+      }
     }
   }
 
   /**
    * Validate file syntax for supported languages
+   * Returns true if valid, false if syntax error detected
    */
-  private async validateFileSyntax(filePath: string): Promise<void> {
-    if (!await fs.pathExists(filePath)) return;
+  private async validateFileSyntax(filePath: string): Promise<boolean> {
+    if (!await fs.pathExists(filePath)) return true;
 
     try {
       if (filePath.endsWith('.php')) {
@@ -283,9 +287,19 @@ export class WorkflowEngine {
         JSON.parse(content);
       }
       // Add more language validators as needed
+      return true;
     } catch (error) {
-      console.warn(`Syntax check failed for ${filePath}:`, error instanceof Error ? error.message : String(error));
-      // Don't fail - let the framework handle validation
+      console.error(`[WorkflowEngine] Syntax error in ${filePath}:`, error instanceof Error ? error.message : String(error));
+      
+      // Revert the file using git checkout
+      try {
+        await execAsync(`git checkout "${filePath}"`);
+        console.log(`[WorkflowEngine] Reverted ${filePath} due to syntax error`);
+      } catch (revertError) {
+        console.warn(`[WorkflowEngine] Could not revert ${filePath}:`, revertError instanceof Error ? revertError.message : String(revertError));
+      }
+      
+      return false;
     }
   }
 
