@@ -377,7 +377,7 @@ stateDiagram-v2
 13. **ComponentInteractionAnalyzer** (`src/core/component-interaction-analyzer.ts`) - NEW
     - Identifies component boundaries and interactions
     - Detects common interaction problems (entity lifecycle, widget-entity conflicts)
-    - Maps component interaction flows (e.g., IEF widget → FeedType entity → Entity bundle)
+    - Maps component interaction flows (e.g., widget → entity → bundle lifecycle)
     - Suggests fixes based on interaction patterns
 
 14. **RootCauseAnalyzer** (`src/core/root-cause-analyzer.ts`) - NEW
@@ -550,6 +550,55 @@ StateManager provides:
 - State recovery after interruptions
 - Atomic state updates to prevent corruption
 
+### 9. Framework Pattern Library Pattern
+
+FrameworkPatternLibrary provides framework-specific execution pattern knowledge:
+- **Pattern Matching**: Matches errors to known framework patterns (form handlers, hooks, lifecycle)
+- **Framework Detection**: Identifies framework from config or codebase
+- **Pattern Guidance**: Provides framework-specific solution guidance
+- **Extensible**: Easy to add patterns for new frameworks
+- Supports Drupal, React, and generic patterns
+
+### 10. Error Classification & Strategy Pattern
+
+DebuggingStrategyAdvisor classifies errors and suggests debugging approach:
+- **Error Classification**: Timing-order, missing-state, component-interaction, simple-bug
+- **Strategy Selection**: Determines when to investigate vs fix directly
+- **Investigation Guidance**: Generates targeted debug code snippets
+- **Framework-Aware**: Considers framework context when classifying
+
+### 11. Investigation-First Pattern
+
+InvestigationTaskGenerator creates investigation tasks before fix tasks:
+- **Complex Issue Detection**: Identifies when investigation is needed
+- **Investigation Templates**: Provides framework-specific investigation code
+- **Sequential Workflow**: Investigation → Analysis → Fix task sequence
+- **Strategic Logging**: Adds targeted logging, not random debug statements
+
+### 12. Execution Order Analysis Pattern
+
+ExecutionOrderAnalyzer detects and analyzes timing/order issues:
+- **Code Analysis**: Parses code to identify execution dependencies
+- **Order Detection**: Finds potential race conditions or ordering problems
+- **Framework Patterns**: Recognizes framework-specific execution patterns
+- **Fix Suggestions**: Suggests execution order fixes (weight, priority, dependencies)
+
+### 13. Component Interaction Analysis Pattern
+
+ComponentInteractionAnalyzer understands multi-component interactions:
+- **Component Identification**: Identifies component boundaries (modules, services, widgets, entities)
+- **Interaction Mapping**: Maps how components interact (widget → entity → bundle)
+- **Problem Detection**: Detects common interaction problems (lifecycle, conflicts, ordering)
+- **Fix Guidance**: Suggests fixes based on interaction patterns
+
+### 14. Root Cause Analysis Pattern
+
+RootCauseAnalyzer analyzes why fixes don't work completely:
+- **Fix Tracking**: Tracks fix attempts and their outcomes
+- **Partial Fix Detection**: Identifies fixes that work for one path but not others
+- **Path Analysis**: Maps code paths and identifies which are fixed vs broken
+- **Comprehensive Solutions**: Suggests fixes addressing all execution paths
+
 ## Configuration
 
 Create a `devloop.config.js` file in your project root:
@@ -588,7 +637,7 @@ module.exports = {
   logs: {
     sources: [
       { type: 'file', path: '/var/log/app.log' },
-      { type: 'command', command: 'ddev exec tail -100 /var/log/drupal.log' },
+      { type: 'command', command: 'tail -100 /var/log/application.log' },
     ],
     patterns: {
       error: /Error|Exception|Fatal/i,
@@ -791,7 +840,7 @@ task-master update-task --id=<id> --prompt="..."
 - 📤 **CI Integration**: JSON, JUnit XML, and Markdown output formats
 - 📈 **Debug Metrics**: Track execution trends over time
 - 🔍 **Complex Issue Analysis**: Framework pattern matching, execution order analysis, component interaction detection
-- 🧩 **Multi-Component Understanding**: Automatically handles complex issues involving multiple components (IEF, Feeds, Entities, etc.)
+- 🧩 **Multi-Component Understanding**: Automatically handles complex issues involving multiple components (widgets, entities, services, etc.)
 - 🎯 **Strategic Debugging**: Classifies errors and suggests investigation vs fix approach
 - 🔬 **Root Cause Analysis**: Analyzes why partial fixes fail and suggests comprehensive solutions
 
@@ -922,7 +971,7 @@ Detects and analyzes execution order/timing issues:
 
 Understands how multiple components interact:
 - Identifies component boundaries (modules, services, widgets, entities)
-- Maps component interactions (IEF widget → FeedType entity → Entity bundle)
+- Maps component interactions (widget → entity → bundle lifecycle)
 - Detects common interaction problems:
   - Entity lifecycle issues (creating fields before bundles exist)
   - Widget → Entity save conflicts
@@ -937,13 +986,13 @@ Analyzes why partial fixes fail:
 - Maps code paths and identifies which paths are fixed vs broken
 - Suggests comprehensive fixes addressing all execution paths
 
-**Example**: For the IEF/Feeds timing issue, dev-loop would:
+**Example**: For a multi-component timing issue, dev-loop would:
 1. Detect multi-component timing issue from error message
-2. Match "Drupal form handler order" pattern
-3. Create investigation task to add debug logging for submit handler order
-4. Analyze execution order and identify IEF handler runs before clear handler
-5. Create fix task to adjust handler order (array_unshift on #ief_element_submit)
-6. Understand why partial fix failed (only fixed direct path, not IEF path)
+2. Match framework-specific pattern (e.g., "form handler order" for Drupal)
+3. Create investigation task to add debug logging for execution order
+4. Analyze execution order and identify handler execution sequence
+5. Create fix task to adjust handler order (e.g., array_unshift for Drupal, priority adjustment for React)
+6. Understand why partial fix failed (only fixed direct path, not widget path)
 
 ## Intervention Modes (Inner Agent Approval Settings)
 
