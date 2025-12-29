@@ -1,12 +1,6 @@
 # dev-loop
 
-> Automated Development Workflow Orchestrator
-
-A TypeScript CLI application that orchestrates the complete PRD-to-validated-code workflow by wrapping `task-master-ai` and coordinating multiple AI providers, test runners, and log analyzers. dev-loop automates the iterative development cycle where **features and tests are built together**, running continuously until all requirements are implemented and validated.
-
-## Overview
-
-dev-loop transforms PRDs into validated code by orchestrating AI providers, test runners, and log analyzers in a continuous loop. It handles complex issues autonomously through framework pattern matching, execution order analysis, component interaction detection, and root cause analysis.
+dev-loop transforms PRDs into validated code by orchestrating AI providers, test runners, and log analyzers in a continuous loop. Key features include multi-provider AI support, Playwright/Cypress test runners, hybrid log analysis, pattern learning, pre-apply validation, debug metrics, framework pattern matching, execution order analysis, component interaction detection, and root cause analysis.
 
 ## Quick Start
 
