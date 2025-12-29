@@ -570,9 +570,12 @@ export class WorkflowEngine {
           // Create fix task with validation errors AND file context for patch failures
           const errorDescription = this.validationGate.formatErrorsForAI(validationResult);
 
-          // For patch_not_found errors, include actual file content
+          // For patch_not_found and destructive update errors, include actual file content
           let fileContextForFix = '';
-          const patchErrors = validationResult.errors.filter(e => e.type === 'patch_not_found');
+          const patchErrors = validationResult.errors.filter(e => 
+            e.type === 'patch_not_found' || 
+            (e.type === 'syntax' && e.message.toLowerCase().includes('destructive'))
+          );
           if (patchErrors.length > 0) {
             for (const error of patchErrors) {
               try {
@@ -585,6 +588,15 @@ export class WorkflowEngine {
                   fileContextForFix += `\n\n## Actual content of ${error.file} (${patchContext.fileInfo.lineCount} lines)\n`;
                   fileContextForFix += patchContext.guidance;
                   fileContextForFix += `\n\n### End of file:\n\`\`\`\n${patchContext.endOfFile}\n\`\`\``;
+                  
+                  // For destructive updates, also extract the specific section being modified
+                  if (error.message.toLowerCase().includes('destructive')) {
+                    fileContextForFix += `\n\n**CRITICAL: You tried to replace the entire ${patchContext.fileInfo.lineCount}-line file. Use PATCH operation instead.**`;
+                    fileContextForFix += `\n\n### How to fix:`;
+                    fileContextForFix += `\n1. Identify the specific lines to change (not the whole file)`;
+                    fileContextForFix += `\n2. Use "operation": "patch" with search/replace`;
+                    fileContextForFix += `\n3. Copy the exact search string from the file context`;
+                  }
                 }
               } catch (err) {
                 // Ignore
