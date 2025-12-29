@@ -336,7 +336,11 @@ export class WorkflowEngine {
       await this.taskBridge.updateTaskStatus(task.id, 'in-progress');
 
       // NEW: Analyze task description for complex issues BEFORE execution
-      if (this.debuggingStrategyAdvisor && this.investigationTaskGenerator) {
+      // Skip analysis for investigation tasks (they shouldn't create more investigation tasks)
+      const isInvestigationTask = task.id.startsWith('investigation-') || 
+                                  ((task as any).details && JSON.parse((task as any).details || '{}').taskType === 'investigation');
+      
+      if (!isInvestigationTask && this.debuggingStrategyAdvisor && this.investigationTaskGenerator) {
         try {
           const taskDescription = task.description || '';
           const taskDetails = (task as any).details || '';
