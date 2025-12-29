@@ -1,6 +1,6 @@
 /**
  * Framework-Specific Pattern Library
- * 
+ *
  * Understands framework-specific execution patterns to help identify
  * common issues like form handler ordering, hook execution order, etc.
  */

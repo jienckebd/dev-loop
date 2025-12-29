@@ -142,13 +142,13 @@ export class WorkflowEngine {
     const lower = errorText.toLowerCase();
     const components: string[] = [];
     const componentKeywords = ['IEF', 'widget', 'entity', 'form', 'handler', 'subscriber', 'processor', 'feeds', 'bundle'];
-    
+
     for (const keyword of componentKeywords) {
       if (lower.includes(keyword.toLowerCase())) {
         components.push(keyword);
       }
     }
-    
+
     return components;
   }
 
@@ -167,7 +167,7 @@ export class WorkflowEngine {
       // Count fix tasks by checking if task ID starts with 'fix-{taskId}'
       const pendingTasks = await this.taskBridge.getPendingTasks();
       const allTasks = [...pendingTasks];
-      
+
       // Also check done/blocked tasks for fix attempts
       try {
         const tasksData = await require('fs-extra').readJson(this.config.taskMaster.tasksPath);
@@ -176,7 +176,7 @@ export class WorkflowEngine {
       } catch (err) {
         // Ignore if can't read tasks file
       }
-      
+
       const fixTasks = allTasks.filter((t: any) => {
         const idStr = String(t.id);
         // Check if it's a fix task for this task

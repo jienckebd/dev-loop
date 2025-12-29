@@ -196,7 +196,7 @@ $bundle_exists = \\Drupal::entityTypeManager()
   toTaskMasterTask(investigationTask: InvestigationTask, parentTaskId?: string): Partial<Task> {
     return {
       title: investigationTask.title,
-      description: investigationTask.description + 
+      description: investigationTask.description +
         (investigationTask.debugCode ? `\n\nDebug code to add:\n\`\`\`php\n${investigationTask.debugCode}\n\`\`\`` : '') +
         `\n\nExpected outcome: ${investigationTask.expectedOutcome}`,
       priority: investigationTask.priority,

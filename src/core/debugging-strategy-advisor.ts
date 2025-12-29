@@ -93,7 +93,7 @@ export class DebuggingStrategyAdvisor {
     }
 
     // Check for component interaction
-    const hasMultipleComponents = context?.hasMultipleComponents || 
+    const hasMultipleComponents = context?.hasMultipleComponents ||
                                  (context?.components && context.components.length > 1) ||
                                  this.detectMultipleComponents(errorText);
     const hasInteractionPattern = patterns.some(p => p.patternType === 'interaction');
@@ -109,8 +109,8 @@ export class DebuggingStrategyAdvisor {
 
     // Check for simple bugs (syntax, typos, simple logic errors)
     const simpleBugKeywords = ['syntax', 'parse error', 'undefined', 'null pointer', 'type error'];
-    const hasSimpleBug = simpleBugKeywords.some(kw => lowerError.includes(kw)) && 
-                        !hasTimingKeywords && 
+    const hasSimpleBug = simpleBugKeywords.some(kw => lowerError.includes(kw)) &&
+                        !hasTimingKeywords &&
                         !hasMultipleComponents;
 
     if (hasSimpleBug && type === 'unknown') {
