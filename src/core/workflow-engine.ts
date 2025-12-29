@@ -142,11 +142,11 @@ export class WorkflowEngine {
     const lower = errorText.toLowerCase();
     const components: string[] = [];
     const componentKeywords = [
-      'IEF', 'inline entity form', 
-      'widget', 'entity', 'form', 'handler', 'subscriber', 'processor', 
+      'IEF', 'inline entity form',
+      'widget', 'entity', 'form', 'handler', 'subscriber', 'processor',
       'feeds', 'bundle', 'feed type', 'feeds_feed_type'
     ];
-    
+
     for (const keyword of componentKeywords) {
       if (lower.includes(keyword.toLowerCase())) {
         // Use canonical name
@@ -165,7 +165,7 @@ export class WorkflowEngine {
         }
       }
     }
-    
+
     return components;
   }
 
@@ -337,15 +337,22 @@ export class WorkflowEngine {
 
       // NEW: Analyze task description for complex issues BEFORE execution
       // Skip analysis for investigation tasks (they shouldn't create more investigation tasks)
-      const isInvestigationTask = task.id.startsWith('investigation-') || 
-                                  ((task as any).details && JSON.parse((task as any).details || '{}').taskType === 'investigation');
-      
+      let isInvestigationTask = task.id.startsWith('investigation-');
+      if (!isInvestigationTask && (task as any).details) {
+        try {
+          const parsedDetails = JSON.parse((task as any).details);
+          isInvestigationTask = parsedDetails?.taskType === 'investigation';
+        } catch {
+          // Details is not JSON, that's fine for regular tasks
+        }
+      }
+
       if (!isInvestigationTask && this.debuggingStrategyAdvisor && this.investigationTaskGenerator) {
         try {
           const taskDescription = task.description || '';
           const taskDetails = (task as any).details || '';
           const combinedDescription = `${taskDescription}\n\n${taskDetails}`;
-          
+
           const framework = (this.config as any).framework?.type;
           const classification = this.debuggingStrategyAdvisor.classifyError(combinedDescription, {
             framework,
@@ -358,7 +365,7 @@ export class WorkflowEngine {
           if (classification.needsInvestigation) {
             // Get target files first (needed for investigation tasks)
             const { targetFiles } = await this.getCodebaseContext(task);
-            
+
             const invTasks = this.investigationTaskGenerator.generateInvestigationTasks(combinedDescription, {
               framework,
               components: this.extractComponentsFromError(combinedDescription),
@@ -375,7 +382,7 @@ export class WorkflowEngine {
                   console.log(`[WorkflowEngine] Created investigation task: ${invTask.title}`);
                 }
               }
-              
+
               // Mark original task as pending to wait for investigation
               await this.taskBridge.updateTaskStatus(task.id, 'pending');
               console.log(`[WorkflowEngine] Task ${task.id} marked as pending - investigation tasks must complete first`);

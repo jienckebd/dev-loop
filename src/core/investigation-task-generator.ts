@@ -157,10 +157,10 @@ if (isset($form['#ief_element_submit'])) {
       });
     }
 
-    const hasIEF = context?.components?.some((c: string) => c.toLowerCase().includes('ief')) || 
+    const hasIEF = context?.components?.some((c: string) => c.toLowerCase().includes('ief')) ||
                    errorText?.toLowerCase().includes('ief') ||
                    errorText?.toLowerCase().includes('inline entity form');
-    
+
     if (classification.errorType === 'component-interaction' && hasIEF) {
       tasks.push({
         title: 'Investigate IEF widget save interaction with entity lifecycle',
@@ -217,11 +217,11 @@ $bundle_exists = \\Drupal::entityTypeManager()
   toTaskMasterTask(investigationTask: InvestigationTask, parentTaskId?: string): Partial<Task> & { id: string } {
     // Generate a unique ID for the investigation task
     const taskId = `investigation-${parentTaskId || 'unknown'}-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
-    
+
     return {
       id: taskId,
       title: investigationTask.title,
-      description: investigationTask.description + 
+      description: investigationTask.description +
         (investigationTask.debugCode ? `\n\nDebug code to add:\n\`\`\`php\n${investigationTask.debugCode}\n\`\`\`` : '') +
         `\n\nExpected outcome: ${investigationTask.expectedOutcome}`,
       priority: investigationTask.priority,
