@@ -42,7 +42,7 @@ export class FailureAnalyzer {
 
     const commonPatterns = this.findCommonPatterns(analyses);
     const suggestedFixes = this.generateFixSuggestions({ failures: analyses, commonPatterns, suggestedFixes: [] }, context);
-    
+
     return {
       failures: analyses,
       commonPatterns,
@@ -174,7 +174,7 @@ export class FailureAnalyzer {
    */
   private extractLearnings(content: string): string[] {
     const learnings: string[] = [];
-    
+
     // Look for patterns section
     const patternsMatch = content.match(/patterns?[:\s]+(.+?)(?:\n\n|\n##|$)/is);
     if (patternsMatch) {
@@ -190,7 +190,7 @@ export class FailureAnalyzer {
    */
   private fallbackAnalysis(failure: ExtendedTestResult, context: PrdContext): FailureInfo {
     const output = failure.output.toLowerCase();
-    
+
     // Simple pattern matching
     let category: 'code' | 'test' | 'environment' | 'unknown' = 'unknown';
     if (output.includes('syntax') || output.includes('parse') || output.includes('typeerror')) {
@@ -227,7 +227,7 @@ export class FailureAnalyzer {
    */
   private getPreviousAttempts(testId: string, context: PrdContext): string[] {
     const attempts: string[] = [];
-    
+
     // Find test in context
     const test = context.tests.find(t => t.id === testId);
     if (test && test.attempts > 1) {

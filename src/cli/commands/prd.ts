@@ -24,7 +24,7 @@ export async function prdCommand(options: {
     spinner.succeed('Workflow engine initialized');
 
     const prdPath = path.resolve(process.cwd(), options.prd);
-    
+
     if (!(await require('fs-extra').pathExists(prdPath))) {
       console.error(chalk.red(`PRD file not found: ${prdPath}`));
       process.exit(1);

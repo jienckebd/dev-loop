@@ -1783,7 +1783,7 @@ export class WorkflowEngine {
       const changesApplied: any[] = [];
       for (const task of tasks) {
         await this.taskBridge.createTask(task);
-        
+
         // Execute the task using existing workflow
         try {
           const { codebaseContext, targetFiles } = await this.getCodebaseContext(task);
@@ -1884,7 +1884,7 @@ export class WorkflowEngine {
       return false;
     }
 
-    const passRates = recentIterations.map(i => 
+    const passRates = recentIterations.map(i =>
       i.testsRun > 0 ? i.testsPassed / i.testsRun : 0
     );
     const improvement = passRates[passRates.length - 1] - passRates[0];

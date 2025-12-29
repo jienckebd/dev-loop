@@ -54,13 +54,13 @@ Extract ALL requirements from the PRD. Include functional requirements, non-func
       const jsonMatch = response.files?.[0]?.content?.match(/\[[\s\S]*\]/);
       if (jsonMatch) {
         const requirements = JSON.parse(jsonMatch[0]) as Requirement[];
-        
+
         // Validate and set default status
         return requirements.map(req => ({
           ...req,
           status: 'pending' as const,
-          acceptanceCriteria: Array.isArray(req.acceptanceCriteria) 
-            ? req.acceptanceCriteria 
+          acceptanceCriteria: Array.isArray(req.acceptanceCriteria)
+            ? req.acceptanceCriteria
             : [req.acceptanceCriteria || 'Requirement must be testable'],
         }));
       }

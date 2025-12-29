@@ -78,7 +78,10 @@ export class TestGenerator {
     });
 
     // Extract test code from response
-    const testCode = response.files?.[0]?.content || response.summary || '';
+    let testCode = response.files?.[0]?.content || response.summary || '';
+
+    // Clean up the test code - remove markdown code blocks if present
+    testCode = this.cleanTestCode(testCode);
 
     if (!testCode || testCode.trim().length < 50) {
       throw new Error(`Failed to generate test code for requirement ${req.id}`);
@@ -113,6 +116,61 @@ export class TestGenerator {
       `## Acceptance Criteria`,
       ...req.acceptanceCriteria.map(c => `- ${c}`),
     ];
+
+    // Add CRITICAL test structure requirements first
+    sections.push(
+      '',
+      `## CRITICAL: Test Structure Requirements`,
+      ``,
+      `Tests are generated in \`${this.testDir}/\` directory.`,
+      ``,
+      `### Required Imports (USE EXACTLY THESE)`,
+      `\`\`\`typescript`,
+      `import { test, expect } from '@playwright/test';`,
+      `import { AuthHelper } from '../helpers/auth';`,
+      `import { DrupalAPI } from '../helpers/drupal-api';`,
+      `import { WizardHelper, WizardTestUtils } from '../helpers/wizard-helper';`,
+      `\`\`\``,
+      ``,
+      `### Required Test Setup Pattern`,
+      `\`\`\`typescript`,
+      `test.describe('Feature Name', () => {`,
+      `  test.beforeEach(async ({ page, request }) => {`,
+      `    const baseURL = 'https://sysf.ddev.site';`,
+      `    const api = new DrupalAPI(request, baseURL);`,
+      `    const auth = new AuthHelper(page, api);`,
+      `    const wizard = new WizardHelper(page, api);`,
+      `    `,
+      `    // Login as admin before each test`,
+      `    await auth.login();`,
+      `  });`,
+      ``,
+      `  test('should do something', async ({ page }) => {`,
+      `    // Navigate with full URL`,
+      `    await page.goto('https://sysf.ddev.site/admin/content/wizard/add/api_spec');`,
+      `    // ... test code`,
+      `  });`,
+      `});`,
+      `\`\`\``,
+      ``,
+      `### Available Helper Classes`,
+      `- **AuthHelper**: Call \`await auth.login()\` in beforeEach to authenticate`,
+      `- **DrupalAPI**: API helper for Drupal operations`,
+      `- **WizardHelper**: Helper for wizard interactions (waitForWizardStep, fillAceEditor, clickNextAndWait, etc.)`,
+      `- **WizardTestUtils**: Static utilities (generateSampleSchema, generateWizardName)`,
+      ``,
+      `### Key URLs`,
+      `- Base URL: \`https://sysf.ddev.site\``,
+      `- Wizard add page: \`https://sysf.ddev.site/admin/content/wizard/add/api_spec\``,
+      `- For existing wizard: \`https://sysf.ddev.site/admin/content/wizard/{wizard_id}/edit\``,
+      ``,
+      `### Important Rules`,
+      `1. ALWAYS use full URLs starting with https://sysf.ddev.site`,
+      `2. NEVER use relative paths like '/admin/...' - always use full URLs`,
+      `3. Import helpers from '../helpers/' (one directory up from auto/)`,
+      `4. Use .ts extension imports, NOT .js`,
+      `5. DrupalAPI constructor requires (request, baseURL) parameters`
+    );
 
     // Add learned knowledge
     if (context.knowledge.codeLocations.length > 0) {
@@ -162,9 +220,9 @@ export class TestGenerator {
     const frameworkType = (this.config as any).framework?.type || 'generic';
     sections.push(
       '',
-      `## Test Framework: ${this.framework}`,
-      `Generate a ${this.framework} test that validates the requirement and acceptance criteria.`,
-      `Use the project's existing test patterns and helpers.`
+      `## Output Format`,
+      `Generate ONLY the complete test file content, nothing else.`,
+      `Do not include markdown code blocks or explanations - just the raw TypeScript code.`
     );
 
     // Add discovered issues to be aware of
@@ -207,12 +265,41 @@ export class TestGenerator {
    */
   private async getTestPath(req: Requirement): Promise<string> {
     await fs.ensureDir(path.resolve(process.cwd(), this.testDir));
-    
+
     // Sanitize requirement ID for filename
     const safeId = req.id.replace(/[^a-zA-Z0-9_-]/g, '_');
     const filename = `${safeId}.spec.ts`;
-    
+
     return path.join(this.testDir, filename);
+  }
+
+  /**
+   * Clean test code by removing markdown code blocks and other artifacts
+   */
+  private cleanTestCode(code: string): string {
+    let cleaned = code.trim();
+
+    // Remove markdown code block wrappers
+    // Match ```typescript, ```ts, ``` at the start
+    const codeBlockStart = /^```(?:typescript|ts|javascript|js)?\s*\n?/;
+    const codeBlockEnd = /\n?```\s*$/;
+
+    if (codeBlockStart.test(cleaned) && codeBlockEnd.test(cleaned)) {
+      cleaned = cleaned.replace(codeBlockStart, '').replace(codeBlockEnd, '');
+    }
+
+    // Also handle case where entire response is wrapped
+    if (cleaned.startsWith('```') && cleaned.endsWith('```')) {
+      // Find first newline after opening fence
+      const firstNewline = cleaned.indexOf('\n');
+      // Find last newline before closing fence
+      const lastNewline = cleaned.lastIndexOf('\n');
+      if (firstNewline > 0 && lastNewline > firstNewline) {
+        cleaned = cleaned.substring(firstNewline + 1, lastNewline);
+      }
+    }
+
+    return cleaned.trim();
   }
 
   /**
@@ -221,7 +308,7 @@ export class TestGenerator {
   private async writeTestFile(testPath: string, testCode: string): Promise<void> {
     const fullPath = path.resolve(process.cwd(), testPath);
     await fs.ensureDir(path.dirname(fullPath));
-    
+
     // Ensure test code has proper imports if it's TypeScript
     let finalCode = testCode;
     if (testPath.endsWith('.ts') || testPath.endsWith('.spec.ts')) {
@@ -231,9 +318,9 @@ export class TestGenerator {
         finalCode = `import { test, expect } from '@playwright/test';\n\n${testCode}`;
       }
     }
-    
+
     await fs.writeFile(fullPath, finalCode, 'utf-8');
-    
+
     if (this.debug) {
       console.log(`[TestGenerator] Wrote test file: ${testPath}`);
     }

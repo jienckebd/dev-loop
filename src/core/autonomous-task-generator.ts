@@ -167,7 +167,7 @@ Previous attempts have not resolved the issue.
    */
   private hasTriedSimilarFix(failure: FailureInfo, context: PrdContext): boolean {
     const attemptCount = this.getAttemptCount(failure.testId, context);
-    
+
     // If we've tried multiple times, escalate
     if (attemptCount >= this.maxRetries) {
       return true;

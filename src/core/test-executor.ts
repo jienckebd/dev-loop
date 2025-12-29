@@ -83,7 +83,7 @@ export class TestExecutor {
   private async runTest(test: TestState): Promise<ExtendedTestResult> {
     // Run Playwright with JSON reporter for structured output
     const testPath = path.resolve(process.cwd(), test.testPath);
-    
+
     // Check if test file exists
     if (!(await fs.pathExists(testPath))) {
       return {
@@ -125,7 +125,7 @@ export class TestExecutor {
       }
 
       // Determine success from output
-      const success = !output.includes('failed') && 
+      const success = !output.includes('failed') &&
                      !output.includes('Failed') &&
                      !output.includes('Error:') &&
                      (jsonResult?.status === 'passed' || output.includes('passed'));
@@ -146,7 +146,7 @@ export class TestExecutor {
       } as ExtendedTestResult;
     } catch (error: any) {
       const output = error.stdout || error.stderr || error.message || String(error);
-      
+
       return {
         testId: test.id,
         success: false,
@@ -210,7 +210,7 @@ export class TestExecutor {
       // Find screenshots for this test
       const testName = path.basename(testPath, '.spec.ts');
       const files = await fs.readdir(testResultsPath, { recursive: true });
-      
+
       const screenshots = files
         .map(f => String(f))
         .filter(f => f.includes(testName) && (f.endsWith('.png') || f.endsWith('.jpg')))
@@ -268,7 +268,7 @@ export class TestExecutor {
         if (fileStr.includes(testName)) {
           const filePath = path.join(testResultsPath, fileStr);
           const stat = await fs.stat(filePath);
-          
+
           if (stat.isFile()) {
             const ext = path.extname(fileStr).toLowerCase();
             let type: 'screenshot' | 'video' | 'log' | 'other' = 'other';
