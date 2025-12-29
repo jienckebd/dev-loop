@@ -6,9 +6,7 @@ A TypeScript CLI application that orchestrates the complete PRD-to-validated-cod
 
 ## Overview
 
-dev-loop transforms Product Requirements Documents (PRDs) into fully tested, production-ready code through an automated orchestration loop. It coordinates AI providers, test runners, and log analyzers to build features and tests together, running continuously until all requirements are implemented and validated.
-
-The system includes sophisticated analysis capabilities for complex issues: framework pattern matching, execution order analysis, multi-component interaction detection, and root cause analysis. These enable dev-loop to autonomously handle challenging problems like timing issues, component conflicts, and partial fixes that work for one code path but not others.
+dev-loop transforms Product Requirements Documents (PRDs) into fully tested, production-ready code through an automated orchestration loop. It coordinates AI providers, test runners, and log analyzers to build features and tests together, running continuously until all requirements are implemented and validated. The system includes sophisticated analysis capabilities for complex issues—framework pattern matching, execution order analysis, multi-component interaction detection, and root cause analysis—enabling autonomous handling of challenging problems like timing issues, component conflicts, and partial fixes.
 
 ## Quick Start
 
