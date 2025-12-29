@@ -141,14 +141,31 @@ export class WorkflowEngine {
   private extractComponentsFromError(errorText: string): string[] {
     const lower = errorText.toLowerCase();
     const components: string[] = [];
-    const componentKeywords = ['IEF', 'widget', 'entity', 'form', 'handler', 'subscriber', 'processor', 'feeds', 'bundle'];
-
+    const componentKeywords = [
+      'IEF', 'inline entity form', 
+      'widget', 'entity', 'form', 'handler', 'subscriber', 'processor', 
+      'feeds', 'bundle', 'feed type', 'feeds_feed_type'
+    ];
+    
     for (const keyword of componentKeywords) {
       if (lower.includes(keyword.toLowerCase())) {
-        components.push(keyword);
+        // Use canonical name
+        if (keyword === 'inline entity form') {
+          if (!components.includes('IEF')) {
+            components.push('IEF');
+          }
+        } else if (keyword === 'feed type' || keyword === 'feeds_feed_type') {
+          if (!components.includes('feeds')) {
+            components.push('feeds');
+          }
+        } else {
+          if (!components.includes(keyword)) {
+            components.push(keyword);
+          }
+        }
       }
     }
-
+    
     return components;
   }
 
