@@ -1,6 +1,6 @@
 # dev-loop
 
-dev-loop transforms PRDs into validated code by orchestrating AI providers, test runners, and log analyzers in a continuous loop. Key features include multi-provider AI support, Playwright/Cypress test runners, hybrid log analysis, pattern learning, pre-apply validation, debug metrics, framework pattern matching, execution order analysis, component interaction detection, and root cause analysis.
+dev-loop transforms PRDs into validated code by orchestrating AI providers, test runners, and log analyzers in a continuous loop. Key features include multi-provider AI support, Playwright/Cypress test runners, hybrid log analysis, pattern learning from failures, observation-driven evolution, pre-apply validation, debug metrics, framework pattern matching, execution order analysis, component interaction detection, and root cause analysis.
 
 ## Quick Start
 
