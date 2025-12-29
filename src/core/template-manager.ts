@@ -18,12 +18,14 @@ const EMBEDDED_TEMPLATES: Record<string, string> = {
 3. **Use ONLY existing helper functions** - Check the "Available Functions" section
 4. **ADD new test() blocks** - Do not modify or replace existing tests
 5. **Preserve test.describe structure** - Add tests inside existing describe blocks
-6. **Use PATCH operations** - Never replace entire file contents
+6. **ALWAYS use PATCH operations** - Never use "update" operation for existing test files
+7. **For simple fixes** (e.g., fixing a single line): Use PATCH with exact code copy
 
 ## Task Information
 
 **Title:** {{task.title}}
 **Description:** {{task.description}}
+**Details:** {{task.details}}
 
 ## Target Files
 
@@ -34,6 +36,41 @@ const EMBEDDED_TEMPLATES: Record<string, string> = {
 Review this EXISTING code carefully. You must PATCH this code, not replace it:
 
 {{existingCode}}
+
+## CRITICAL: How to Create EXACT Search Strings for Patches
+
+When creating a patch, you MUST copy the EXACT code from the existing file:
+
+1. **Find the EXACT code** in the "Existing Code Context" section above
+2. **Copy it VERBATIM** - including:
+   - Exact whitespace (spaces, tabs)
+   - Exact newlines (\\n characters)
+   - Exact indentation
+   - Exact quotes (single vs double)
+   - No modifications whatsoever
+
+3. **For single-line fixes**: Copy the entire line including indentation
+4. **For multi-line patches**: Copy 3-5 lines of context to ensure uniqueness
+5. **Include surrounding code** to make the search string unique
+
+Example for fixing a single function line:
+
+If you see in existing code:
+\`\`\`typescript
+function drush(command: string): string {
+  try {
+    return execSync(\`ddev exec bash -c "drush \${command}"\`, {
+\`\`\`
+
+And the task says to change to single quotes, your patch MUST be:
+\`\`\`json
+{
+  "search": "    return execSync(\`ddev exec bash -c \"drush \${command}\"\`, {",
+  "replace": "    return execSync(\`ddev exec bash -c 'drush \${command.replace(/'/g, \"'\\\\''\")}'\`, {"
+}
+\`\`\`
+
+Notice: The search string is EXACTLY as it appears, including the exact indentation (4 spaces) and exact quotes.
 
 ## Output Format
 
@@ -59,11 +96,12 @@ Use PATCH operations with exact search/replace:
 
 ## Patch Rules
 
-1. **search** must match EXACTLY - copy from existing code including whitespace
+1. **search** must match EXACTLY - copy from existing code including ALL whitespace, quotes, and newlines
 2. Include 3-5 lines of context in search to ensure uniqueness
 3. Add new tests BEFORE the closing \`});\` of the test.describe block
 4. Preserve all existing helper functions and imports
 5. Use existing helper functions (do not create new ones)
+6. **VERIFY**: Before submitting, double-check that your search string appears EXACTLY in the existing code
 `,
 
   'drupal': `You are an expert Drupal developer. Generate code changes following Drupal coding standards.

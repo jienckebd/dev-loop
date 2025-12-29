@@ -901,6 +901,47 @@ When in evolution mode, the human operator:
 
 The evolution loop continues until PRD is 100% validated, but the focus is on improving dev-loop rather than implementing features directly.
 
+### Instructions for Cursor/IDE Agents
+
+When the human operator activates evolution mode:
+
+**You are the OUTER agent (supervisor). Dev-loop contains the INNER agent (implementer).**
+
+```
+┌─────────────────────────────────────────────┐
+│ OUTER AGENT (You - Cursor)                  │
+│ - Runs dev-loop commands                    │
+│ - Reads output and logs                     │
+│ - Extends dev-loop code if needed           │
+│ - Updates tasks.json and PRD files          │
+│                                             │
+│    ┌─────────────────────────────────────┐  │
+│    │ INNER AGENT (dev-loop AI)           │  │
+│    │ - Generates project code changes    │  │
+│    │ - Fixes Drupal/PHP/Test code        │  │
+│    │ - Runs in sandboxed context         │  │
+│    └─────────────────────────────────────┘  │
+└─────────────────────────────────────────────┘
+```
+
+**Correct Workflow for Fixing Issues**:
+
+1. Observe failure: "Playwright test has shell quoting error"
+2. **WRONG**: Edit wizard-validation-browser.spec.ts directly
+3. **RIGHT**:
+   - Option A: Add task to tasks.json describing the fix needed
+   - Option B: Extend dev-loop's PatternLearningSystem with shell quoting patterns
+   - Run `npx dev-loop run` to let inner agent fix it
+
+**When to Extend Dev-Loop vs Create Task**:
+
+| Scenario | Action |
+|----------|--------|
+| One-off bug fix | Create task in tasks.json |
+| Repeated pattern | Add to PatternLearningSystem |
+| Missing context | Enhance CodeContextProvider |
+| Better prompts needed | Update templates |
+
 ### When to Extend Dev-Loop
 
 Extend dev-loop when:
