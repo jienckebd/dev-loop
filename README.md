@@ -790,6 +790,10 @@ task-master update-task --id=<id> --prompt="..."
 - 🔁 **Daemon Mode**: Continuous execution until PRD complete
 - 📤 **CI Integration**: JSON, JUnit XML, and Markdown output formats
 - 📈 **Debug Metrics**: Track execution trends over time
+- 🔍 **Complex Issue Analysis**: Framework pattern matching, execution order analysis, component interaction detection
+- 🧩 **Multi-Component Understanding**: Automatically handles complex issues involving multiple components (IEF, Feeds, Entities, etc.)
+- 🎯 **Strategic Debugging**: Classifies errors and suggests investigation vs fix approach
+- 🔬 **Root Cause Analysis**: Analyzes why partial fixes fail and suggests comprehensive solutions
 
 ## Advanced Features
 
