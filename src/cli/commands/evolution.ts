@@ -2,6 +2,7 @@ import chalk from 'chalk';
 import ora from 'ora';
 import * as fs from 'fs-extra';
 import * as path from 'path';
+import { execSync } from 'child_process';
 import { PrdTracker } from '../../core/prd-tracker';
 import { loadConfig } from '../../config/loader';
 
@@ -30,6 +31,51 @@ async function loadEvolutionModeState(): Promise<EvolutionModeState | null> {
 async function saveEvolutionModeState(state: EvolutionModeState): Promise<void> {
   await fs.ensureDir(path.dirname(EVOLUTION_MODE_FILE));
   await fs.writeJson(EVOLUTION_MODE_FILE, state, { spaces: 2 });
+}
+
+/**
+ * Simple glob pattern matcher.
+ * Converts glob patterns to regex: ** -> .*, * -> [^/]*
+ */
+function matchGlob(file: string, pattern: string): boolean {
+  // Convert glob to regex: ** -> .*, * -> [^/]*
+  const regex = pattern
+    .replace(/\*\*/g, '.*')
+    .replace(/\*/g, '[^/]*');
+  return new RegExp(`^${regex}`).test(file);
+}
+
+/**
+ * Detects boundary violations by checking git for uncommitted changes
+ * that match forbidden patterns in evolution mode state.
+ */
+async function detectBoundaryViolations(state: EvolutionModeState): Promise<string[]> {
+  try {
+    const output = execSync('git status --porcelain', { encoding: 'utf8' });
+    const changedFiles = output.split('\n')
+      .filter(line => line.trim())
+      .map(line => {
+        // Remove status prefix (e.g., " M " or "?? ")
+        const trimmed = line.trim();
+        return trimmed.slice(2).trim();
+      })
+      .filter(file => file.length > 0);
+
+    // Check if any changed file matches forbidden patterns
+    const violations: string[] = [];
+    for (const file of changedFiles) {
+      for (const pattern of state.outerAgentBoundaries.forbidden) {
+        if (matchGlob(file, pattern)) {
+          violations.push(file);
+          break;
+        }
+      }
+    }
+    return violations;
+  } catch {
+    // If git command fails (e.g., not a git repo), return empty array
+    return [];
+  }
 }
 
 export async function evolutionCommand(options: {
@@ -153,6 +199,20 @@ export async function evolutionCommand(options: {
         }
       } catch (error) {
         console.log(chalk.yellow('\nCould not load completion status:'), error instanceof Error ? error.message : String(error));
+      }
+
+      // Check for boundary violations
+      const violations = await detectBoundaryViolations(state);
+      if (violations.length > 0) {
+        console.log(chalk.red.bold('\n⚠️  BOUNDARY VIOLATIONS DETECTED!\n'));
+        console.log(chalk.red('The following files were modified but are FORBIDDEN for the outer agent:\n'));
+        for (const file of violations) {
+          console.log(chalk.red(`  ✗ ${file}`));
+        }
+        console.log(chalk.yellow('\nYou should:'));
+        console.log('  1. Revert these changes: git checkout -- <file>');
+        console.log('  2. Create a task in .taskmaster/tasks/tasks.json instead');
+        console.log('  3. Let dev-loop inner agent implement the fix\n');
       }
     } else if (options.action === 'stop') {
       const state = await loadEvolutionModeState();
