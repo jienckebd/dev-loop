@@ -23,7 +23,7 @@ export interface ValidationResult {
 /**
  * ValidationGate validates code changes before they are applied to the filesystem.
  * This prevents wasted iterations where invalid code is applied and tests fail.
- * 
+ *
  * Validations performed:
  * 1. Patch search strings exist in target files
  * 2. TypeScript syntax is valid (for .ts files)
@@ -63,7 +63,7 @@ export class ValidationGate {
         const existingContent = await fs.readFile(filePath, 'utf-8');
         const existingLines = existingContent.split('\n').length;
         const newLines = file.content ? file.content.split('\n').length : 0;
-        
+
         // If the new content is less than 50% of the original size, reject it
         if (newLines < existingLines * 0.5 && existingLines > 100) {
           errors.push({
@@ -133,11 +133,11 @@ export class ValidationGate {
 
     for (let i = 0; i < patches.length; i++) {
       const patch = patches[i];
-      
+
       if (!content.includes(patch.search)) {
         // Try to find similar content to suggest
         const suggestion = this.findSimilarContent(content, patch.search);
-        
+
         errors.push({
           type: 'patch_not_found',
           file: path.relative(process.cwd(), filePath),
@@ -198,7 +198,7 @@ export class ValidationGate {
 
     const aBigrams = getBigrams(a.toLowerCase());
     const bBigrams = getBigrams(b.toLowerCase());
-    
+
     let intersection = 0;
     for (const bigram of aBigrams) {
       if (bBigrams.has(bigram)) {
@@ -288,7 +288,7 @@ export class ValidationGate {
             const isImportError = l.includes('TS2307') || l.includes('TS2305');
             return hasError && !isImportError;
           });
-          
+
           if (errorLines.length > 0) {
             errors.push({
               type: 'syntax',

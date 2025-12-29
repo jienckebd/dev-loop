@@ -601,15 +601,26 @@ dev-loop init [--template ai-dev-tasks]
 
 # Run one iteration
 dev-loop run
+dev-loop run --task <id>      # Run specific task
+dev-loop run --all            # Run all pending tasks
+dev-loop run --debug          # Enable verbose output
 
 # Run in daemon mode (continuous)
 dev-loop watch
+dev-loop watch --debug
 
 # Check current status
 dev-loop status
 
+# Pause/resume execution
+dev-loop pause
+dev-loop resume
+
 # View/analyze logs
 dev-loop logs
+dev-loop logs --tail 100
+dev-loop logs --follow
+dev-loop logs --clear
 
 # View debug metrics and trends
 dev-loop metrics
@@ -618,6 +629,84 @@ dev-loop metrics --task 122
 dev-loop metrics --summary
 dev-loop metrics --json
 dev-loop metrics --clear
+```
+
+### Task Management Commands
+
+```bash
+# List all tasks
+dev-loop list
+dev-loop list --pending       # Show pending only
+dev-loop list --done          # Show completed
+dev-loop list --blocked       # Show blocked
+dev-loop list --tree          # Show dependency tree
+dev-loop list --json          # Output as JSON
+
+# Show task details
+dev-loop show <taskId>
+dev-loop show <taskId> --history
+
+# Reset tasks to pending
+dev-loop reset <taskId>       # Reset specific task
+dev-loop reset --all-failed   # Reset all blocked tasks
+dev-loop reset --all          # Reset all tasks
+
+# Re-run a task
+dev-loop replay <taskId>
+dev-loop replay <taskId> --dry-run
+dev-loop replay <taskId> --compare
+```
+
+### Debugging Commands
+
+```bash
+# Diagnose failures
+dev-loop diagnose             # Analyze all failures
+dev-loop diagnose <taskId>    # Analyze specific task
+dev-loop diagnose --suggest   # Include fix suggestions
+dev-loop diagnose --auto-fix  # Attempt automatic fixes
+
+# Trace task execution
+dev-loop trace <taskId>
+dev-loop trace <taskId> --tokens  # Include token usage
+```
+
+### Template & Pattern Commands
+
+```bash
+# Templates
+dev-loop template list
+dev-loop template show <name>
+
+# Patterns
+dev-loop pattern list
+```
+
+### Configuration & Validation
+
+```bash
+# Show configuration
+dev-loop config show
+dev-loop config show ai.provider
+
+# Validate setup
+dev-loop validate
+dev-loop validate --config-only
+dev-loop validate --tasks
+dev-loop validate --environment
+dev-loop validate --fix
+```
+
+### Session Handoff
+
+```bash
+# Create handoff document
+dev-loop handoff create
+dev-loop handoff create -o path/to/output.md
+
+# View handoffs
+dev-loop handoff show
+dev-loop handoff list
 ```
 
 ### Task Master Commands (via wrapper)

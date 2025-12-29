@@ -99,6 +99,14 @@ export class TaskMasterBridge {
     }
   }
 
+  async getAllTasks(): Promise<Task[]> {
+    try {
+      return await this.loadTasks();
+    } catch (error) {
+      throw new Error(`Failed to get all tasks: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
+
   async updateTaskStatus(taskId: string, status: TaskStatus): Promise<void> {
     try {
       const tasks = await this.loadTasks();
