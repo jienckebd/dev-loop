@@ -26,6 +26,7 @@ export interface WorkflowResult {
   noTasks: boolean;
   taskId?: string;
   error?: string;
+  prdComplete?: boolean;
 }
 
 export class WorkflowEngine {

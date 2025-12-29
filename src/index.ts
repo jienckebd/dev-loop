@@ -21,6 +21,7 @@ import { resetCommand } from './cli/commands/reset';
 import { handoffCreateCommand, handoffShowCommand, handoffListCommand } from './cli/commands/handoff';
 import { configShowCommand } from './cli/commands/config';
 import { validateCommand } from './cli/commands/validate';
+import { evolutionCommand } from './cli/commands/evolution';
 
 const program = new Command();
 
@@ -51,6 +52,8 @@ program
   .description('Daemon mode - continuous execution until PRD complete')
   .option('-c, --config <path>', 'Path to config file', 'devloop.config.js')
   .option('-d, --debug', 'Enable debug mode with verbose output')
+  .option('--until-complete', 'Exit when all tasks done and tests pass')
+  .option('--max-iterations <n>', 'Maximum iterations before exit', (v) => parseInt(v, 10))
   .action(watchCommand);
 
 program
@@ -232,6 +235,34 @@ program
       checkEnvironment: options.environment,
       fix: options.fix,
     });
+  });
+
+const evolutionCmd = program
+  .command('evolution')
+  .description('Evolution mode commands (for outer agent)');
+
+evolutionCmd
+  .command('start')
+  .description('Activate evolution mode')
+  .requiredOption('--prd <path>', 'Path to PRD file')
+  .option('-c, --config <path>', 'Path to config file', 'devloop.config.js')
+  .action(async (options) => {
+    await evolutionCommand({ action: 'start', prd: options.prd, config: options.config });
+  });
+
+evolutionCmd
+  .command('status')
+  .description('Check evolution mode status')
+  .option('-c, --config <path>', 'Path to config file', 'devloop.config.js')
+  .action(async (options) => {
+    await evolutionCommand({ action: 'status', config: options.config });
+  });
+
+evolutionCmd
+  .command('stop')
+  .description('Deactivate evolution mode')
+  .action(async () => {
+    await evolutionCommand({ action: 'stop' });
   });
 
 program.parse();
