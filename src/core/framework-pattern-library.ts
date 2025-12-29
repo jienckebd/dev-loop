@@ -42,7 +42,7 @@ export class FrameworkPatternLibrary {
           'IEF',
           'inline entity form',
         ],
-        solutionGuidance: 'Use array_unshift() to add handlers at the beginning, or set explicit weight/priority. For IEF, use #ief_element_submit array.',
+        solutionGuidance: 'Use array_unshift() to add handlers at the beginning of #submit array, or set explicit weight/priority. For IEF widgets, use array_unshift() on #ief_element_submit array to ensure handlers run before IEF\'s default handlers. Check handler execution order with debug logging.',
         exampleErrors: [
           'Attempt to create a field without a bundle',
           'Entity not found during form submission',
@@ -102,7 +102,7 @@ export class FrameworkPatternLibrary {
           'entity save during form',
           'feeds_item',
         ],
-        solutionGuidance: 'Clear widget entities from form state before save, or delay widget entity save until after main entity is saved. Use form submit handler with high priority.',
+        solutionGuidance: 'Clear widget entities from form state before save, or delay widget entity save until after main entity is saved. For IEF widgets, use array_unshift() on #ief_element_submit array to ensure clear handler runs before IEF save handlers. Alternatively, prevent IEF save entirely during wizard context.',
         exampleErrors: [
           'Attempt to create a field without a bundle',
           'Entity not found',
