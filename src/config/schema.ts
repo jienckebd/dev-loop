@@ -134,6 +134,39 @@ const configSchema = z.object({
     // Include builtin patterns
     useBuiltinPatterns: z.boolean().default(true),
   }).optional(),
+
+  // Autonomous PRD execution configuration
+  autonomous: z.object({
+    // Enable autonomous mode
+    enabled: z.boolean().default(true),
+    // Test generation configuration
+    testGeneration: z.object({
+      framework: z.enum(['playwright', 'cypress', 'jest']).default('playwright'),
+      testDir: z.string().default('tests/playwright/auto'),
+      baseTestTemplate: z.string().optional(),
+    }).optional(),
+    // Iteration limits
+    maxIterations: z.number().default(100),
+    maxTaskRetries: z.number().default(3),
+    stuckDetectionWindow: z.number().default(5),
+    // Context management
+    contextPath: z.string().default('.devloop/prd-context'),
+    maxHistoryIterations: z.number().default(50),
+    // Test evolution
+    testEvolutionInterval: z.number().default(5),
+    // Learning
+    learnFromSuccess: z.boolean().default(true),
+    learnFromFailure: z.boolean().default(true),
+  }).optional(),
+
+  // Browser automation configuration
+  browser: z.object({
+    headless: z.boolean().default(true),
+    timeout: z.number().default(30000),
+    screenshotOnFailure: z.boolean().default(true),
+    screenshotsDir: z.string().default('.devloop/screenshots'),
+    videoOnFailure: z.boolean().default(false),
+  }).optional(),
 });
 
 export type Config = z.infer<typeof configSchema>;

@@ -23,6 +23,7 @@ import { configShowCommand } from './cli/commands/config';
 import { validateCommand } from './cli/commands/validate';
 import { evolutionCommand } from './cli/commands/evolution';
 import { evolveCommand } from './cli/commands/evolve';
+import { prdCommand } from './cli/commands/prd';
 
 const program = new Command();
 
@@ -277,6 +278,21 @@ program
       config: options.config,
       projectType: options.projectType,
       json: options.json,
+    });
+  });
+
+program
+  .command('prd <prdPath>')
+  .description('Execute PRD autonomously via test-driven development')
+  .option('-c, --config <path>', 'Path to config file', 'devloop.config.js')
+  .option('-d, --debug', 'Enable debug mode')
+  .option('--resume', 'Resume from previous execution state')
+  .action(async (prdPath, options) => {
+    await prdCommand({
+      prd: prdPath,
+      config: options.config,
+      debug: options.debug,
+      resume: options.resume,
     });
   });
 

@@ -66,7 +66,7 @@ export class DebuggingStrategyAdvisor {
    */
   private hasExplicitFixInstruction(text: string): boolean {
     const upperText = text.toUpperCase();
-    
+
     // Common patterns indicating a clear fix is already specified
     const fixIndicators = [
       'REPLACE:', 'WITH:', // Search/replace pattern
@@ -80,7 +80,7 @@ export class DebuggingStrategyAdvisor {
     ];
 
     const hasFixIndicator = fixIndicators.some(indicator => upperText.includes(indicator));
-    
+
     // Also check for code blocks with explicit replacements
     const hasCodeWithReplacement = /```[\s\S]*?\$.*->save\(\)[\s\S]*?```/.test(text) ||
                                     /REPLACE[\s\S]*?\$.*->save\(\)/i.test(text);

@@ -18,6 +18,12 @@ import { ValidationGate } from './validation-gate';
 import { PatternLearningSystem } from './pattern-learner';
 import { DebugMetrics } from './debug-metrics';
 import { logger } from './logger';
+import { PrdContextManager, PrdContext } from './prd-context';
+import { PrdParser } from './prd-parser';
+import { TestGenerator } from './test-generator';
+import { TestExecutor } from './test-executor';
+import { FailureAnalyzer } from './failure-analyzer';
+import { AutonomousTaskGenerator } from './autonomous-task-generator';
 
 const execAsync = promisify(exec);
 
@@ -572,8 +578,8 @@ export class WorkflowEngine {
 
           // For patch_not_found and destructive update errors, include actual file content
           let fileContextForFix = '';
-          const patchErrors = validationResult.errors.filter(e => 
-            e.type === 'patch_not_found' || 
+          const patchErrors = validationResult.errors.filter(e =>
+            e.type === 'patch_not_found' ||
             (e.type === 'syntax' && e.message.toLowerCase().includes('destructive'))
           );
           if (patchErrors.length > 0) {
@@ -588,7 +594,7 @@ export class WorkflowEngine {
                   fileContextForFix += `\n\n## Actual content of ${error.file} (${patchContext.fileInfo.lineCount} lines)\n`;
                   fileContextForFix += patchContext.guidance;
                   fileContextForFix += `\n\n### End of file:\n\`\`\`\n${patchContext.endOfFile}\n\`\`\``;
-                  
+
                   // For destructive updates, also extract the specific section being modified
                   if (error.message.toLowerCase().includes('destructive')) {
                     fileContextForFix += `\n\n**CRITICAL: You tried to replace the entire ${patchContext.fileInfo.lineCount}-line file. Use PATCH operation instead.**`;
@@ -1693,4 +1699,212 @@ export class WorkflowEngine {
 
     return null;
   }
+
+  /**
+   * Run autonomous PRD execution - test-driven development loop
+   */
+  async runAutonomousPrd(prdPath: string): Promise<PrdExecutionResult> {
+    const autonomousConfig = (this.config as any).autonomous || {};
+    const contextPath = autonomousConfig.contextPath || '.devloop/prd-context';
+    const maxIterations = autonomousConfig.maxIterations || 100;
+    const testEvolutionInterval = autonomousConfig.testEvolutionInterval || 5;
+    const stuckDetectionWindow = autonomousConfig.stuckDetectionWindow || 5;
+
+    // Initialize context manager
+    const contextManager = new PrdContextManager(contextPath, this.debug);
+    const context = await contextManager.loadOrCreate(prdPath);
+
+    // Initialize components
+    const prdParser = new PrdParser(this.aiProvider, this.debug);
+    const testGenerator = new TestGenerator(this.aiProvider, this.config, this.debug);
+    const testExecutor = new TestExecutor(
+      this.config.testing.artifactsDir,
+      this.debug
+    );
+    const failureAnalyzer = new FailureAnalyzer(this.aiProvider, this.debug);
+    const taskGenerator = new AutonomousTaskGenerator(
+      autonomousConfig.maxTaskRetries || 3
+    );
+
+    // Phase 1: Parse PRD and generate initial tests
+    if (context.status === 'initializing') {
+      console.log('[WorkflowEngine] Parsing PRD and generating initial tests...');
+      context.status = 'generating-tests';
+      await contextManager.save(context);
+
+      const requirements = await prdParser.parse(prdPath);
+      context.requirements = requirements;
+
+      const tests = await testGenerator.generateTests(requirements, context);
+      context.tests = tests;
+      context.status = 'running';
+
+      await contextManager.save(context);
+      console.log(`[WorkflowEngine] Generated ${tests.length} tests from ${requirements.length} requirements`);
+    }
+
+    // Phase 2: Main execution loop
+    while (context.status === 'running') {
+      context.currentIteration++;
+      const iterationStart = Date.now();
+
+      console.log(`\n=== Iteration ${context.currentIteration} ===`);
+
+      // Check max iterations
+      if (context.currentIteration > maxIterations) {
+        context.status = 'blocked';
+        console.log(`[WorkflowEngine] Max iterations (${maxIterations}) reached`);
+        await contextManager.save(context);
+        break;
+      }
+
+      // Run all tests
+      const testResult = await testExecutor.executeTests(context.tests);
+
+      // Check for completion
+      if (testResult.failed === 0) {
+        context.status = 'complete';
+        console.log('[WorkflowEngine] All tests passing! PRD complete.');
+        await contextManager.save(context);
+        break;
+      }
+
+      console.log(`[WorkflowEngine] Tests: ${testResult.passed}/${testResult.total} passing`);
+
+      // Analyze failures
+      const analysis = await failureAnalyzer.analyze(testResult, context);
+
+      // Generate fix tasks
+      const tasks = await taskGenerator.generateFixTasks(analysis, context);
+
+      console.log(`[WorkflowEngine] Generated ${tasks.length} fix task(s)`);
+
+      // Execute code tasks
+      const changesApplied: any[] = [];
+      for (const task of tasks) {
+        await this.taskBridge.createTask(task);
+        
+        // Execute the task using existing workflow
+        try {
+          const { codebaseContext, targetFiles } = await this.getCodebaseContext(task);
+          const taskContext: TaskContext = {
+            task,
+            codebaseContext,
+          };
+
+          const template = await this.templateManager.getTaskGenerationTemplateWithContext({
+            task: {
+              title: task.title,
+              description: task.description,
+              priority: task.priority,
+            },
+            codebaseContext,
+            targetFiles,
+            existingCode: undefined,
+            templateType: this.getTemplateType(targetFiles, task),
+            fileGuidance: '',
+            patternGuidance: '',
+          });
+
+          const changes = await this.aiProvider.generateCode(template, taskContext);
+          const applyResult = await this.applyChanges(changes);
+
+          if (applyResult.success) {
+            changesApplied.push({
+              path: changes.files?.[0]?.path || 'unknown',
+              operation: changes.files?.[0]?.operation || 'update',
+              summary: changes.summary || 'Code changes applied',
+            });
+
+            // Run post-apply hooks
+            if (this.config.hooks?.postApply && this.config.hooks.postApply.length > 0) {
+              await this.executePostApplyHooks();
+            }
+
+            await this.taskBridge.updateTaskStatus(task.id, 'done');
+          } else {
+            console.warn(`[WorkflowEngine] Failed to apply changes for task ${task.id}`);
+          }
+        } catch (error) {
+          console.error(`[WorkflowEngine] Error executing task ${task.id}:`, error);
+        }
+      }
+
+      // Evolve tests based on new knowledge
+      if (context.currentIteration % testEvolutionInterval === 0) {
+        console.log('[WorkflowEngine] Re-evaluating and enhancing tests...');
+        context.tests = await testGenerator.generateTests(
+          context.requirements,
+          context,
+          context.tests.map(t => t.testPath)
+        );
+      }
+
+      // Record iteration
+      context.iterations.push({
+        iteration: context.currentIteration,
+        timestamp: new Date().toISOString(),
+        tasksExecuted: tasks.map(t => t.id),
+        testsRun: testResult.total,
+        testsPassed: testResult.passed,
+        testsFailed: testResult.failed,
+        errors: analysis.failures.map(f => f.rootCause),
+        changesApplied,
+        duration: Date.now() - iterationStart,
+      });
+
+      // Save context after each iteration
+      await contextManager.save(context);
+
+      // Check for stuck state
+      if (this.isStuck(context, stuckDetectionWindow)) {
+        context.status = 'blocked';
+        console.log('[WorkflowEngine] Execution appears stuck. Human intervention needed.');
+        await contextManager.save(context);
+        break;
+      }
+    }
+
+    return {
+      prdId: context.prdId,
+      status: context.status,
+      iterations: context.currentIteration,
+      testsTotal: context.tests.length,
+      testsPassing: context.tests.filter(t => t.status === 'passing').length,
+    };
+  }
+
+  /**
+   * Check if execution is stuck (no progress)
+   */
+  private isStuck(context: PrdContext, window: number): boolean {
+    // Check if making no progress over last N iterations
+    const recentIterations = context.iterations.slice(-window);
+    if (recentIterations.length < window) {
+      return false;
+    }
+
+    const passRates = recentIterations.map(i => 
+      i.testsRun > 0 ? i.testsPassed / i.testsRun : 0
+    );
+    const improvement = passRates[passRates.length - 1] - passRates[0];
+
+    // Stuck if no improvement and same errors repeating
+    if (improvement <= 0) {
+      const recentErrors = new Set(recentIterations.flatMap(i => i.errors));
+      const firstErrors = new Set(recentIterations[0].errors);
+      const sameErrors = [...recentErrors].every(e => firstErrors.has(e));
+      return sameErrors;
+    }
+
+    return false;
+  }
+}
+
+export interface PrdExecutionResult {
+  prdId: string;
+  status: 'initializing' | 'generating-tests' | 'running' | 'complete' | 'blocked';
+  iterations: number;
+  testsTotal: number;
+  testsPassing: number;
 }

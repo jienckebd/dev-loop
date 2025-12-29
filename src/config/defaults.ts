@@ -29,5 +29,27 @@ export const defaultConfig: Partial<Config> = {
   taskMaster: {
     tasksPath: '.taskmaster/tasks/tasks.json',
   },
+  autonomous: {
+    enabled: true,
+    testGeneration: {
+      framework: 'playwright',
+      testDir: 'tests/playwright/auto',
+    },
+    maxIterations: 100,
+    maxTaskRetries: 3,
+    stuckDetectionWindow: 5,
+    contextPath: '.devloop/prd-context',
+    maxHistoryIterations: 50,
+    testEvolutionInterval: 5,
+    learnFromSuccess: true,
+    learnFromFailure: true,
+  },
+  browser: {
+    headless: true,
+    timeout: 30000,
+    screenshotOnFailure: true,
+    screenshotsDir: '.devloop/screenshots',
+    videoOnFailure: false,
+  },
 };
 
