@@ -318,6 +318,58 @@ export class WorkflowEngine {
       // Update task status to in-progress
       await this.taskBridge.updateTaskStatus(task.id, 'in-progress');
 
+      // NEW: Analyze task description for complex issues BEFORE execution
+      if (this.debuggingStrategyAdvisor && this.investigationTaskGenerator) {
+        try {
+          const taskDescription = task.description || '';
+          const taskDetails = (task as any).details || '';
+          const combinedDescription = `${taskDescription}\n\n${taskDetails}`;
+          
+          const framework = (this.config as any).framework?.type;
+          const classification = this.debuggingStrategyAdvisor.classifyError(combinedDescription, {
+            framework,
+            components: this.extractComponentsFromError(combinedDescription),
+            hasMultipleComponents: this.hasMultipleComponents(combinedDescription),
+            previousFixAttempts: await this.getPreviousFixAttempts(task.id),
+          });
+
+          // Generate investigation tasks if needed
+          if (classification.needsInvestigation) {
+            // Get target files first (needed for investigation tasks)
+            const { targetFiles } = await this.getCodebaseContext(task);
+            
+            const invTasks = this.investigationTaskGenerator.generateInvestigationTasks(combinedDescription, {
+              framework,
+              components: this.extractComponentsFromError(combinedDescription),
+              targetFiles: targetFiles?.split('\n').filter(f => f.trim()),
+              previousFixAttempts: await this.getPreviousFixAttempts(task.id),
+            });
+
+            if (invTasks.length > 0) {
+              console.log(`[WorkflowEngine] Task requires investigation - creating ${invTasks.length} investigation task(s) first`);
+              for (const invTask of invTasks) {
+                const taskMasterTask = this.investigationTaskGenerator.toTaskMasterTask(invTask, task.id);
+                await this.taskBridge.createTask(taskMasterTask as any);
+                if (this.debug) {
+                  console.log(`[WorkflowEngine] Created investigation task: ${invTask.title}`);
+                }
+              }
+              
+              // Mark original task as pending to wait for investigation
+              await this.taskBridge.updateTaskStatus(task.id, 'pending');
+              console.log(`[WorkflowEngine] Task ${task.id} marked as pending - investigation tasks must complete first`);
+              await this.updateState({ status: 'idle' });
+              return { completed: false, noTasks: false }; // Exit early - investigation tasks created
+            }
+          }
+        } catch (err) {
+          if (this.debug) {
+            console.warn('[WorkflowEngine] Error during task description analysis:', err);
+          }
+          // Continue with normal execution if analysis fails
+        }
+      }
+
       // Generate code using AI
       const { codebaseContext, targetFiles, existingCode } = await this.getCodebaseContext(task);
 
