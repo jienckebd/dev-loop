@@ -331,6 +331,9 @@ stateDiagram-v2
    - Shows import patterns for accurate references
    - Generates file-specific guidance prompts
    - Prevents AI from using non-existent functions
+   - **Enhanced**: Extracts execution context from errors (execution path, trigger, missing state, components)
+   - **Enhanced**: Generates "error story" narratives for better AI understanding
+   - **Enhanced**: Identifies component interactions from error messages
 
 7. **ValidationGate** (`src/core/validation-gate.ts`) - NEW
    - Pre-apply validation before filesystem changes
@@ -345,6 +348,43 @@ stateDiagram-v2
    - Built-in patterns for common AI errors
    - Records patterns from test failures
    - Persists learned patterns in `.devloop/patterns.json`
+
+9. **FrameworkPatternLibrary** (`src/core/framework-pattern-library.ts`) - NEW
+   - Framework-specific execution pattern knowledge
+   - Drupal patterns: form handler order, hook execution, entity lifecycle, widget interactions
+   - React patterns: component lifecycle, useEffect dependencies
+   - Generic patterns: async sequencing, event handler order
+   - Matches errors to known patterns and provides framework-specific guidance
+
+10. **DebuggingStrategyAdvisor** (`src/core/debugging-strategy-advisor.ts`) - NEW
+    - Classifies errors: timing-order, missing-state, component-interaction, simple-bug
+    - Suggests debugging strategy: add-logging, fix-root-cause, add-validation, refactor-interaction
+    - Determines when investigation is needed vs direct fix
+    - Generates targeted debug code snippets for investigation
+
+11. **InvestigationTaskGenerator** (`src/core/investigation-task-generator.ts`) - NEW
+    - Creates investigation tasks before fix tasks for complex issues
+    - Generates framework-specific investigation tasks (e.g., Drupal form handler order)
+    - Provides debug code templates for strategic logging
+    - Ensures proper investigation → analysis → fix workflow
+
+12. **ExecutionOrderAnalyzer** (`src/core/execution-order-analyzer.ts`) - NEW
+    - Analyzes code for execution order/timing issues
+    - Detects form handler order problems (array_push vs array_unshift)
+    - Identifies hook execution order issues
+    - Generates execution flow diagrams for AI prompts
+
+13. **ComponentInteractionAnalyzer** (`src/core/component-interaction-analyzer.ts`) - NEW
+    - Identifies component boundaries and interactions
+    - Detects common interaction problems (entity lifecycle, widget-entity conflicts)
+    - Maps component interaction flows (e.g., IEF widget → FeedType entity → Entity bundle)
+    - Suggests fixes based on interaction patterns
+
+14. **RootCauseAnalyzer** (`src/core/root-cause-analyzer.ts`) - NEW
+    - Analyzes why partial fixes fail
+    - Identifies which code paths are fixed vs broken
+    - Suggests comprehensive fixes addressing all execution paths
+    - Tracks fix attempt patterns to identify systemic issues
 
 #### Provider Interfaces
 
@@ -836,6 +876,70 @@ Remembers common failure patterns and injects "do not repeat" guidance:
 - Records patterns from test failures, log analysis, and validation errors
 - Persists learned patterns in `.devloop/patterns.json`
 - Automatically applies relevant patterns to subsequent prompts
+
+### Complex Issue Analysis
+
+dev-loop now includes sophisticated analysis capabilities for complex multi-component issues:
+
+#### Framework Pattern Library
+
+Understands framework-specific execution patterns:
+- **Drupal**: Form handler execution order, hook execution order, entity lifecycle, widget-entity interactions
+- **React**: Component lifecycle, useEffect dependencies, state update batching
+- **Generic**: Event handler ordering, async operation sequencing
+
+When errors match known patterns, dev-loop provides framework-specific guidance (e.g., "Use array_unshift() for Drupal form handlers that need to run first").
+
+#### Error Classification & Strategy
+
+Automatically classifies errors and suggests appropriate debugging strategy:
+- **Timing/Order Issues**: Creates investigation tasks to verify execution order
+- **Missing State**: Suggests validation or state creation fixes
+- **Component Interaction**: Analyzes multi-component interactions and suggests refactoring
+- **Simple Bugs**: Fixes directly without investigation
+
+#### Investigation Task Generation
+
+For complex issues, dev-loop creates investigation tasks before fix tasks:
+- Adds strategic debug logging to verify execution order
+- Checks component interaction flows
+- Verifies state availability at interaction time
+- Provides framework-specific investigation templates
+
+#### Execution Order Analysis
+
+Detects and analyzes execution order/timing issues:
+- Identifies form handler order problems (array_push vs array_unshift)
+- Detects hook execution order issues
+- Maps execution dependencies
+- Suggests execution order fixes (weight adjustments, priority changes)
+
+#### Component Interaction Detection
+
+Understands how multiple components interact:
+- Identifies component boundaries (modules, services, widgets, entities)
+- Maps component interactions (IEF widget → FeedType entity → Entity bundle)
+- Detects common interaction problems:
+  - Entity lifecycle issues (creating fields before bundles exist)
+  - Widget → Entity save conflicts
+  - Event subscriber ordering
+  - Form handler conflicts
+
+#### Root Cause Analysis
+
+Analyzes why partial fixes fail:
+- Tracks fix attempts and their outcomes
+- Identifies partial fixes (works for one path, not others)
+- Maps code paths and identifies which paths are fixed vs broken
+- Suggests comprehensive fixes addressing all execution paths
+
+**Example**: For the IEF/Feeds timing issue, dev-loop would:
+1. Detect multi-component timing issue from error message
+2. Match "Drupal form handler order" pattern
+3. Create investigation task to add debug logging for submit handler order
+4. Analyze execution order and identify IEF handler runs before clear handler
+5. Create fix task to adjust handler order (array_unshift on #ief_element_submit)
+6. Understand why partial fix failed (only fixed direct path, not IEF path)
 
 ## Intervention Modes (Inner Agent Approval Settings)
 
