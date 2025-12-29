@@ -22,6 +22,7 @@ import { handoffCreateCommand, handoffShowCommand, handoffListCommand } from './
 import { configShowCommand } from './cli/commands/config';
 import { validateCommand } from './cli/commands/validate';
 import { evolutionCommand } from './cli/commands/evolution';
+import { evolveCommand } from './cli/commands/evolve';
 
 const program = new Command();
 
@@ -263,6 +264,20 @@ evolutionCmd
   .description('Deactivate evolution mode')
   .action(async () => {
     await evolutionCommand({ action: 'stop' });
+  });
+
+program
+  .command('evolve')
+  .description('View evolution insights (observations and improvement suggestions)')
+  .option('-c, --config <path>', 'Path to config file', 'devloop.config.js')
+  .option('--project-type <type>', 'Filter observations by project type')
+  .option('--json', 'Output as JSON')
+  .action(async (options) => {
+    await evolveCommand({
+      config: options.config,
+      projectType: options.projectType,
+      json: options.json,
+    });
   });
 
 program.parse();

@@ -9,6 +9,7 @@ export interface LearnedPattern {
   occurrences: number;       // How many times seen
   lastSeen: string;          // ISO timestamp
   files?: string[];          // Files where this pattern was seen
+  projectTypes?: string[];   // Project types where this pattern was seen (e.g., "drupal", "react")
 }
 
 export interface PatternMatch {
@@ -158,7 +159,8 @@ export class PatternLearningSystem {
   async recordPattern(
     errorText: string,
     file?: string,
-    customGuidance?: string
+    customGuidance?: string,
+    projectType?: string
   ): Promise<void> {
     await this.load();
 
@@ -171,6 +173,9 @@ export class PatternLearningSystem {
         pattern.lastSeen = new Date().toISOString();
         if (file && !pattern.files?.includes(file)) {
           pattern.files = [...(pattern.files || []), file];
+        }
+        if (projectType && !pattern.projectTypes?.includes(projectType)) {
+          pattern.projectTypes = [...(pattern.projectTypes || []), projectType];
         }
         await this.save();
         if (this.debug) {
@@ -190,6 +195,7 @@ export class PatternLearningSystem {
         occurrences: 1,
         lastSeen: new Date().toISOString(),
         files: file ? [file] : [],
+        projectTypes: projectType ? [projectType] : [],
       };
       this.patterns.set(id, pattern);
       await this.save();
@@ -200,11 +206,23 @@ export class PatternLearningSystem {
   }
 
   /**
+   * Get patterns filtered by project type.
+   */
+  async getPatternsByProjectType(projectType: string): Promise<LearnedPattern[]> {
+    await this.load();
+    return Array.from(this.patterns.values()).filter(pattern => {
+      // Include patterns that match this project type or have no project type (generic)
+      return !pattern.projectTypes || pattern.projectTypes.length === 0 || pattern.projectTypes.includes(projectType);
+    });
+  }
+
+  /**
    * Get patterns relevant to a task and target files.
    */
   async getRelevantPatterns(
     task: Task,
-    targetFiles?: string[]
+    targetFiles?: string[],
+    projectType?: string
   ): Promise<PatternMatch[]> {
     await this.load();
 
@@ -226,6 +244,16 @@ export class PatternLearningSystem {
             relevance += 0.3;
             break;
           }
+        }
+      }
+
+      // Higher relevance for patterns matching current project type
+      if (projectType && pattern.projectTypes) {
+        if (pattern.projectTypes.includes(projectType)) {
+          relevance += 0.2;
+        } else if (pattern.projectTypes.length > 0) {
+          // Lower relevance for project-specific patterns from other project types
+          relevance *= 0.5;
         }
       }
 
@@ -260,9 +288,10 @@ export class PatternLearningSystem {
    */
   async generateGuidancePrompt(
     task: Task,
-    targetFiles?: string[]
+    targetFiles?: string[],
+    projectType?: string
   ): Promise<string> {
-    const matches = await this.getRelevantPatterns(task, targetFiles);
+    const matches = await this.getRelevantPatterns(task, targetFiles, projectType);
 
     if (matches.length === 0) {
       return '';

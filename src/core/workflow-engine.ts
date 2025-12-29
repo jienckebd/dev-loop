@@ -42,6 +42,8 @@ export class WorkflowEngine {
   private validationGate: ValidationGate;
   private patternLearner: PatternLearningSystem;
   private debugMetrics?: DebugMetrics;
+  private observationTracker?: any; // ObservationTracker
+  private improvementSuggester?: any; // ImprovementSuggester
   private shutdownRequested = false;
   private debug = false;
 
@@ -86,6 +88,78 @@ export class WorkflowEngine {
       const metricsPath = (config as any).metrics?.path || '.devloop/metrics.json';
       this.debugMetrics = new DebugMetrics(metricsPath);
     }
+
+    // Initialize observation tracking if enabled (for evolution mode)
+    if ((config as any).evolution?.enabled !== false) {
+      try {
+        const { ObservationTracker } = require('./observation-tracker');
+        const { ImprovementSuggester } = require('./improvement-suggester');
+        this.observationTracker = new ObservationTracker('.devloop/observations.json', this.debug);
+        this.improvementSuggester = new ImprovementSuggester(this.debug);
+      } catch (err) {
+        if (this.debug) {
+          console.warn('[WorkflowEngine] Could not initialize observation tracking:', err);
+        }
+      }
+    }
+  }
+
+  /**
+   * Extract error category from error description
+   */
+  private extractErrorCategory(errorDescription: string): string | undefined {
+    const lower = errorDescription.toLowerCase();
+    if (lower.includes('patch') || lower.includes('search string')) return 'patch-not-found';
+    if (lower.includes('syntax') || lower.includes('parse')) return 'syntax-error';
+    if (lower.includes('test') && lower.includes('fail')) return 'test-failure';
+    if (lower.includes('not found') || lower.includes('cannot find')) return 'missing-reference';
+    if (lower.includes('timeout')) return 'timeout';
+    return 'unknown-error';
+  }
+
+  /**
+   * Detect project type from config or codebase
+   */
+  private detectProjectType(): string | undefined {
+    const config = this.config as any;
+
+    // Check config for explicit project type
+    if (config.projectType) {
+      return config.projectType;
+    }
+
+    // Check framework config
+    if (config.framework?.type) {
+      return config.framework.type.toLowerCase();
+    }
+
+    // Try to detect from common patterns
+    try {
+      const fs = require('fs');
+      const path = require('path');
+      const cwd = process.cwd();
+
+      // Check for Drupal
+      if (fs.existsSync(path.join(cwd, 'docroot', 'core'))) {
+        return 'drupal';
+      }
+
+      // Check for React
+      if (fs.existsSync(path.join(cwd, 'package.json'))) {
+        const pkg = JSON.parse(fs.readFileSync(path.join(cwd, 'package.json'), 'utf-8'));
+        if (pkg.dependencies?.react || pkg.devDependencies?.react) {
+          return 'react';
+        }
+        if (pkg.dependencies?.['@angular/core'] || pkg.devDependencies?.['@angular/core']) {
+          return 'angular';
+        }
+        return 'node';
+      }
+    } catch (err) {
+      // Ignore detection errors
+    }
+
+    return undefined;
   }
 
   async runOnce(): Promise<WorkflowResult> {
@@ -164,6 +238,7 @@ export class WorkflowEngine {
       const { codebaseContext, targetFiles, existingCode } = await this.getCodebaseContext(task);
 
       // Record context metrics
+      const projectType = this.detectProjectType();
       if (this.debugMetrics) {
         const filesIncluded = targetFiles ? targetFiles.split('\n').filter(f => f.trim()).length : 0;
         const filesTruncated = 0; // TODO: track truncation if we add that capability
@@ -172,6 +247,11 @@ export class WorkflowEngine {
           filesIncluded,
           filesTruncated
         );
+        // Record project metadata
+        if (projectType) {
+          const framework = (this.config as any).framework?.type;
+          this.debugMetrics.recordProjectMetadata(projectType, framework, process.cwd());
+        }
       }
 
       const context: TaskContext = {
@@ -576,13 +656,28 @@ export class WorkflowEngine {
         // NEW: Record patterns from test failures for learning
         if ((this.config as any).patternLearning?.enabled !== false) {
           try {
+            const projectType = this.detectProjectType();
             await this.patternLearner.recordPattern(
               errorDescription.substring(0, 500),
-              targetFiles?.split('\n')[0]
+              targetFiles?.split('\n')[0],
+              undefined,
+              projectType
             );
           } catch (err) {
             if (this.debug) {
               console.warn('[WorkflowEngine] Could not record pattern:', err);
+            }
+          }
+        }
+
+        // Track failure pattern with observation tracker
+        if (this.observationTracker) {
+          try {
+            const projectType = this.detectProjectType() || 'unknown';
+            await this.observationTracker.trackFailurePattern(errorDescription, projectType);
+          } catch (err) {
+            if (this.debug) {
+              console.warn('[WorkflowEngine] Could not track failure pattern:', err);
             }
           }
         }
@@ -605,6 +700,12 @@ export class WorkflowEngine {
         const totalDuration = Date.now() - startTime;
         if (this.debugMetrics) {
           this.debugMetrics.recordTiming('total', totalDuration);
+          // Record outcome
+          const failureType = !testResult.success ? 'test' :
+                             (logAnalysis && logAnalysis.errors.length > 0) ? 'log' :
+                             (smokeTestResult && !smokeTestResult.success) ? 'validation' : 'timeout';
+          const errorCategory = this.extractErrorCategory(errorDescription);
+          this.debugMetrics.recordOutcome(failureType, errorCategory);
           this.debugMetrics.completeRun('failed');
         }
 
@@ -628,6 +729,8 @@ export class WorkflowEngine {
       const totalDuration = Date.now() - startTime;
       if (this.debugMetrics) {
         this.debugMetrics.recordTiming('total', totalDuration);
+        // Record successful outcome
+        this.debugMetrics.recordOutcome('success');
         this.debugMetrics.completeRun('completed');
       }
 

@@ -837,7 +837,9 @@ Remembers common failure patterns and injects "do not repeat" guidance:
 - Persists learned patterns in `.devloop/patterns.json`
 - Automatically applies relevant patterns to subsequent prompts
 
-## Intervention Modes
+## Intervention Modes (Inner Agent Approval Settings)
+
+Intervention modes control whether the *inner* dev-loop agent requires human approval for code changes. This is configured in `devloop.config.js` and is independent of the outer Cursor agent's role.
 
 ### Autonomous Mode
 
@@ -870,36 +872,122 @@ intervention: {
 }
 ```
 
-## Evolution Mode
+> **Note:** Intervention modes (autonomous/review/hybrid) control whether the *inner* dev-loop agent requires human approval for code changes. This is independent of Evolution Mode, which defines the *outer* Cursor agent's role. You can run evolution mode with any intervention setting.
 
-Evolution mode is for when you want to improve dev-loop itself while it processes tasks. This is activated explicitly by the human operator in their IDE chat (e.g., "Enter evolution mode for dev-loop").
+## Cursor Agent Integration (Outer Agent Role)
 
-### Autonomous vs Evolution Mode
+The Cursor/IDE agent operates in one of two roles when working with dev-loop:
 
-| Aspect | Autonomous Mode (Default) | Evolution Mode |
-|--------|---------------------------|----------------|
-| **Activation** | `npx dev-loop watch` | Explicit user request in IDE chat |
-| **Operator role** | Hands-off (start and step back) | Actively improve dev-loop code |
-| **Validation** | Dev-loop handles (tests, logs, retries) | Dev-loop handles (same) |
-| **Final check** | Operator does browser sign-off when done | Same |
-| **Code changes** | Dev-loop agents only | Operator extends dev-loop package |
-| **Purpose** | Execute PRD features autonomously | Build dev-loop capabilities |
+### Default Behavior (Operator Mode)
+
+In the default operator role, the Cursor agent:
+- Runs dev-loop commands (`npx dev-loop run`, `npx dev-loop watch`)
+- Observes output and logs
+- Validates results in browser when tasks complete
+- Updates task definitions in `tasks.json` if needed
+- Does NOT directly edit project code (Drupal/tests) - that's the inner agent's job
+
+This is the standard workflow where dev-loop's inner agent handles all code generation and fixes.
+
+### Evolution Mode
+
+Evolution mode is for improving dev-loop itself based on **real-world use cases across different projects** and **systematic observation of agent outcomes**. This is activated explicitly by the human operator in their IDE chat (e.g., "Enter evolution mode for dev-loop").
+
+**Why Evolution Mode?**
+
+Different projects reveal different failure patterns and use cases:
+- **Drupal projects** expose schema/config issues, entity type generation challenges, and Drush command patterns
+- **React projects** reveal import/type issues, component structure problems, and build configuration needs
+- **Node.js projects** show module resolution issues, async/await patterns, and API integration challenges
+
+By aggregating observations across projects, you can identify **generic improvements** that benefit all users:
+- Patterns observed in one project type can improve dev-loop for all projects
+- Metrics reveal inefficiencies (high token usage, repeated validation failures, slow test runs)
+- Real-world validation ensures improvements work against actual workflows, not theoretical scenarios
+
+When in evolution mode, the Cursor agent has additional responsibilities:
+- All operator mode responsibilities (run, observe, validate)
+- **Plus**: Extend dev-loop codebase (`packages/dev-loop/`) to improve capabilities
+- **Plus**: Enhance patterns, templates, validation, or context providers based on observed outcomes
+- **Plus**: Track and analyze metrics across runs to identify improvement opportunities
+
+The inner dev-loop agent's scope remains unchanged - it still implements project code (Drupal/PHP/tests).
+
+#### Two-Layer Architecture
+
+```mermaid
+flowchart TB
+    subgraph outer [Outer Layer - Cursor Agent]
+        CursorAgent[Cursor/IDE Agent]
+        TasksDef[tasks.json definitions]
+        DevLoopCode[packages/dev-loop code]
+    end
+
+    subgraph inner [Inner Layer - Dev-Loop Agent]
+        DevLoopRun[dev-loop run]
+        InnerAI[AI Provider Claude/GPT]
+        ProjectCode[Project code changes]
+    end
+
+    CursorAgent -->|runs| DevLoopRun
+    CursorAgent -->|edits| TasksDef
+    CursorAgent -->|extends in evolution mode| DevLoopCode
+    DevLoopRun -->|calls| InnerAI
+    InnerAI -->|generates| ProjectCode
+```
+
+#### Operator Role vs Evolution Mode Role
+
+| Aspect | Operator Role (Default) | Evolution Mode Role |
+|--------|-------------------------|---------------------|
+| **What it is** | Default Cursor agent behavior | Explicit mode for improving dev-loop |
+| **Activation** | Always active unless user says "enter evolution mode" | User explicitly requests in IDE chat |
+| **Cursor agent scope** | Run dev-loop, observe, validate in browser | Same + extend dev-loop codebase |
+| **Inner agent scope** | Implements project code (Drupal/tests) | Same (unchanged) |
+| **Intervention mode** | Configured separately in `devloop.config.js` | Same (orthogonal setting) |
 
 ### The Evolution Loop
+
+The evolution loop is a systematic process for improving dev-loop based on observation and analysis:
+
+1. **Observe**: Review metrics, patterns, and outcomes across multiple runs
+   - Check `dev-loop metrics` for trends (token usage, success rates, failure patterns)
+   - Review `dev-loop evolve insights` for automated improvement suggestions
+   - Analyze failure patterns across different project types
+   - Identify recurring issues that could be prevented
+
+2. **Analyze**: Identify trends and patterns
+   - "Validation failures increased 50% in last 10 runs" → suggests validation needs improvement
+   - "Token usage spiking for Drupal tasks" → suggests context extraction could be optimized
+   - "Repeated patch-not-found errors" → suggests pattern learning needs enhancement
+   - "Test failures decreasing after pattern addition" → confirms improvement effectiveness
+
+3. **Enhance**: Make targeted improvements based on observations
+   - Add patterns to PatternLearningSystem when failures repeat
+   - Improve CodeContextProvider when context is insufficient
+   - Enhance ValidationGate checks when pre-validation fails frequently
+   - Update templates when success rates are low
+   - Optimize metrics collection when insights are missing
+
+4. **Validate**: Test improvements against real project workflows
+   - Run `npx dev-loop run --debug` to test changes
+   - Monitor metrics to verify improvements (lower token usage, higher success rates)
+   - Check that patterns are being applied correctly
+   - Ensure improvements work across different project types
 
 When in evolution mode, the human operator:
 
 1. **Run dev-loop iteration**: `npx dev-loop run --debug`
-2. **Monitor outcomes**: Review debug output, metrics, failure patterns
-3. **Enhance dev-loop code** (if needed):
-   - Improve CodeContextProvider for better file context
-   - Add patterns to PatternLearningSystem
-   - Enhance ValidationGate checks
-   - Update templates for better AI guidance
-4. **Build and push**: `npm run build && git commit && git push`
-5. **Final validation**: Browser check when all tasks done
+2. **Review observations**: `dev-loop evolve insights` to see automated suggestions
+3. **Analyze metrics**: `dev-loop metrics --summary` to identify trends
+4. **Enhance dev-loop code** (if needed):
+   - Implement suggestions from observation tracker
+   - Add patterns based on failure analysis
+   - Improve components based on efficiency metrics
+5. **Build and push**: `npm run build && git commit && git push`
+6. **Validate**: Run again and verify improvements in metrics
 
-The evolution loop continues until PRD is 100% validated, but the focus is on improving dev-loop rather than implementing features directly.
+The evolution loop continues until PRD is 100% validated, but the focus is on improving dev-loop capabilities that benefit all projects, not just implementing features for the current project.
 
 ### Instructions for Cursor/IDE Agents
 

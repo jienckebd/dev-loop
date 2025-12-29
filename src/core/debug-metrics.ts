@@ -34,6 +34,21 @@ export interface RunMetrics {
     matched?: number;
     applied?: number;
   };
+  // Enhanced metrics for evolution mode
+  projectMetadata?: {
+    projectType?: string; // e.g., "drupal", "react", "node"
+    framework?: string; // from config
+    projectPath?: string; // normalized path
+  };
+  outcome?: {
+    failureType?: 'validation' | 'test' | 'log' | 'timeout' | 'success';
+    errorCategory?: string; // e.g., "patch-not-found", "syntax-error", "test-failure"
+    retryCount?: number;
+  };
+  efficiency?: {
+    tokensPerSuccess?: number; // tokens used per successful task
+    iterationsToSuccess?: number; // how many attempts before success
+  };
 }
 
 export interface MetricsData {
@@ -105,6 +120,9 @@ export class DebugMetrics {
       patches: {},
       validation: {},
       patterns: {},
+      projectMetadata: {},
+      outcome: {},
+      efficiency: {},
     };
   }
 
@@ -139,6 +157,32 @@ export class DebugMetrics {
 
   recordPatterns(matched: number, applied: number): void {
     this.currentRun.patterns = { matched, applied };
+  }
+
+  recordProjectMetadata(projectType?: string, framework?: string, projectPath?: string): void {
+    if (!this.currentRun.projectMetadata) {
+      this.currentRun.projectMetadata = {};
+    }
+    if (projectType) this.currentRun.projectMetadata.projectType = projectType;
+    if (framework) this.currentRun.projectMetadata.framework = framework;
+    if (projectPath) this.currentRun.projectMetadata.projectPath = projectPath;
+  }
+
+  recordOutcome(failureType?: 'validation' | 'test' | 'log' | 'timeout' | 'success', errorCategory?: string, retryCount?: number): void {
+    if (!this.currentRun.outcome) {
+      this.currentRun.outcome = {};
+    }
+    if (failureType) this.currentRun.outcome.failureType = failureType;
+    if (errorCategory) this.currentRun.outcome.errorCategory = errorCategory;
+    if (retryCount !== undefined) this.currentRun.outcome.retryCount = retryCount;
+  }
+
+  recordEfficiency(tokensPerSuccess?: number, iterationsToSuccess?: number): void {
+    if (!this.currentRun.efficiency) {
+      this.currentRun.efficiency = {};
+    }
+    if (tokensPerSuccess !== undefined) this.currentRun.efficiency.tokensPerSuccess = tokensPerSuccess;
+    if (iterationsToSuccess !== undefined) this.currentRun.efficiency.iterationsToSuccess = iterationsToSuccess;
   }
 
   completeRun(status: 'completed' | 'failed'): void {
