@@ -874,16 +874,70 @@ intervention: {
 
 Evolution mode is for when you want to improve dev-loop itself while it processes tasks. This is activated explicitly by the human operator in their IDE chat (e.g., "Enter evolution mode for dev-loop").
 
-In evolution mode, the human operator:
-1. Runs dev-loop iterations with `npx dev-loop run --debug`
-2. Monitors outcomes and identifies patterns where agents fail
-3. Extends dev-loop code to address those patterns
-4. Commits and pushes improvements to the dev-loop repository
-5. Continues until PRD is 100% validated
+### Autonomous vs Evolution Mode
 
-This mode is distinct from autonomous mode where dev-loop runs independently without human intervention. Evolution mode is specifically for building and improving dev-loop's capabilities based on real-world task execution.
+| Aspect | Autonomous Mode (Default) | Evolution Mode |
+|--------|---------------------------|----------------|
+| **Activation** | `npx dev-loop watch` | Explicit user request in IDE chat |
+| **Operator role** | Hands-off (start and step back) | Actively improve dev-loop code |
+| **Validation** | Dev-loop handles (tests, logs, retries) | Dev-loop handles (same) |
+| **Final check** | Operator does browser sign-off when done | Same |
+| **Code changes** | Dev-loop agents only | Operator extends dev-loop package |
+| **Purpose** | Execute PRD features autonomously | Build dev-loop capabilities |
 
-See project-specific documentation (e.g., `docs/dev-loop-cursor-integration.md`) for details on how evolution mode integrates with your IDE workflow.
+### The Evolution Loop
+
+When in evolution mode, the human operator:
+
+1. **Run dev-loop iteration**: `npx dev-loop run --debug`
+2. **Monitor outcomes**: Review debug output, metrics, failure patterns
+3. **Enhance dev-loop code** (if needed):
+   - Improve CodeContextProvider for better file context
+   - Add patterns to PatternLearningSystem
+   - Enhance ValidationGate checks
+   - Update templates for better AI guidance
+4. **Build and push**: `npm run build && git commit && git push`
+5. **Final validation**: Browser check when all tasks done
+
+The evolution loop continues until PRD is 100% validated, but the focus is on improving dev-loop rather than implementing features directly.
+
+### When to Extend Dev-Loop
+
+Extend dev-loop when:
+- Agents repeatedly make the same mistake (add better prompts/validation)
+- A new generic capability would improve outcomes across projects
+- Validation reveals patterns dev-loop should handle differently
+- Log parsing misses important error patterns
+- Task execution needs new hooks or lifecycle events
+
+### Extension Process
+
+```bash
+# Make changes to src/
+cd packages/dev-loop  # or wherever dev-loop is located
+
+# Rebuild TypeScript after changes
+npm run build
+
+# Test the improvement
+npx dev-loop run
+
+# Commit and push incrementally
+git add -A && git commit -m "Description of improvement"
+git push
+```
+
+### What NOT to Add to Dev-Loop
+
+Keep dev-loop framework-agnostic. Do NOT add:
+- Framework-specific logic (Drupal, React, etc.)
+- Project-specific code
+- Project-specific paths or patterns
+
+Instead, configure project-specific behavior in:
+- `devloop.config.js` - Hooks, log sources, test commands
+- `.taskmaster/templates/` - PRD and task templates
+- Project rules files (CLAUDE.md, .cursorrules) - Rules injected into prompts
 
 ## CI Output Formats
 
@@ -1215,10 +1269,55 @@ npm test
 
 MIT
 
+## Roadmap
+
+### Phase 1: Core Stability (Current)
+
+- Logging system with configurable output path
+- Basic task execution with retry logic
+- Pattern learning foundation
+- Pre-apply validation gate
+
+### Phase 2: Command Expansion
+
+- `replay` - Re-run tasks for debugging
+- `diagnose` - Failure analysis with suggestions
+- `trace` - Execution trace with token usage
+- `template list/show/create/edit` - Template management
+- `pattern list/learn/score` - Pattern learning commands
+- `metrics` - Basic dashboard with task/token stats
+- `handoff create/resume` - Session handoff automation
+- `session start/end` - Session tracking
+
+### Phase 3: Intelligence Layer
+
+- `evolve` - Self-improvement mode
+- Context gap detection from failure analysis
+- Template A/B testing with `template compare`
+- Pattern effectiveness scoring with `pattern score`
+- Multi-agent specialization with `agent create`
+- Automatic pattern application
+
+### Phase 4: Developer Experience
+
+- `debug --step` - Interactive step-by-step debugging
+- `test --task <id>` - Task-scoped testing
+- `git commit/branch/pr` - Git workflow integration
+- `git changelog` - Changelog generation from tasks
+- `report --format html` - Rich HTML reports
+- Shell completion scripts
+
+### Phase 5: Full Autonomy
+
+- `watch` - Smart scheduling with dependency resolution
+- `run --parallel` - Parallel task execution
+- Self-healing on common failure patterns
+- Proactive pattern application before execution
+- `prd expand` - AI-powered PRD expansion
+- Automatic subtask generation with `split`
+
 ## See Also
 
 - [HANDOFF.md](./HANDOFF.md) - Implementation handoff document
-- [Plan File](./.cursor/plans/dev-loop_node_app_b915e7bc.plan.md) - Detailed implementation plan
-- [Original Workflow Documentation](../sysf/docs/workflow.md) - Detailed workflow description
 - [AI Dev Tasks](https://github.com/snarktank/ai-dev-tasks) - Prompt templates repository
 - [Task Master AI](https://www.npmjs.com/package/task-master-ai) - Task management system
