@@ -432,7 +432,16 @@ dev-loop/
 │   │   ├── task-bridge.ts       # task-master-ai wrapper
 │   │   ├── state-manager.ts     # File persistence
 │   │   ├── template-manager.ts  # Template loading
-│   │   └── intervention.ts      # Approval gates
+│   │   ├── intervention.ts      # Approval gates
+│   │   ├── code-context-provider.ts  # File context extraction
+│   │   ├── validation-gate.ts  # Pre-apply validation
+│   │   ├── pattern-learner.ts  # Pattern learning system
+│   │   ├── framework-pattern-library.ts  # Framework patterns
+│   │   ├── debugging-strategy-advisor.ts  # Error classification
+│   │   ├── investigation-task-generator.ts  # Investigation tasks
+│   │   ├── execution-order-analyzer.ts  # Execution order analysis
+│   │   ├── component-interaction-analyzer.ts  # Component interactions
+│   │   └── root-cause-analyzer.ts  # Root cause analysis
 │   ├── providers/
 │   │   ├── ai/
 │   │   │   ├── interface.ts     # AIProvider interface
