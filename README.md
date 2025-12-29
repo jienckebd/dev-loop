@@ -1136,34 +1136,43 @@ MIT
 
 ## Roadmap
 
-### Phase 1: Core Stability (Current)
+### Phase 1: Core Stability ✓ Complete
 
-- Logging system with configurable output path
-- Basic task execution with retry logic
-- Pattern learning foundation
-- Pre-apply validation gate
+- ✓ Logging system with configurable output path
+- ✓ Basic task execution with retry logic
+- ✓ Pattern learning foundation
+- ✓ Pre-apply validation gate
 
-### Phase 2: Command Expansion
+### Phase 2: Command Expansion (Mostly Complete)
 
-- `replay` - Re-run tasks for debugging
-- `diagnose` - Failure analysis with suggestions
-- `trace` - Execution trace with token usage
-- `template list/show/create/edit` - Template management
-- `pattern list/learn/score` - Pattern learning commands
-- `metrics` - Basic dashboard with task/token stats
-- `handoff create/resume` - Session handoff automation
-- `session start/end` - Session tracking
+- ✓ `replay` - Re-run tasks for debugging
+- ✓ `diagnose` - Failure analysis with suggestions
+- ✓ `trace` - Execution trace with token usage
+- ✓ `template list/show` - Template viewing
+- ⚠ `template create/edit` - Template management (viewing only)
+- ✓ `pattern list` - Pattern listing
+- ⚠ `pattern learn/score` - Pattern learning commands (automatic learning only)
+- ✓ `metrics` - Basic dashboard with task/token stats
+- ✓ `handoff create/show/list` - Session handoff automation
+- ⚠ `session start/end` - Session tracking (not yet implemented)
 
-### Phase 3: Intelligence Layer
+### Phase 3: Intelligence Layer (Partially Complete)
 
-- `evolve` - Self-improvement mode
-- Context gap detection from failure analysis
-- Template A/B testing with `template compare`
-- Pattern effectiveness scoring with `pattern score`
-- Multi-agent specialization with `agent create`
-- Automatic pattern application
+- ✓ Framework pattern library (Drupal, React, generic patterns)
+- ✓ Error classification & strategy advisor
+- ✓ Investigation task generation
+- ✓ Execution order analysis
+- ✓ Component interaction detection
+- ✓ Root cause analysis
+- ✓ Pattern learning system (automatic)
+- ⚠ `evolve` - Self-improvement mode command (evolution mode exists but no CLI command)
+- ⚠ Context gap detection from failure analysis
+- ⚠ Template A/B testing with `template compare`
+- ⚠ Pattern effectiveness scoring with `pattern score`
+- ⚠ Multi-agent specialization with `agent create`
+- ⚠ Automatic pattern application (learning exists, proactive application pending)
 
-### Phase 4: Developer Experience
+### Phase 4: Developer Experience (Planned)
 
 - `debug --step` - Interactive step-by-step debugging
 - `test --task <id>` - Task-scoped testing
@@ -1172,14 +1181,20 @@ MIT
 - `report --format html` - Rich HTML reports
 - Shell completion scripts
 
-### Phase 5: Full Autonomy
+### Phase 5: Full Autonomy (Partially Complete)
 
-- `watch` - Smart scheduling with dependency resolution
+- ✓ `watch` - Continuous execution mode
+- ⚠ `watch` - Smart scheduling with dependency resolution (basic watch exists)
 - `run --parallel` - Parallel task execution
-- Self-healing on common failure patterns
-- Proactive pattern application before execution
+- ⚠ Self-healing on common failure patterns (pattern learning exists, auto-healing pending)
+- ⚠ Proactive pattern application before execution (reactive only)
 - `prd expand` - AI-powered PRD expansion
-- Automatic subtask generation with `split`
+- `split` - Automatic subtask generation
+
+**Legend:**
+- ✓ = Implemented
+- ⚠ = Partially implemented
+- (no marker) = Planned
 
 ## See Also
 
