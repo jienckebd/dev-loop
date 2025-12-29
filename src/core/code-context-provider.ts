@@ -454,4 +454,136 @@ Example patch format:
       guidance,
     };
   }
+
+  /**
+   * Extract execution context from error message
+   */
+  extractExecutionContext(errorText: string): {
+    executionPath?: string;
+    trigger?: string;
+    missingState?: string;
+    components?: string[];
+  } {
+    const lowerError = errorText.toLowerCase();
+    const context: {
+      executionPath?: string;
+      trigger?: string;
+      missingState?: string;
+      components?: string[];
+    } = {};
+
+    // Extract execution path hints
+    if (lowerError.includes('during form submission') || lowerError.includes('form submit')) {
+      context.executionPath = 'form submission';
+      context.trigger = 'form submission';
+    } else if (lowerError.includes('during save') || lowerError.includes('preSave') || lowerError.includes('postSave')) {
+      context.executionPath = 'entity save lifecycle';
+      context.trigger = 'entity save';
+    } else if (lowerError.includes('handler') || lowerError.includes('submit handler')) {
+      context.executionPath = 'handler execution';
+      context.trigger = 'handler';
+    }
+
+    // Extract missing state
+    if (lowerError.includes('without a bundle') || lowerError.includes('bundle does not exist')) {
+      context.missingState = 'entity bundle';
+    } else if (lowerError.includes('not found') || lowerError.includes('does not exist')) {
+      const match = errorText.match(/(?:field|entity|bundle|module)\s+['"]?([^'"]+)['"]?\s+(?:does not exist|not found)/i);
+      if (match) {
+        context.missingState = match[1];
+      }
+    }
+
+    // Extract components
+    const componentKeywords = ['IEF', 'widget', 'entity', 'form', 'handler', 'subscriber', 'processor', 'feeds'];
+    const foundComponents = componentKeywords.filter(kw => lowerError.includes(kw.toLowerCase()));
+    if (foundComponents.length > 0) {
+      context.components = foundComponents;
+    }
+
+    return context;
+  }
+
+  /**
+   * Generate error story from execution context
+   */
+  generateErrorStory(
+    errorText: string,
+    executionContext: ReturnType<typeof this.extractExecutionContext>
+  ): string {
+    const parts: string[] = [];
+
+    if (executionContext.trigger) {
+      parts.push(`When ${executionContext.trigger} occurs`);
+    }
+
+    if (executionContext.components && executionContext.components.length > 0) {
+      parts.push(`${executionContext.components.join(' and ')} tries to`);
+    }
+
+    // Extract the action from error
+    const lowerError = errorText.toLowerCase();
+    if (lowerError.includes('create') || lowerError.includes('save')) {
+      parts.push('create/save');
+    } else if (lowerError.includes('access') || lowerError.includes('use')) {
+      parts.push('access/use');
+    }
+
+    if (executionContext.missingState) {
+      parts.push(`${executionContext.missingState}, but it doesn't exist yet`);
+    } else {
+      parts.push('something that requires state that doesn\'t exist');
+    }
+
+    return parts.join(' ') + '.';
+  }
+
+  /**
+   * Generate enhanced error context for AI prompts
+   */
+  generateErrorContextPrompt(
+    errorText: string,
+    targetFiles?: string[]
+  ): string {
+    const executionContext = this.extractExecutionContext(errorText);
+    const errorStory = this.generateErrorStory(errorText, executionContext);
+
+    const sections: string[] = [
+      '## ERROR CONTEXT ANALYSIS',
+      '',
+      `**Error Story**: ${errorStory}`,
+      '',
+    ];
+
+    if (executionContext.executionPath) {
+      sections.push(`**Execution Path**: ${executionContext.executionPath}`);
+    }
+
+    if (executionContext.trigger) {
+      sections.push(`**Trigger**: ${executionContext.trigger}`);
+    }
+
+    if (executionContext.missingState) {
+      sections.push(`**Missing State**: ${executionContext.missingState}`);
+    }
+
+    if (executionContext.components && executionContext.components.length > 0) {
+      sections.push(`**Components Involved**: ${executionContext.components.join(', ')}`);
+      if (executionContext.components.length > 1) {
+        sections.push('');
+        sections.push('**Multi-Component Interaction Detected**: This error involves multiple components interacting.');
+        sections.push('Consider:');
+        sections.push('- Execution order of components');
+        sections.push('- Component lifecycle dependencies');
+        sections.push('- State availability at interaction time');
+      }
+    }
+
+    if (targetFiles && targetFiles.length > 0) {
+      sections.push('');
+      sections.push(`**Target Files**: ${targetFiles.join(', ')}`);
+    }
+
+    return sections.join('\n');
+  }
 }

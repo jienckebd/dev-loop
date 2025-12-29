@@ -44,6 +44,12 @@ export class WorkflowEngine {
   private debugMetrics?: DebugMetrics;
   private observationTracker?: any; // ObservationTracker
   private improvementSuggester?: any; // ImprovementSuggester
+  private frameworkPatternLibrary?: any; // FrameworkPatternLibrary
+  private debuggingStrategyAdvisor?: any; // DebuggingStrategyAdvisor
+  private investigationTaskGenerator?: any; // InvestigationTaskGenerator
+  private executionOrderAnalyzer?: any; // ExecutionOrderAnalyzer
+  private componentInteractionAnalyzer?: any; // ComponentInteractionAnalyzer
+  private rootCauseAnalyzer?: any; // RootCauseAnalyzer
   private shutdownRequested = false;
   private debug = false;
 
@@ -101,6 +107,84 @@ export class WorkflowEngine {
           console.warn('[WorkflowEngine] Could not initialize observation tracking:', err);
         }
       }
+    }
+
+    // Initialize complex issue analyzers
+    try {
+      const { FrameworkPatternLibrary } = require('./framework-pattern-library');
+      const { DebuggingStrategyAdvisor } = require('./debugging-strategy-advisor');
+      const { InvestigationTaskGenerator } = require('./investigation-task-generator');
+      const { ExecutionOrderAnalyzer } = require('./execution-order-analyzer');
+      const { ComponentInteractionAnalyzer } = require('./component-interaction-analyzer');
+      const { RootCauseAnalyzer } = require('./root-cause-analyzer');
+
+      this.frameworkPatternLibrary = new FrameworkPatternLibrary();
+      this.debuggingStrategyAdvisor = new DebuggingStrategyAdvisor(this.frameworkPatternLibrary, this.debug);
+      this.investigationTaskGenerator = new InvestigationTaskGenerator(this.debuggingStrategyAdvisor, this.debug);
+      this.executionOrderAnalyzer = new ExecutionOrderAnalyzer(this.frameworkPatternLibrary, this.debug);
+      this.componentInteractionAnalyzer = new ComponentInteractionAnalyzer(this.frameworkPatternLibrary, this.debug);
+      this.rootCauseAnalyzer = new RootCauseAnalyzer(
+        this.executionOrderAnalyzer,
+        this.componentInteractionAnalyzer,
+        this.debug
+      );
+    } catch (err) {
+      if (this.debug) {
+        console.warn('[WorkflowEngine] Could not initialize complex issue analyzers:', err);
+      }
+    }
+  }
+
+  /**
+   * Extract components from error text
+   */
+  private extractComponentsFromError(errorText: string): string[] {
+    const lower = errorText.toLowerCase();
+    const components: string[] = [];
+    const componentKeywords = ['IEF', 'widget', 'entity', 'form', 'handler', 'subscriber', 'processor', 'feeds', 'bundle'];
+    
+    for (const keyword of componentKeywords) {
+      if (lower.includes(keyword.toLowerCase())) {
+        components.push(keyword);
+      }
+    }
+    
+    return components;
+  }
+
+  /**
+   * Check if error involves multiple components
+   */
+  private hasMultipleComponents(errorText: string): boolean {
+    return this.extractComponentsFromError(errorText).length >= 2;
+  }
+
+  /**
+   * Get count of previous fix attempts for a task
+   */
+  private async getPreviousFixAttempts(taskId: string): Promise<number> {
+    try {
+      // Count fix tasks by checking if task ID starts with 'fix-{taskId}'
+      const pendingTasks = await this.taskBridge.getPendingTasks();
+      const allTasks = [...pendingTasks];
+      
+      // Also check done/blocked tasks for fix attempts
+      try {
+        const tasksData = await require('fs-extra').readJson(this.config.taskMaster.tasksPath);
+        const allTasksFromFile = Array.isArray(tasksData.tasks) ? tasksData.tasks : [];
+        allTasks.push(...allTasksFromFile.filter((t: any) => t.status === 'done' || t.status === 'blocked'));
+      } catch (err) {
+        // Ignore if can't read tasks file
+      }
+      
+      const fixTasks = allTasks.filter((t: any) => {
+        const idStr = String(t.id);
+        // Check if it's a fix task for this task
+        return idStr.startsWith(`fix-${taskId}-`) || idStr === `fix-${taskId}`;
+      });
+      return fixTasks.length;
+    } catch (err) {
+      return 0;
     }
   }
 
@@ -653,6 +737,114 @@ export class WorkflowEngine {
           errorDescription = logAnalysis?.summary || 'Log analysis found errors';
         }
 
+        // NEW: Enhanced error analysis for complex issues
+        let enhancedErrorDescription = errorDescription;
+        let investigationTasks: any[] = [];
+
+        if (this.debuggingStrategyAdvisor && this.investigationTaskGenerator) {
+          try {
+            const framework = (this.config as any).framework?.type;
+            const classification = this.debuggingStrategyAdvisor.classifyError(errorDescription, {
+              framework,
+              components: this.extractComponentsFromError(errorDescription),
+              hasMultipleComponents: this.hasMultipleComponents(errorDescription),
+              previousFixAttempts: await this.getPreviousFixAttempts(task.id),
+            });
+
+            // Generate investigation tasks if needed
+            if (classification.needsInvestigation) {
+              investigationTasks = this.investigationTaskGenerator.generateInvestigationTasks(errorDescription, {
+                framework,
+                components: this.extractComponentsFromError(errorDescription),
+                targetFiles: targetFiles?.split('\n').filter(f => f.trim()),
+                previousFixAttempts: await this.getPreviousFixAttempts(task.id),
+              });
+
+              // Create investigation tasks first
+              for (const invTask of investigationTasks) {
+                const taskMasterTask = this.investigationTaskGenerator.toTaskMasterTask(invTask, task.id);
+                await this.taskBridge.createTask(taskMasterTask as any);
+                if (this.debug) {
+                  console.log(`[WorkflowEngine] Created investigation task: ${invTask.title}`);
+                }
+              }
+            }
+
+            // Enhance error description with analysis
+            const analysisSections: string[] = [];
+
+            // Add error context
+            if (this.codeContextProvider) {
+              const errorContext = this.codeContextProvider.generateErrorContextPrompt(errorDescription, targetFiles?.split('\n'));
+              if (errorContext) {
+                analysisSections.push(errorContext);
+              }
+            }
+
+            // Add framework pattern guidance
+            if (this.frameworkPatternLibrary) {
+              const patterns = this.frameworkPatternLibrary.matchPatterns(errorDescription, framework);
+              if (patterns.length > 0) {
+                const patternGuidance = this.frameworkPatternLibrary.generateGuidancePrompt(patterns);
+                if (patternGuidance) {
+                  analysisSections.push(patternGuidance);
+                }
+              }
+            }
+
+            // Add execution order analysis
+            if (this.executionOrderAnalyzer && classification.errorType === 'timing-order') {
+              const orderIssues = await this.executionOrderAnalyzer.analyzeExecutionOrder(
+                errorDescription,
+                targetFiles?.split('\n').filter(f => f.trim()),
+                framework
+              );
+              if (orderIssues.length > 0) {
+                const orderDiagram = this.executionOrderAnalyzer.generateExecutionFlowDiagram(orderIssues);
+                if (orderDiagram) {
+                  analysisSections.push(orderDiagram);
+                }
+              }
+            }
+
+            // Add component interaction analysis
+            if (this.componentInteractionAnalyzer && classification.errorType === 'component-interaction') {
+              const interactionIssues = this.componentInteractionAnalyzer.analyzeInteraction(errorDescription, {
+                framework,
+                components: this.extractComponentsFromError(errorDescription),
+                targetFiles: targetFiles?.split('\n').filter(f => f.trim()),
+              });
+              if (interactionIssues.length > 0) {
+                const interactionDiagram = this.componentInteractionAnalyzer.generateInteractionDiagram(interactionIssues);
+                if (interactionDiagram) {
+                  analysisSections.push(interactionDiagram);
+                }
+              }
+            }
+
+            // Add debugging strategy guidance
+            if (classification.suggestedStrategy !== 'fix-root-cause') {
+              analysisSections.push(`## DEBUGGING STRATEGY\n\n**Suggested Approach**: ${classification.strategyReasoning}`);
+              if (classification.investigationSteps && classification.investigationSteps.length > 0) {
+                analysisSections.push('\n**Investigation Steps**:');
+                for (const step of classification.investigationSteps) {
+                  analysisSections.push(`- ${step}`);
+                }
+              }
+            }
+
+            if (analysisSections.length > 0) {
+              enhancedErrorDescription = errorDescription + '\n\n' + analysisSections.join('\n\n');
+            }
+          } catch (err) {
+            if (this.debug) {
+              console.warn('[WorkflowEngine] Error during enhanced analysis:', err);
+            }
+            // Fall back to original error description
+            enhancedErrorDescription = errorDescription;
+          }
+        }
+
         // NEW: Record patterns from test failures for learning
         if ((this.config as any).patternLearning?.enabled !== false) {
           try {
@@ -682,11 +874,22 @@ export class WorkflowEngine {
           }
         }
 
-        const fixTask = await this.taskBridge.createFixTask(
-          task.id,
-          errorDescription,
-          testResult.output
-        );
+        // Only create fix task if no investigation tasks were created
+        // (investigation tasks should be completed first)
+        let fixTask = null;
+        if (investigationTasks.length === 0) {
+          fixTask = await this.taskBridge.createFixTask(
+            task.id,
+            enhancedErrorDescription,
+            testResult.output
+          );
+        } else {
+          // Mark task as pending to wait for investigation results
+          await this.taskBridge.updateTaskStatus(task.id, 'pending');
+          if (this.debug) {
+            console.log(`[WorkflowEngine] Created ${investigationTasks.length} investigation tasks. Fix task will be created after investigation.`);
+          }
+        }
 
         if (fixTask) {
           // Mark original task as pending again for retry
