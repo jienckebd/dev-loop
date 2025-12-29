@@ -49,9 +49,12 @@ program
 
 program
   .command('logs')
-  .description('View/analyze recent logs')
+  .description('View dev-loop logs and analyze project logs')
   .option('-c, --config <path>', 'Path to config file', 'devloop.config.js')
-  .option('--analyze', 'Run log analysis')
+  .option('-n, --tail <lines>', 'Number of lines to show (default: 50)', (v) => parseInt(v, 10))
+  .option('-f, --follow', 'Follow the log file (like tail -f)')
+  .option('--analyze', 'Analyze project logs (from configured sources)')
+  .option('--clear', 'Clear the log file')
   .action(logsCommand);
 
 program

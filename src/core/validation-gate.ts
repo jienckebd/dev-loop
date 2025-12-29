@@ -57,6 +57,28 @@ export class ValidationGate {
           });
           continue;
         }
+
+        // CRITICAL: Prevent destructive updates that significantly shrink files
+        // This catches AI agents that rewrite entire files instead of patching
+        const existingContent = await fs.readFile(filePath, 'utf-8');
+        const existingLines = existingContent.split('\n').length;
+        const newLines = file.content ? file.content.split('\n').length : 0;
+        
+        // If the new content is less than 50% of the original size, reject it
+        if (newLines < existingLines * 0.5 && existingLines > 100) {
+          errors.push({
+            type: 'syntax',
+            file: file.path,
+            message: `Destructive update detected: new content (${newLines} lines) is much smaller than existing (${existingLines} lines)`,
+            suggestion: 'Use operation "patch" with search/replace instead of replacing the entire file. Only modify the specific lines that need to change.',
+          });
+          continue;
+        }
+
+        // Also warn if the file is large and using update operation
+        if (existingLines > 500) {
+          warnings.push(`Large file ${file.path} (${existingLines} lines) using "update" operation. Consider using "patch" for targeted changes.`);
+        }
       }
 
       // Validate file exists for patch/update operations

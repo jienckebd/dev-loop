@@ -51,6 +51,8 @@ const configSchema = z.object({
     }),
     ignorePatterns: z.array(z.string()).optional(),
     useAI: z.boolean(),
+    // Path to dev-loop's own log file (captures debug output, AI calls, etc.)
+    outputPath: z.string().optional(),
   }),
   intervention: z.object({
     mode: z.enum(['autonomous', 'review', 'hybrid']),

@@ -17,6 +17,7 @@ import { CodeContextProvider } from './code-context-provider';
 import { ValidationGate } from './validation-gate';
 import { PatternLearningSystem } from './pattern-learner';
 import { DebugMetrics } from './debug-metrics';
+import { logger } from './logger';
 
 const execAsync = promisify(exec);
 
@@ -45,8 +46,17 @@ export class WorkflowEngine {
 
   constructor(private config: Config) {
     this.debug = (config as any).debug || false;
+
+    // Configure logger with file path and debug mode
+    logger.configure({
+      logPath: config.logs.outputPath,
+      debug: this.debug,
+    });
+
+
+    logger.info('WorkflowEngine initialized');
     if (this.debug) {
-      console.log('[DEBUG] WorkflowEngine initialized with debug mode');
+      logger.debug('Debug mode enabled');
     }
     this.taskBridge = new TaskMasterBridge(config);
     this.stateManager = new StateManager(config);
@@ -171,8 +181,16 @@ export class WorkflowEngine {
         patternGuidance,
       });
 
-      console.log('[WorkflowEngine] Calling AI provider to generate code...');
-      console.log('[WorkflowEngine] Task:', context.task.title);
+      logger.info(`[WorkflowEngine] Calling AI provider to generate code...`);
+      logger.info(`[WorkflowEngine] Task: ${context.task.title}`);
+
+      // Log workflow event
+      logger.logWorkflow('Task execution started', {
+        taskId: task.id,
+        title: task.title,
+        priority: task.priority,
+        targetFiles: targetFiles?.split('\n').filter(Boolean) || [],
+      });
 
       // Record AI call timing
       const aiCallStart = Date.now();
@@ -209,9 +227,9 @@ export class WorkflowEngine {
         }
       }
 
-      console.log('[WorkflowEngine] AI response received, files:', changes.files?.length || 0);
-      if (this.debug && changes.summary) {
-        console.log(`[DEBUG] AI summary: ${changes.summary}`);
+      logger.info(`[WorkflowEngine] AI response received, files: ${changes.files?.length || 0}`);
+      if (changes.summary) {
+        logger.debug(`AI summary: ${changes.summary}`);
       }
 
       // Update state: ApplyingChanges
@@ -242,13 +260,13 @@ export class WorkflowEngine {
 
       // NEW: Pre-apply validation
       if ((this.config as any).preValidation?.enabled !== false) {
-        console.log('[WorkflowEngine] Running pre-apply validation...');
+        logger.info('[WorkflowEngine] Running pre-apply validation...');
         const validationResult = await this.validationGate.validate(changes);
 
         if (!validationResult.valid) {
-          console.error('[WorkflowEngine] Pre-apply validation FAILED:');
+          logger.error('Pre-apply validation FAILED:');
           for (const error of validationResult.errors) {
-            console.error(`  - ${error.type}: ${error.message}`);
+            logger.error(`  - ${error.type}: ${error.message}`);
           }
 
           // Record patterns for learning
@@ -342,6 +360,10 @@ export class WorkflowEngine {
         };
       }
       console.log('[WorkflowEngine] Changes applied successfully');
+      logger.logWorkflow('Changes applied', {
+        taskId: task.id,
+        filesModified: changes.files?.map(f => f.path) || [],
+      });
 
       // Execute post-apply hooks (e.g., cache clearing for Drupal)
       if (this.config.hooks?.postApply && this.config.hooks.postApply.length > 0) {

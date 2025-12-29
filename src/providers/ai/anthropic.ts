@@ -3,6 +3,7 @@ import * as fs from 'fs-extra';
 import * as path from 'path';
 import { AIProvider, AIProviderConfig } from './interface';
 import { CodeChanges, TaskContext, LogAnalysis, FrameworkConfig } from '../../types';
+import { logger } from '../../core/logger';
 
 export class AnthropicProvider implements AIProvider {
   public name = 'anthropic';
@@ -154,6 +155,15 @@ ${prompt}`;
     // Use higher token limit for framework-specific tasks
     const maxTokens = isFrameworkTask ? (this.config.maxTokens || 16000) : (this.config.maxTokens || 4000);
 
+    // Log AI request
+    logger.logAICall('request', {
+      model: this.config.model,
+      systemPrompt,
+      userPrompt,
+    });
+
+    const apiCallStart = Date.now();
+
     // Retry loop for rate limit errors
     let lastError: Error | null = null;
     for (let attempt = 0; attempt < this.maxRetries; attempt++) {
@@ -171,6 +181,7 @@ ${prompt}`;
           ],
         });
 
+        const apiCallDuration = Date.now() - apiCallStart;
         const content = response.content[0];
 
         // Store token usage for metrics
@@ -180,6 +191,15 @@ ${prompt}`;
             output: response.usage.output_tokens,
           };
         }
+
+        // Log AI response
+        logger.logAICall('response', {
+          model: response.model,
+          inputTokens: response.usage?.input_tokens,
+          outputTokens: response.usage?.output_tokens,
+          duration: apiCallDuration,
+          response: content.type === 'text' ? content.text : '[non-text content]',
+        });
 
         // Debug: Log response metadata
         if (this.debug) {
