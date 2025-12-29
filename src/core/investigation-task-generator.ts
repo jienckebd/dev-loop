@@ -32,6 +32,8 @@ export class InvestigationTaskGenerator {
       previousFixAttempts?: number;
     }
   ): InvestigationTask[] {
+    // Store errorContext for use in generateDrupalInvestigationTasks
+    const storedContext = errorContext;
     const classification = this.strategyAdvisor.classifyError(errorText, errorContext);
 
     if (!classification.needsInvestigation) {
@@ -52,7 +54,7 @@ export class InvestigationTaskGenerator {
 
     // Add framework-specific investigation tasks
     if (errorContext?.framework === 'drupal') {
-      const drupalTasks = this.generateDrupalInvestigationTasks(classification, errorContext);
+      const drupalTasks = this.generateDrupalInvestigationTasks(classification, storedContext, errorText);
       tasks.push(...drupalTasks);
     }
 
@@ -116,7 +118,8 @@ export class InvestigationTaskGenerator {
 
   private generateDrupalInvestigationTasks(
     classification: ErrorClassification,
-    context?: { targetFiles?: string[]; components?: string[] }
+    context?: { targetFiles?: string[]; components?: string[] },
+    errorText?: string
   ): InvestigationTask[] {
     const tasks: InvestigationTask[] = [];
 
@@ -154,7 +157,11 @@ if (isset($form['#ief_element_submit'])) {
       });
     }
 
-    if (classification.errorType === 'component-interaction' && context?.components?.includes('IEF')) {
+    const hasIEF = context?.components?.some((c: string) => c.toLowerCase().includes('ief')) || 
+                   errorText?.toLowerCase().includes('ief') ||
+                   errorText?.toLowerCase().includes('inline entity form');
+    
+    if (classification.errorType === 'component-interaction' && hasIEF) {
       tasks.push({
         title: 'Investigate IEF widget save interaction with entity lifecycle',
         description: `Verify when IEF widget saves entities relative to the main form entity save. Check if widget entity save triggers entity lifecycle hooks before the main entity bundle exists.
@@ -163,11 +170,19 @@ Key points to investigate:
 - When FeedTypeIefHandler::save() is called
 - Whether entity bundle exists at that point
 - Form state before and after IEF save
-- Whether clear handler runs before IEF save handler`,
+- Whether clear handler runs before IEF save handler
+- Check if clear handler is registered with array_unshift() or array_push() on #ief_element_submit`,
         priority: 'high',
         investigationType: 'tracing',
-        debugCode: `// In FeedTypeIefHandler::save() or similar
-\\Drupal::logger('module_name')->debug('IEF HANDLER: @handler called', [
+        debugCode: `// In form_alter, check handler registration method
+if (isset($form['#ief_element_submit'])) {
+  \\Drupal::logger('module_name')->debug('IEF element submit handlers BEFORE: @handlers', [
+    '@handlers' => print_r($form['#ief_element_submit'], TRUE),
+  ]);
+}
+
+// In FeedTypeIefHandler::save() or similar
+\\Drupal::logger('module_name')->debug('IEF HANDLER: @handler called at @time', [
   '@handler' => __FUNCTION__,
   '@time' => microtime(TRUE),
 ]);
@@ -181,9 +196,15 @@ $bundle_exists = \\Drupal::entityTypeManager()
 
 \\Drupal::logger('module_name')->debug('Bundle exists: @exists', [
   '@exists' => $bundle_exists ? 'YES' : 'NO',
+]);
+
+// In clear handler, verify it's called
+\\Drupal::logger('module_name')->debug('CLEAR HANDLER: @handler called at @time', [
+  '@handler' => __FUNCTION__,
+  '@time' => microtime(TRUE),
 ]);`,
         targetFiles: context?.targetFiles,
-        expectedOutcome: 'Execution trace showing IEF save timing relative to bundle creation',
+        expectedOutcome: 'Execution trace showing IEF save timing relative to bundle creation and clear handler execution order',
       });
     }
 
