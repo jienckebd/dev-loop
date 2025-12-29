@@ -102,6 +102,33 @@ Use PATCH operations with exact search/replace:
 4. Preserve all existing helper functions and imports
 5. Use existing helper functions (do not create new ones)
 6. **VERIFY**: Before submitting, double-check that your search string appears EXACTLY in the existing code
+
+## TypeScript Rules for page.evaluate()
+
+When using page.evaluate() with browser globals that don't exist in Node.js TypeScript:
+
+1. **NEVER use window.ace, window.jQuery, window.Drupal directly** - TypeScript doesn't know about them
+2. **ALWAYS cast window to any first**: \`(window as any).ace\`, \`(window as any).jQuery\`
+3. **Use optional chaining**: \`(window as any).ace?.edit(element)\`
+
+CORRECT example:
+\`\`\`typescript
+await page.evaluate((json) => {
+  const aceElement = document.querySelector('.ace_editor') as any;
+  if (aceElement && aceElement.env && aceElement.env.editor) {
+    const editor = aceElement.env.editor;
+    editor.setValue(json);
+  }
+}, schemaJson);
+\`\`\`
+
+WRONG (will cause TypeScript errors):
+\`\`\`typescript
+await page.evaluate((json) => {
+  const editor = window.ace.edit(element);  // TS2339: Property 'ace' does not exist
+  jQuery('.selector');  // TS2304: Cannot find name 'jQuery'
+}, schemaJson);
+\`\`\`
 `,
 
   'drupal': `You are an expert Drupal developer. Generate code changes following Drupal coding standards.

@@ -138,6 +138,15 @@ export class ValidationGate {
         // Try to find similar content to suggest
         const suggestion = this.findSimilarContent(content, patch.search);
 
+        // Log the failed search string for debugging (first 200 chars)
+        const searchPreview = patch.search.length > 200
+          ? patch.search.substring(0, 200) + '...'
+          : patch.search;
+        if (this.debug) {
+          console.log(`[ValidationGate] Patch ${i + 1} FAILED search string (first 200 chars):`);
+          console.log(`  "${searchPreview.replace(/\n/g, '\\n')}"`);
+        }
+
         errors.push({
           type: 'patch_not_found',
           file: path.relative(process.cwd(), filePath),
