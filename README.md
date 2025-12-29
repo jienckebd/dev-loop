@@ -870,6 +870,21 @@ intervention: {
 }
 ```
 
+## Evolution Mode
+
+Evolution mode is for when you want to improve dev-loop itself while it processes tasks. This is activated explicitly by the human operator in their IDE chat (e.g., "Enter evolution mode for dev-loop").
+
+In evolution mode, the human operator:
+1. Runs dev-loop iterations with `npx dev-loop run --debug`
+2. Monitors outcomes and identifies patterns where agents fail
+3. Extends dev-loop code to address those patterns
+4. Commits and pushes improvements to the dev-loop repository
+5. Continues until PRD is 100% validated
+
+This mode is distinct from autonomous mode where dev-loop runs independently without human intervention. Evolution mode is specifically for building and improving dev-loop's capabilities based on real-world task execution.
+
+See project-specific documentation (e.g., `docs/dev-loop-cursor-integration.md`) for details on how evolution mode integrates with your IDE workflow.
+
 ## CI Output Formats
 
 dev-loop generates CI-agnostic output formats:
