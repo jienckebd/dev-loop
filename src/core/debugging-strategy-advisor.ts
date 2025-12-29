@@ -45,7 +45,9 @@ export class DebuggingStrategyAdvisor {
     const strategy = this.determineStrategy(classification, patterns, errorContext);
 
     // Check if investigation is needed
-    const needsInvestigation = this.needsInvestigation(classification, errorContext);
+    // BUT skip investigation if task already contains a clear fix instruction
+    const hasFixInstruction = this.hasExplicitFixInstruction(errorText);
+    const needsInvestigation = hasFixInstruction ? false : this.needsInvestigation(classification, errorContext);
 
     return {
       errorType: classification.type,
@@ -56,6 +58,41 @@ export class DebuggingStrategyAdvisor {
       needsInvestigation,
       investigationSteps: needsInvestigation ? this.generateInvestigationSteps(classification, patterns) : undefined,
     };
+  }
+
+  /**
+   * Check if the task description already contains a clear fix instruction.
+   * If it does, we should skip investigation and proceed directly to implementation.
+   */
+  private hasExplicitFixInstruction(text: string): boolean {
+    const upperText = text.toUpperCase();
+    
+    // Common patterns indicating a clear fix is already specified
+    const fixIndicators = [
+      'REPLACE:', 'WITH:', // Search/replace pattern
+      '## THE FIX', '## FIX', // Markdown fix section
+      'BEFORE:', 'AFTER:', // Before/after pattern
+      'CHANGE THIS:', 'TO THIS:', // Change pattern
+      'SPECIFIC FIX', // Explicit fix label
+      'SEARCH FOR THIS EXACT STRING', // Exact fix pattern
+      '$ENTITY->SAVE()', // Specific code to change
+      'LINE ', // References specific line number
+    ];
+
+    const hasFixIndicator = fixIndicators.some(indicator => upperText.includes(indicator));
+    
+    // Also check for code blocks with explicit replacements
+    const hasCodeWithReplacement = /```[\s\S]*?\$.*->save\(\)[\s\S]*?```/.test(text) ||
+                                    /REPLACE[\s\S]*?\$.*->save\(\)/i.test(text);
+
+    if (hasFixIndicator || hasCodeWithReplacement) {
+      if (this.debug) {
+        console.log('[DebuggingStrategyAdvisor] Task contains explicit fix instruction - skipping investigation');
+      }
+      return true;
+    }
+
+    return false;
   }
 
   private classifyErrorType(
