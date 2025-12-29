@@ -22,7 +22,7 @@ export interface TestPattern {
 /**
  * CodeContextProvider extracts rich, structured context from target files
  * to help AI understand existing code patterns and available helpers.
- * 
+ *
  * This prevents common AI errors like:
  * - Using non-existent function names
  * - Wrong import paths
@@ -62,7 +62,7 @@ export class CodeContextProvider {
       while ((match = pattern.exec(content)) !== null) {
         const fullMatch = match[0].trim();
         const funcName = match[1];
-        
+
         // Skip common noise
         if (['if', 'for', 'while', 'switch', 'catch', 'constructor'].includes(funcName)) {
           continue;
@@ -128,9 +128,9 @@ export class CodeContextProvider {
         imports.push(trimmed);
       }
       // Stop at first non-import, non-comment, non-empty line after imports start
-      if (imports.length > 0 && 
-          !trimmed.startsWith('import') && 
-          !trimmed.startsWith('//') && 
+      if (imports.length > 0 &&
+          !trimmed.startsWith('import') &&
+          !trimmed.startsWith('//') &&
           !trimmed.startsWith('/*') &&
           !trimmed.startsWith('*') &&
           trimmed.length > 0) {
@@ -161,7 +161,7 @@ export class CodeContextProvider {
 
     for (let i = 0; i < lines.length; i++) {
       const line = lines[i];
-      
+
       const describeMatch = line.match(testDescribePattern);
       if (describeMatch) {
         currentDescribe = describeMatch[1];
@@ -222,8 +222,8 @@ export class CodeContextProvider {
    * Get comprehensive file context for AI consumption.
    */
   async getFileContext(filePath: string): Promise<FileContext> {
-    const absolutePath = path.isAbsolute(filePath) 
-      ? filePath 
+    const absolutePath = path.isAbsolute(filePath)
+      ? filePath
       : path.resolve(process.cwd(), filePath);
 
     const [imports, signatures, testPatterns, skeleton] = await Promise.all([
@@ -320,7 +320,7 @@ export class CodeContextProvider {
 
     const content = await fs.readFile(absolutePath, 'utf-8');
     const allLines = content.split('\n');
-    
+
     // Find the line containing the pattern
     const searchLower = searchPattern.toLowerCase();
     for (let i = 0; i < allLines.length; i++) {
@@ -328,7 +328,7 @@ export class CodeContextProvider {
         const start = Math.max(0, i - contextLines);
         const end = Math.min(allLines.length, i + contextLines + 1);
         const extractedLines = allLines.slice(start, end).join('\n');
-        
+
         return {
           found: true,
           lines: extractedLines,
@@ -358,11 +358,11 @@ export class CodeContextProvider {
 
     const content = await fs.readFile(absolutePath, 'utf-8');
     const allLines = content.split('\n');
-    
+
     // Convert to 0-indexed
     const start = Math.max(0, startLine - 1);
     const end = Math.min(allLines.length, endLine);
-    
+
     return allLines.slice(start, end).join('\n');
   }
 
@@ -372,7 +372,7 @@ export class CodeContextProvider {
    * - File size info (to know if patches are required vs update)
    * - Last N lines of the file (common append location)
    * - Specific sections if keywords are provided
-   * 
+   *
    * Used when agents need to modify large files via patches.
    */
   async getPatchContext(
@@ -397,13 +397,13 @@ export class CodeContextProvider {
     const allLines = content.split('\n');
     const lineCount = allLines.length;
     const charCount = content.length;
-    
+
     // Files over 500 lines or 50KB should use patch operation
     const requiresPatch = lineCount > 500 || charCount > 50000;
-    
+
     // Get last N lines (common location for appending new content)
     const endStart = Math.max(0, lineCount - contextLines);
-    const endOfFile = allLines.slice(endStart).map((line, i) => 
+    const endOfFile = allLines.slice(endStart).map((line, i) =>
       `${endStart + i + 1}|${line}`
     ).join('\n');
 

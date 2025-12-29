@@ -99,7 +99,51 @@ export class WorkflowEngine {
         return { completed: false, noTasks: true };
       }
 
-      const task = tasks[0];
+      // Filter tasks: find code-generation tasks vs validation-only tasks
+      const validationOnlyStrategies = ['browser', 'drush', 'playwright', 'manual'];
+
+      // Find the first code task (testStrategy is 'code', undefined, or not in validation list)
+      let task: Task | undefined;
+      const skippedValidationTasks: string[] = [];
+
+      for (const t of tasks) {
+        const testStrategy = (t as any).testStrategy as string | undefined;
+        if (testStrategy && validationOnlyStrategies.includes(testStrategy)) {
+          // This is a validation/testing task - skip and log
+          skippedValidationTasks.push(`${t.id} (${testStrategy}): ${t.title}`);
+          continue;
+        }
+        // Found a code task
+        task = t;
+        break;
+      }
+
+      // Log skipped validation tasks
+      if (skippedValidationTasks.length > 0) {
+        console.log(`\n[INFO] Skipping ${skippedValidationTasks.length} validation task(s) - require external execution:`);
+        for (const skipped of skippedValidationTasks) {
+          console.log(`  - ${skipped}`);
+        }
+        console.log('');
+      }
+
+      // If no code tasks found, report what's blocking
+      if (!task) {
+        logger.info('[WorkflowEngine] No code-generation tasks available');
+        if (skippedValidationTasks.length > 0) {
+          console.log('[INFO] All pending tasks are validation tasks that require external execution.');
+          console.log('[INFO] Run browser/drush/playwright tests manually, then mark tasks as done.');
+        }
+        await this.updateState({ status: 'idle' });
+        return {
+          completed: false,
+          noTasks: true, // Effectively no tasks dev-loop can process
+          error: skippedValidationTasks.length > 0
+            ? `Only validation tasks remain (${skippedValidationTasks.length} pending)`
+            : undefined,
+        };
+      }
+
       await this.updateState({
         status: 'executing-ai',
         currentTask: task,
@@ -280,7 +324,7 @@ export class WorkflowEngine {
 
           // Create fix task with validation errors AND file context for patch failures
           const errorDescription = this.validationGate.formatErrorsForAI(validationResult);
-          
+
           // For patch_not_found errors, include actual file content
           let fileContextForFix = '';
           const patchErrors = validationResult.errors.filter(e => e.type === 'patch_not_found');
@@ -302,7 +346,7 @@ export class WorkflowEngine {
               }
             }
           }
-          
+
           const fixTask = await this.taskBridge.createFixTask(
             task.id,
             `Pre-apply validation failed:\n${errorDescription}${fileContextForFix}`,
@@ -782,6 +826,13 @@ export class WorkflowEngine {
       console.log(`[DEBUG] Max context chars from config: ${maxContextChars}`);
     }
 
+    // Determine the primary file - the first explicitly mentioned file is the one being modified
+    const primaryFile = mentionedFiles.find(f => {
+      const taskLower = `${task.title} ${task.description || ''} ${(task as any).details || ''}`.toLowerCase();
+      return taskLower.includes(f.toLowerCase()) ||
+             taskLower.includes(path.basename(f).toLowerCase());
+    }) || mentionedFiles[0];
+
     // Load mentioned files (prioritize first files, which are usually most relevant)
     for (const file of mentionedFiles) {
       // Stop if we've exceeded max context size
@@ -796,9 +847,42 @@ export class WorkflowEngine {
           const content = await fs.readFile(filePath, 'utf-8');
           validFiles.push(file);
 
-          // For large files, extract relevant sections based on task keywords
+          // For the PRIMARY file being modified, ALWAYS include full content
+          // This ensures the AI can generate exact patch strings
+          const isPrimaryFile = file === primaryFile;
           let fileContext: string;
-          if (content.length > 15000) {
+
+          if (isPrimaryFile && content.length < 100000) {
+            // Primary file under 100KB: include full content (numbered lines for patch accuracy)
+            const numberedContent = content.split('\n').map((line, i) => `${i + 1}|${line}`).join('\n');
+            fileContext = `\n### PRIMARY FILE TO MODIFY: ${file}\n### FULL CONTENT (use exact strings for patches):\n${numberedContent}`;
+            existingCodeSections.push(`\n### ${file} (FULL - PRIMARY FILE):\n${numberedContent}`);
+            if (this.debug) {
+              console.log(`[DEBUG] Including FULL content of primary file: ${file} (${content.length} chars)`);
+            }
+          } else if (isPrimaryFile) {
+            // Primary file over 100KB: include end of file for appending + relevant sections
+            const lines = content.split('\n');
+            const endLines = Math.min(100, lines.length);
+            const endOfFile = lines.slice(-endLines).map((line, i) => `${lines.length - endLines + i + 1}|${line}`).join('\n');
+
+            // Extract relevant sections based on task keywords
+            const keywords = this.extractKeywordsFromTask(task);
+            const relevantSections = this.extractRelevantSections(content, keywords, file) || '';
+
+            fileContext = `\n### PRIMARY FILE TO MODIFY: ${file} (${lines.length} lines, ${content.length} chars)\n`;
+            fileContext += `### FOR APPENDING - END OF FILE (last ${endLines} lines):\n${endOfFile}\n`;
+            if (relevantSections) {
+              fileContext += `\n### RELEVANT SECTIONS:\n${relevantSections}`;
+            }
+            fileContext += `\n### PATCH GUIDANCE: This file is large. Copy exact line content for search strings.`;
+
+            existingCodeSections.push(fileContext);
+            if (this.debug) {
+              console.log(`[DEBUG] Including END + RELEVANT sections of large primary file: ${file} (${content.length} chars)`);
+            }
+          } else if (content.length > 15000) {
+            // Non-primary large files: extract relevant sections
             const keywords = this.extractKeywordsFromTask(task);
             const relevantSections = this.extractRelevantSections(content, keywords, file);
 

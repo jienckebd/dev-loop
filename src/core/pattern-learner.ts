@@ -19,7 +19,7 @@ export interface PatternMatch {
 /**
  * PatternLearningSystem remembers common failure patterns and injects
  * guidance into AI prompts to prevent repeating the same mistakes.
- * 
+ *
  * Patterns are learned from:
  * 1. Validation failures (patch not found, syntax errors)
  * 2. Test failures (repeated error messages)
@@ -142,7 +142,7 @@ export class PatternLearningSystem {
    */
   async save(): Promise<void> {
     await fs.ensureDir(path.dirname(this.patternsPath));
-    
+
     const data = {
       version: 1,
       lastUpdated: new Date().toISOString(),
