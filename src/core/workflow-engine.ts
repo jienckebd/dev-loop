@@ -278,11 +278,34 @@ export class WorkflowEngine {
             );
           }
 
-          // Create fix task with validation errors
+          // Create fix task with validation errors AND file context for patch failures
           const errorDescription = this.validationGate.formatErrorsForAI(validationResult);
+          
+          // For patch_not_found errors, include actual file content
+          let fileContextForFix = '';
+          const patchErrors = validationResult.errors.filter(e => e.type === 'patch_not_found');
+          if (patchErrors.length > 0) {
+            for (const error of patchErrors) {
+              try {
+                const patchContext = await this.codeContextProvider.getPatchContext(
+                  error.file,
+                  undefined,
+                  20 // Show 20 lines at end of file
+                );
+                if (patchContext) {
+                  fileContextForFix += `\n\n## Actual content of ${error.file} (${patchContext.fileInfo.lineCount} lines)\n`;
+                  fileContextForFix += patchContext.guidance;
+                  fileContextForFix += `\n\n### End of file:\n\`\`\`\n${patchContext.endOfFile}\n\`\`\``;
+                }
+              } catch (err) {
+                // Ignore
+              }
+            }
+          }
+          
           const fixTask = await this.taskBridge.createFixTask(
             task.id,
-            `Pre-apply validation failed:\n${errorDescription}`,
+            `Pre-apply validation failed:\n${errorDescription}${fileContextForFix}`,
             validationResult.errors.map(e => e.message).join('\n')
           );
 
@@ -332,11 +355,34 @@ export class WorkflowEngine {
         const patchErrors = applyResult.failedPatches.join('\n');
         console.error('[WorkflowEngine] Failed patches:\n' + patchErrors);
 
-        // Create fix task with patch failure details
+        // Create fix task with patch failure details AND actual file content
         await this.updateState({ status: 'creating-fix-task' });
+
+        // Extract actual file content for failed patches to help next agent
+        let fileContextForFix = '';
+        for (const file of changes.files) {
+          if (file.operation === 'patch' && file.patches) {
+            try {
+              const patchContext = await this.codeContextProvider.getPatchContext(
+                file.path,
+                undefined, // No keywords, we want general context
+                15 // Show 15 lines at end of file
+              );
+              if (patchContext) {
+                fileContextForFix += `\n\n## File: ${file.path} (${patchContext.fileInfo.lineCount} lines)\n`;
+                fileContextForFix += patchContext.guidance;
+                fileContextForFix += `\n\n### End of file (lines ${patchContext.fileInfo.lineCount - 14}-${patchContext.fileInfo.lineCount}):\n`;
+                fileContextForFix += '```\n' + patchContext.endOfFile + '\n```';
+              }
+            } catch (err) {
+              // Ignore context extraction errors
+            }
+          }
+        }
+
         const fixTask = await this.taskBridge.createFixTask(
           task.id,
-          `Patches failed to apply:\n${patchErrors}\n\nThe search strings in the patches did not match the actual file content. Review the existing code context and generate patches with EXACT matching search strings.`,
+          `Patches failed to apply:\n${patchErrors}\n\nThe search strings in the patches did not match the actual file content.\n\n**CRITICAL**: Copy the search string EXACTLY from the file content below. Do not guess or approximate.${fileContextForFix}`,
           patchErrors
         );
 

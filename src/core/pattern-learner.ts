@@ -63,8 +63,15 @@ export class PatternLearningSystem {
     },
     {
       id: 'replaced-file-content',
-      pattern: 'entire file content|replaced entire|overwrote file|used.*content.*instead of.*patch',
-      guidance: 'Use PATCH operations for existing files. Never replace entire file contents. Only add or modify specific sections.',
+      pattern: 'entire file content|replaced entire|overwrote file|used.*content.*instead of.*patch|Destructive update detected',
+      guidance: 'Use PATCH operations for existing files over 500 lines. Never replace entire file contents. Only add or modify specific sections using search/replace patches.',
+      occurrences: 0,
+      lastSeen: '',
+    },
+    {
+      id: 'large-file-patch-required',
+      pattern: 'schema\\.yml|bd\\.schema\\.yml|9\\d{3} lines|large file|over 500 lines',
+      guidance: 'For files over 500 lines (like bd.schema.yml with 9000+ lines), you MUST use operation "patch" with search/replace. Copy the EXACT search string from the file context provided. To append to a YAML file, use the last few lines of the file as your search string and add your new content after them in the replace string.',
       occurrences: 0,
       lastSeen: '',
     },

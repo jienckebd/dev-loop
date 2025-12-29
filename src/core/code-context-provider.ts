@@ -233,11 +233,11 @@ export class CodeContextProvider {
       this.generateSkeleton(absolutePath),
     ]);
 
-    // Include full content for small files
+    // Include full content for files under 50KB (increased from 20KB for better patch context)
     let fullContent: string | undefined;
     if (await fs.pathExists(absolutePath)) {
       const content = await fs.readFile(absolutePath, 'utf-8');
-      if (content.length < 20000) { // Under 20KB
+      if (content.length < 50000) { // Under 50KB - enough for most source files
         fullContent = content;
       }
     }
@@ -364,5 +364,94 @@ export class CodeContextProvider {
     const end = Math.min(allLines.length, endLine);
     
     return allLines.slice(start, end).join('\n');
+  }
+
+  /**
+   * Get comprehensive patch context for a file.
+   * This provides everything an AI agent needs to construct valid patches:
+   * - File size info (to know if patches are required vs update)
+   * - Last N lines of the file (common append location)
+   * - Specific sections if keywords are provided
+   * 
+   * Used when agents need to modify large files via patches.
+   */
+  async getPatchContext(
+    filePath: string,
+    keywords?: string[],
+    contextLines: number = 10
+  ): Promise<{
+    fileInfo: { path: string; lineCount: number; charCount: number; requiresPatch: boolean };
+    endOfFile: string;
+    keywordSections: { keyword: string; context: string; lineNumber: number }[];
+    guidance: string;
+  } | null> {
+    const absolutePath = path.isAbsolute(filePath)
+      ? filePath
+      : path.resolve(process.cwd(), filePath);
+
+    if (!await fs.pathExists(absolutePath)) {
+      return null;
+    }
+
+    const content = await fs.readFile(absolutePath, 'utf-8');
+    const allLines = content.split('\n');
+    const lineCount = allLines.length;
+    const charCount = content.length;
+    
+    // Files over 500 lines or 50KB should use patch operation
+    const requiresPatch = lineCount > 500 || charCount > 50000;
+    
+    // Get last N lines (common location for appending new content)
+    const endStart = Math.max(0, lineCount - contextLines);
+    const endOfFile = allLines.slice(endStart).map((line, i) => 
+      `${endStart + i + 1}|${line}`
+    ).join('\n');
+
+    // Find keyword sections
+    const keywordSections: { keyword: string; context: string; lineNumber: number }[] = [];
+    if (keywords && keywords.length > 0) {
+      for (const keyword of keywords) {
+        const result = await this.extractLinesAroundPattern(absolutePath, keyword, contextLines);
+        if (result && result.found) {
+          keywordSections.push({
+            keyword,
+            context: result.lines,
+            lineNumber: result.startLine,
+          });
+        }
+      }
+    }
+
+    // Generate guidance for the AI
+    const guidance = requiresPatch
+      ? `## PATCH OPERATION REQUIRED for ${filePath}
+
+This file has ${lineCount} lines (${Math.round(charCount / 1024)}KB). You MUST use operation "patch" with search/replace.
+
+CRITICAL PATCH RULES:
+1. The "search" string must EXACTLY match content in the file (including whitespace, newlines)
+2. Copy the search string VERBATIM from the file context provided
+3. Use minimal context - just enough lines to uniquely identify the location
+4. For appending at end of file, use the last few lines as your search string
+
+Example patch format:
+{
+  "path": "${filePath}",
+  "operation": "patch",
+  "patches": [
+    {
+      "search": "// Exact content from file\\n// that you want to find",
+      "replace": "// Exact content from file\\n// that you want to find\\n// Plus your new code"
+    }
+  ]
+}`
+      : `File ${filePath} (${lineCount} lines) can use "update" operation with full content.`;
+
+    return {
+      fileInfo: { path: filePath, lineCount, charCount, requiresPatch },
+      endOfFile,
+      keywordSections,
+      guidance,
+    };
   }
 }
