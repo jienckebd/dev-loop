@@ -651,12 +651,21 @@ export class WorkflowEngine {
       // Record patch metrics
       if (this.debugMetrics && changes.files) {
         const totalPatches = changes.files.reduce((sum, file) => sum + (file.patches?.length || 0), 0);
-        const succeeded = totalPatches - applyResult.failedPatches.length;
+        const succeeded = totalPatches - applyResult.failedPatches.length - (applyResult.skippedPatches?.length || 0);
         const failed = applyResult.failedPatches.length;
+        const skipped = applyResult.skippedPatches?.length || 0;
         this.debugMetrics.recordPatches(totalPatches, succeeded, failed);
+        if (skipped > 0 && this.debug) {
+          console.log(`[WorkflowEngine] ${skipped} patches skipped (duplicate methods prevented)`);
+        }
       }
 
-      if (!applyResult.success) {
+      // Check if all patches were skipped (this is actually a success - we prevented errors)
+      const allSkipped = applyResult.skippedPatches && applyResult.skippedPatches.length > 0 && 
+                        applyResult.failedPatches.length === 0 &&
+                        changes.files.some(f => f.patches && f.patches.length === applyResult.skippedPatches.length);
+
+      if (!applyResult.success && !allSkipped) {
         console.error('[WorkflowEngine] Some patches failed to apply');
         // Include failed patches in error context for next task
         const patchErrors = applyResult.failedPatches.join('\n');
@@ -1062,8 +1071,9 @@ export class WorkflowEngine {
     }
   }
 
-  private async applyChanges(changes: CodeChanges): Promise<{ success: boolean; failedPatches: string[] }> {
+  private async applyChanges(changes: CodeChanges): Promise<{ success: boolean; failedPatches: string[]; skippedPatches: string[] }> {
     const failedPatches: string[] = [];
+    const skippedPatches: string[] = [];
 
     for (const file of changes.files) {
       const filePath = path.resolve(process.cwd(), file.path);
@@ -1078,6 +1088,7 @@ export class WorkflowEngine {
           const originalContent = await fs.readFile(filePath, 'utf-8');
           let content = originalContent;
           let patchesApplied = 0;
+          let patchesSkipped = 0;
           const fileExtension = path.extname(filePath);
 
           for (let i = 0; i < file.patches.length; i++) {
@@ -1087,9 +1098,10 @@ export class WorkflowEngine {
             // Enhancement 2: Check for duplicate method declarations before applying patch
             if (fileExtension === '.php' && this.wouldCreateDuplicateMethod(content, patch.replace)) {
               const methodName = this.extractMethodNameFromPatch(patch.replace);
-              const errorMsg = `PATCH_SKIPPED: File ${file.path}, patch ${i + 1}: Would create duplicate method "${methodName}". Method already exists.`;
-              console.warn(`[WorkflowEngine] ${errorMsg}`);
-              failedPatches.push(errorMsg);
+              const skipMsg = `PATCH_SKIPPED: File ${file.path}, patch ${i + 1}: Would create duplicate method "${methodName}". Method already exists.`;
+              console.warn(`[WorkflowEngine] ${skipMsg}`);
+              skippedPatches.push(skipMsg);
+              patchesSkipped++;
               continue;
             }
 
@@ -1149,7 +1161,15 @@ export class WorkflowEngine {
           }
 
           if (patchesApplied > 0) {
-            console.log(`[WorkflowEngine] Applied ${patchesApplied}/${file.patches.length} patches to ${file.path}`);
+            const statusMsg = `[WorkflowEngine] Applied ${patchesApplied}/${file.patches.length} patches to ${file.path}`;
+            if (patchesSkipped > 0) {
+              console.log(`${statusMsg} (${patchesSkipped} skipped due to duplicate methods)`);
+            } else {
+              console.log(statusMsg);
+            }
+          } else if (patchesSkipped === file.patches.length && file.patches.length > 0) {
+            // All patches were skipped (duplicate methods) - this is actually a success
+            console.log(`[WorkflowEngine] All ${file.patches.length} patches skipped for ${file.path} (duplicate methods prevented - this is expected)`);
           } else if (file.patches.length > 0) {
             console.error(`[WorkflowEngine] NO patches applied to ${file.path} - all ${file.patches.length} patches failed`);
           }
@@ -1171,9 +1191,11 @@ export class WorkflowEngine {
       }
     }
 
+    // Task is successful if no patches failed (skipped patches are OK - they prevented errors)
     return {
       success: failedPatches.length === 0,
-      failedPatches
+      failedPatches,
+      skippedPatches
     };
   }
 
@@ -1986,11 +2008,19 @@ export class WorkflowEngine {
           const changes = await this.aiProvider.generateCode(template, taskContext);
           const applyResult = await this.applyChanges(changes);
 
-          if (applyResult.success) {
+          // Check if task succeeded (no failed patches) or if all patches were skipped (also success)
+          const allSkipped = applyResult.skippedPatches && applyResult.skippedPatches.length > 0 && 
+                            applyResult.failedPatches.length === 0;
+          
+          if (applyResult.success || allSkipped) {
+            if (allSkipped) {
+              console.log(`[WorkflowEngine] Task ${task.id} completed: all patches skipped (duplicate methods prevented)`);
+            }
+            
             changesApplied.push({
               path: changes.files?.[0]?.path || 'unknown',
               operation: changes.files?.[0]?.operation || 'update',
-              summary: changes.summary || 'Code changes applied',
+              summary: changes.summary || (allSkipped ? 'Patches skipped (duplicate methods prevented)' : 'Code changes applied'),
             });
 
             // Run post-apply hooks
@@ -2001,20 +2031,23 @@ export class WorkflowEngine {
             await this.taskBridge.updateTaskStatus(task.id, 'done');
           } else {
             console.warn(`[WorkflowEngine] Failed to apply changes for task ${task.id}`);
-
+            if (applyResult.failedPatches.length > 0) {
+              console.warn(`[WorkflowEngine] Failed patches: ${applyResult.failedPatches.slice(0, 3).join('; ')}`);
+            }
+            
             // Enhancement 5: Record failed approach in context
             const failedPatchesSummary = applyResult.failedPatches
               .slice(0, 3)
               .map(p => p.substring(0, 100))
               .join('; ');
-
+            
             context.knowledge.failedApproaches.push({
               id: `failed-${Date.now()}-${task.id}`,
               description: `Task ${task.id}: ${task.title}`,
               reason: `Patches failed: ${failedPatchesSummary || 'Unknown error'}`,
               attemptedAt: new Date().toISOString(),
             });
-
+            
             // Keep only last 20 failed approaches to prevent context bloat
             if (context.knowledge.failedApproaches.length > 20) {
               context.knowledge.failedApproaches = context.knowledge.failedApproaches.slice(-20);
