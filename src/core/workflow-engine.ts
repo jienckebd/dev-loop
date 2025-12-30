@@ -661,7 +661,7 @@ export class WorkflowEngine {
       }
 
       // Check if all patches were skipped (this is actually a success - we prevented errors)
-      const allSkipped = applyResult.skippedPatches && applyResult.skippedPatches.length > 0 && 
+      const allSkipped = applyResult.skippedPatches && applyResult.skippedPatches.length > 0 &&
                         applyResult.failedPatches.length === 0 &&
                         changes.files.some(f => f.patches && f.patches.length === applyResult.skippedPatches.length);
 
@@ -1342,20 +1342,20 @@ export class WorkflowEngine {
    * even when exact and fuzzy matching fail
    */
   private findAggressiveMatch(
-    content: string, 
-    search: string, 
+    content: string,
+    search: string,
     replace: string
   ): { newContent: string; lineNumber: number } | null {
     const searchLines = search.split('\n');
     const contentLines = content.split('\n');
-    
+
     if (searchLines.length === 0) return null;
-    
+
     // Strategy 1: Find a unique identifier in the search string (method name, variable, etc.)
     const identifierMatch = search.match(/(?:function|class|const|public|private|protected)\s+([a-zA-Z_][a-zA-Z0-9_]*)/);
     if (identifierMatch) {
       const identifier = identifierMatch[1];
-      
+
       // Find lines containing this identifier
       for (let i = 0; i < contentLines.length; i++) {
         if (contentLines[i].includes(identifier)) {
@@ -1364,25 +1364,25 @@ export class WorkflowEngine {
           const contextStart = Math.max(0, i - 5);
           const contextEnd = Math.min(contentLines.length, i + searchLines.length + 5);
           const contextBlock = contentLines.slice(contextStart, contextEnd).join('\n');
-          
+
           // Check similarity of context to search string
           const similarity = this.calculateSimilarity(
             contextBlock.replace(/\s+/g, ' ').trim().substring(0, 500),
             search.replace(/\s+/g, ' ').trim().substring(0, 500)
           );
-          
+
           if (similarity > 0.5) {
             // Found a good match - try to determine the exact replacement range
             const replaceStart = i;
             const replaceEnd = Math.min(contentLines.length, i + searchLines.length);
-            
+
             // Create new content with the replacement
             const newLines = [
               ...contentLines.slice(0, replaceStart),
               replace,
               ...contentLines.slice(replaceEnd)
             ];
-            
+
             return {
               newContent: newLines.join('\n'),
               lineNumber: i + 1
@@ -1391,19 +1391,19 @@ export class WorkflowEngine {
         }
       }
     }
-    
+
     // Strategy 2: Look for first and last line anchors
     const firstSearchLine = searchLines[0].trim();
     const lastSearchLine = searchLines[searchLines.length - 1].trim();
-    
+
     if (firstSearchLine.length > 15 && lastSearchLine.length > 15) {
       for (let i = 0; i < contentLines.length - searchLines.length; i++) {
         const contentFirstLine = contentLines[i].trim();
         const contentLastLine = contentLines[i + searchLines.length - 1]?.trim() || '';
-        
+
         const firstSimilarity = this.calculateSimilarity(firstSearchLine, contentFirstLine);
         const lastSimilarity = this.calculateSimilarity(lastSearchLine, contentLastLine);
-        
+
         if (firstSimilarity > 0.8 && lastSimilarity > 0.8) {
           // Found matching anchors
           const newLines = [
@@ -1411,7 +1411,7 @@ export class WorkflowEngine {
             replace,
             ...contentLines.slice(i + searchLines.length)
           ];
-          
+
           return {
             newContent: newLines.join('\n'),
             lineNumber: i + 1
@@ -1419,7 +1419,7 @@ export class WorkflowEngine {
         }
       }
     }
-    
+
     return null;
   }
 
@@ -1443,14 +1443,14 @@ export class WorkflowEngine {
     const methodNames: string[] = [];
     const methodPattern = /(?:public|protected|private|static)\s+function\s+([a-zA-Z_][a-zA-Z0-9_]*)\s*\(/g;
     let match;
-    
+
     while ((match = methodPattern.exec(content)) !== null) {
       const methodName = match[1];
       if (!methodNames.includes(methodName)) {
         methodNames.push(methodName);
       }
     }
-    
+
     return methodNames.sort();
   }
 
@@ -2137,14 +2137,14 @@ export class WorkflowEngine {
           const applyResult = await this.applyChanges(changes);
 
           // Check if task succeeded (no failed patches) or if all patches were skipped (also success)
-          const allSkipped = applyResult.skippedPatches && applyResult.skippedPatches.length > 0 && 
+          const allSkipped = applyResult.skippedPatches && applyResult.skippedPatches.length > 0 &&
                             applyResult.failedPatches.length === 0;
-          
+
           if (applyResult.success || allSkipped) {
             if (allSkipped) {
               console.log(`[WorkflowEngine] Task ${task.id} completed: all patches skipped (duplicate methods prevented)`);
             }
-            
+
             changesApplied.push({
               path: changes.files?.[0]?.path || 'unknown',
               operation: changes.files?.[0]?.operation || 'update',
@@ -2162,20 +2162,20 @@ export class WorkflowEngine {
             if (applyResult.failedPatches.length > 0) {
               console.warn(`[WorkflowEngine] Failed patches: ${applyResult.failedPatches.slice(0, 3).join('; ')}`);
             }
-            
+
             // Enhancement 5: Record failed approach in context
             const failedPatchesSummary = applyResult.failedPatches
               .slice(0, 3)
               .map(p => p.substring(0, 100))
               .join('; ');
-            
+
             context.knowledge.failedApproaches.push({
               id: `failed-${Date.now()}-${task.id}`,
               description: `Task ${task.id}: ${task.title}`,
               reason: `Patches failed: ${failedPatchesSummary || 'Unknown error'}`,
               attemptedAt: new Date().toISOString(),
             });
-            
+
             // Keep only last 20 failed approaches to prevent context bloat
             if (context.knowledge.failedApproaches.length > 20) {
               context.knowledge.failedApproaches = context.knowledge.failedApproaches.slice(-20);
