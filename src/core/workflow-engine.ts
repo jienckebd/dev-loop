@@ -1113,11 +1113,16 @@ export class WorkflowEngine {
               patchApplied = true;
             } else {
               // Try fuzzy matching with whitespace tolerance
+              if (this.debug) {
+                console.log(`[WorkflowEngine] Exact match failed for patch ${i + 1}, attempting fuzzy match...`);
+              }
               const fuzzyMatch = this.findFuzzyMatch(content, patch.search);
               if (fuzzyMatch) {
                 content = content.replace(fuzzyMatch, patch.replace);
                 console.log(`[WorkflowEngine] Applied patch ${i + 1} using fuzzy match (whitespace tolerance)`);
                 patchApplied = true;
+              } else if (this.debug) {
+                console.log(`[WorkflowEngine] Fuzzy match also failed for patch ${i + 1}`);
               }
             }
 
@@ -1141,20 +1146,44 @@ export class WorkflowEngine {
                 failedPatches.push(errorMsg);
               }
             } else {
-              // Log detailed failure information for AI to learn from
-              const searchPreview = patch.search.substring(0, 150).replace(/\n/g, '\\n');
-              const errorMsg = `PATCH_FAILED: File ${file.path}, patch ${i + 1}: Search string not found. Looking for: "${searchPreview}"`;
-              console.error(`[WorkflowEngine] ${errorMsg}`);
-              failedPatches.push(errorMsg);
+              // Try aggressive content-based matching as last resort
+              const aggressiveMatch = this.findAggressiveMatch(content, patch.search, patch.replace);
+              if (aggressiveMatch) {
+                content = aggressiveMatch.newContent;
+                console.log(`[WorkflowEngine] Applied patch ${i + 1} using aggressive matching (line ${aggressiveMatch.lineNumber})`);
+                patchApplied = true;
+                
+                // Validate syntax after aggressive match
+                const tempFilePath = `${filePath}.tmp`;
+                await fs.writeFile(tempFilePath, content, 'utf-8');
+                const isValid = await this.validateFileSyntax(tempFilePath);
+                
+                if (isValid) {
+                  await fs.move(tempFilePath, filePath, { overwrite: true });
+                  patchesApplied++;
+                } else {
+                  await fs.remove(tempFilePath);
+                  content = patchContentBefore;
+                  const errorMsg = `PATCH_REVERTED: File ${file.path}, patch ${i + 1}: Aggressive match caused syntax error`;
+                  console.error(`[WorkflowEngine] ${errorMsg}`);
+                  failedPatches.push(errorMsg);
+                }
+              } else {
+                // Log detailed failure information for AI to learn from
+                const searchPreview = patch.search.substring(0, 150).replace(/\n/g, '\\n');
+                const errorMsg = `PATCH_FAILED: File ${file.path}, patch ${i + 1}: Search string not found. Looking for: "${searchPreview}"`;
+                console.error(`[WorkflowEngine] ${errorMsg}`);
+                failedPatches.push(errorMsg);
 
-              // Try to find similar content to help debug
-              const firstLine = patch.search.split('\n')[0].trim();
-              if (firstLine.length > 10) {
-                const similarLines = content.split('\n')
-                  .map((line, idx) => ({ line: line.trim(), idx }))
-                  .filter(({ line }) => line.includes(firstLine.substring(0, 20)));
-                if (similarLines.length > 0) {
-                  console.error(`[WorkflowEngine] Similar content found at lines: ${similarLines.map(s => s.idx + 1).join(', ')}`);
+                // Try to find similar content to help debug
+                const firstLine = patch.search.split('\n')[0].trim();
+                if (firstLine.length > 10) {
+                  const similarLines = content.split('\n')
+                    .map((line, idx) => ({ line: line.trim(), idx }))
+                    .filter(({ line }) => line.includes(firstLine.substring(0, 20)));
+                  if (similarLines.length > 0) {
+                    console.error(`[WorkflowEngine] Similar content found at lines: ${similarLines.map(s => s.idx + 1).join(', ')}`);
+                  }
                 }
               }
             }
@@ -1238,6 +1267,16 @@ export class WorkflowEngine {
     const methodName = this.extractMethodNameFromPatch(patchReplace);
     if (!methodName) return false;
 
+    // Special case: __construct is almost always a duplicate in existing classes
+    // Skip these patches by default as they cause cascading issues
+    if (methodName === '__construct' || methodName === '__destruct') {
+      // Only consider it a duplicate if the class already has a constructor
+      const constructorPattern = /(?:public|protected|private)?\s*function\s+__construct\s*\(/;
+      if (constructorPattern.test(content)) {
+        return true;
+      }
+    }
+
     // Check if method already exists in content
     // Match PHP method declarations: public/protected/private function methodName(
     const methodPattern = new RegExp(`(?:public|protected|private)\\s+function\\s+${methodName}\\s*\\(`, 'g');
@@ -1319,6 +1358,92 @@ export class WorkflowEngine {
       return candidates[0].match;
     }
 
+    return null;
+  }
+
+  /**
+   * Aggressive content matching - try to find the right place to apply a patch
+   * even when exact and fuzzy matching fail
+   */
+  private findAggressiveMatch(
+    content: string, 
+    search: string, 
+    replace: string
+  ): { newContent: string; lineNumber: number } | null {
+    const searchLines = search.split('\n');
+    const contentLines = content.split('\n');
+    
+    if (searchLines.length === 0) return null;
+    
+    // Strategy 1: Find a unique identifier in the search string (method name, variable, etc.)
+    const identifierMatch = search.match(/(?:function|class|const|public|private|protected)\s+([a-zA-Z_][a-zA-Z0-9_]*)/);
+    if (identifierMatch) {
+      const identifier = identifierMatch[1];
+      
+      // Find lines containing this identifier
+      for (let i = 0; i < contentLines.length; i++) {
+        if (contentLines[i].includes(identifier)) {
+          // Check if this looks like the right context
+          // Get context around the identifier
+          const contextStart = Math.max(0, i - 5);
+          const contextEnd = Math.min(contentLines.length, i + searchLines.length + 5);
+          const contextBlock = contentLines.slice(contextStart, contextEnd).join('\n');
+          
+          // Check similarity of context to search string
+          const similarity = this.calculateSimilarity(
+            contextBlock.replace(/\s+/g, ' ').trim().substring(0, 500),
+            search.replace(/\s+/g, ' ').trim().substring(0, 500)
+          );
+          
+          if (similarity > 0.5) {
+            // Found a good match - try to determine the exact replacement range
+            const replaceStart = i;
+            const replaceEnd = Math.min(contentLines.length, i + searchLines.length);
+            
+            // Create new content with the replacement
+            const newLines = [
+              ...contentLines.slice(0, replaceStart),
+              replace,
+              ...contentLines.slice(replaceEnd)
+            ];
+            
+            return {
+              newContent: newLines.join('\n'),
+              lineNumber: i + 1
+            };
+          }
+        }
+      }
+    }
+    
+    // Strategy 2: Look for first and last line anchors
+    const firstSearchLine = searchLines[0].trim();
+    const lastSearchLine = searchLines[searchLines.length - 1].trim();
+    
+    if (firstSearchLine.length > 15 && lastSearchLine.length > 15) {
+      for (let i = 0; i < contentLines.length - searchLines.length; i++) {
+        const contentFirstLine = contentLines[i].trim();
+        const contentLastLine = contentLines[i + searchLines.length - 1]?.trim() || '';
+        
+        const firstSimilarity = this.calculateSimilarity(firstSearchLine, contentFirstLine);
+        const lastSimilarity = this.calculateSimilarity(lastSearchLine, contentLastLine);
+        
+        if (firstSimilarity > 0.8 && lastSimilarity > 0.8) {
+          // Found matching anchors
+          const newLines = [
+            ...contentLines.slice(0, i),
+            replace,
+            ...contentLines.slice(i + searchLines.length)
+          ];
+          
+          return {
+            newContent: newLines.join('\n'),
+            lineNumber: i + 1
+          };
+        }
+      }
+    }
+    
     return null;
   }
 
