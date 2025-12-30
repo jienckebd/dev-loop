@@ -1071,12 +1071,36 @@ export class WorkflowEngine {
     }
   }
 
+  // Files that should never be modified by autonomous PRD execution
+  private readonly protectedFiles = [
+    'playwright.config.ts',
+    'playwright.config.js',
+    'global-setup.ts',
+    'global-teardown.ts',
+    'package.json',
+    'package-lock.json',
+    'tsconfig.json',
+    'composer.json',
+    'composer.lock',
+  ];
+
   private async applyChanges(changes: CodeChanges): Promise<{ success: boolean; failedPatches: string[]; skippedPatches: string[] }> {
     const failedPatches: string[] = [];
     const skippedPatches: string[] = [];
 
     for (const file of changes.files) {
       const filePath = path.resolve(process.cwd(), file.path);
+
+      // Check if file is protected from modifications
+      const fileName = path.basename(file.path);
+      if (this.protectedFiles.includes(fileName) || 
+          file.path.includes('global-setup') || 
+          file.path.includes('global-teardown')) {
+        const skipMsg = `PROTECTED_FILE_SKIPPED: ${file.path} is protected and cannot be modified`;
+        console.warn(`[WorkflowEngine] ${skipMsg}`);
+        skippedPatches.push(skipMsg);
+        continue;
+      }
 
       if (file.operation === 'delete') {
         if (await fs.pathExists(filePath)) {
