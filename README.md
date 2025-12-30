@@ -983,6 +983,145 @@ Instead, configure project-specific behavior in:
 - `.taskmaster/templates/` - PRD and task templates
 - Project rules files (CLAUDE.md, .cursorrules) - Rules injected into prompts
 
+## Task Master MCP Integration
+
+Task Master can run as an MCP (Model Context Protocol) server, enabling direct AI assistant integration with task management capabilities. This provides a more seamless experience than CLI-based or file-based integration.
+
+### What is MCP?
+
+The Model Context Protocol (MCP) is a standard for AI assistants to interact with external tools via structured JSON-RPC communication. Task Master's MCP server exposes 37+ tools for task management operations.
+
+### Architecture Comparison
+
+**Without MCP (File-Based - Current Default):**
+```
+┌─────────────────┐     ┌──────────────────┐     ┌─────────────────┐
+│  Cursor Agent   │────▶│  Dev-loop        │────▶│ tasks.json file │
+│  (Outer)        │     │  (Inner Agent)   │     │ (shared state)  │
+└─────────────────┘     └──────────────────┘     └─────────────────┘
+```
+
+**With MCP (Enhanced):**
+```
+┌─────────────────┐
+│  Cursor Agent   │──────────────┐
+│  (Outer)        │              │
+└─────────────────┘              │
+        │                        │
+        │ MCP Tools              │ MCP Tools
+        ▼                        ▼
+┌─────────────────────────────────────────────┐
+│        Task Master MCP Server               │
+│  (37 registered tools via stdio JSON-RPC)   │
+│  - parse_prd, add_task, list_tasks,         │
+│  - set_status, expand_task, etc.            │
+└─────────────────────────────────────────────┘
+        │
+        ▼
+┌──────────────────┐     ┌─────────────────┐
+│  Dev-loop        │────▶│ tasks.json      │
+│  (Inner Agent)   │     │ (still shared)  │
+└──────────────────┘     └─────────────────┘
+```
+
+### Setting Up Task Master MCP
+
+#### Step 1: Create MCP Configuration
+
+Create `mcp.json` in your project root (or `.cursor/mcp.json` for Cursor-specific config):
+
+```json
+{
+  "mcpServers": {
+    "task-master-ai": {
+      "command": "npx",
+      "args": ["-y", "task-master-ai@0.40.0"],
+      "cwd": "/path/to/your/project",
+      "env": {
+        "ANTHROPIC_API_KEY": "${ANTHROPIC_API_KEY}",
+        "PERPLEXITY_API_KEY": "${PERPLEXITY_API_KEY}",
+        "OPENAI_API_KEY": "${OPENAI_API_KEY}"
+      }
+    }
+  }
+}
+```
+
+#### Step 2: Configure Environment Variables
+
+Ensure your `.env` file contains the required API keys:
+
+```bash
+ANTHROPIC_API_KEY=sk-ant-...
+PERPLEXITY_API_KEY=pplx-...  # Optional, for research model
+OPENAI_API_KEY=sk-...         # Optional, for fallback
+```
+
+#### Step 3: Restart Cursor IDE
+
+After adding the MCP configuration, restart Cursor to load the new MCP server. The Task Master tools will appear in the available MCP tools.
+
+### Available MCP Tools
+
+Task Master exposes these key tools via MCP:
+
+| Tool | Description |
+|------|-------------|
+| `parse_prd` | Parse a PRD document into actionable tasks |
+| `add_task` | Create a new task with AI-generated description |
+| `list_tasks` | Get all tasks with optional filtering |
+| `next_task` | Get the next pending task by priority |
+| `get_task` | Get details of a specific task |
+| `set_status` | Update task status (pending/in-progress/done/blocked) |
+| `expand_task` | Expand a task into subtasks |
+| `update_task` | Update task details |
+| `delete_task` | Remove a task |
+| `analyze_project` | Analyze codebase for context |
+
+### Using MCP with Evolution Mode
+
+When operating in Evolution Mode with MCP enabled, the Cursor agent can:
+
+1. **Create tasks directly** without editing `tasks.json` manually:
+   ```
+   Use task-master-ai: add_task with prompt "Fix the entity type validation issue"
+   ```
+
+2. **Parse PRDs with progress feedback**:
+   ```
+   Use task-master-ai: parse_prd with input ".taskmaster/docs/new-feature.md"
+   ```
+
+3. **Check task status** without running CLI commands:
+   ```
+   Use task-master-ai: list_tasks with status "pending"
+   ```
+
+4. **Expand complex tasks** into subtasks:
+   ```
+   Use task-master-ai: expand_task with id "task-123"
+   ```
+
+### MCP Benefits
+
+| Benefit | Description |
+|---------|-------------|
+| **Direct integration** | Call Task Master tools directly from AI assistants |
+| **Streaming support** | Progress reporting for long operations like PRD parsing |
+| **Rich tool discovery** | Structured tool schemas for better AI understanding |
+| **Better error handling** | Structured JSON-RPC responses vs CLI output parsing |
+| **Session persistence** | MCP server maintains state, reducing file I/O |
+| **AI-native interface** | Designed specifically for AI assistant interaction |
+
+### Hybrid Approach
+
+Dev-loop continues to work with file-based task management even when MCP is enabled:
+- Dev-loop reads/writes `tasks.json` directly for execution
+- MCP provides an enhanced interface for the Cursor agent to manage tasks
+- Both systems share the same `tasks.json` file as source of truth
+
+This means you can use MCP for task creation and management while dev-loop handles execution.
+
 ## CI Output Formats
 
 dev-loop generates CI-agnostic output formats:
