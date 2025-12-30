@@ -139,6 +139,8 @@ const configSchema = z.object({
   autonomous: z.object({
     // Enable autonomous mode
     enabled: z.boolean().default(true),
+    // Skip investigation task creation (investigation slows down execution)
+    skipInvestigation: z.boolean().default(false),
     // Test generation configuration
     testGeneration: z.object({
       framework: z.enum(['playwright', 'cypress', 'jest']).default('playwright'),

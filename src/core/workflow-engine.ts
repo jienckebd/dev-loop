@@ -355,7 +355,13 @@ export class WorkflowEngine {
         }
       }
 
-      if (!isInvestigationTask && this.debuggingStrategyAdvisor && this.investigationTaskGenerator) {
+      // Check if investigation is disabled in config
+      const skipInvestigation = (this.config as any).autonomous?.skipInvestigation === true;
+      if (this.debug) {
+        console.log(`[DEBUG] skipInvestigation config value: ${skipInvestigation}`);
+      }
+      
+      if (!skipInvestigation && !isInvestigationTask && this.debuggingStrategyAdvisor && this.investigationTaskGenerator) {
         try {
           // Check if investigation tasks already exist for this parent task
           const allTasks = await this.taskBridge.getAllTasks();
