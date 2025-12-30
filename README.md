@@ -983,48 +983,54 @@ Instead, configure project-specific behavior in:
 - `.taskmaster/templates/` - PRD and task templates
 - Project rules files (CLAUDE.md, .cursorrules) - Rules injected into prompts
 
-## Task Master MCP Integration
+## MCP Integration (Task Master + Dev-Loop)
 
-Task Master can run as an MCP (Model Context Protocol) server, enabling direct AI assistant integration with task management capabilities. This provides a more seamless experience than CLI-based or file-based integration.
+Both Task Master and Dev-Loop can run as MCP (Model Context Protocol) servers, enabling direct AI assistant integration without CLI commands. This provides a seamless experience for managing tasks and orchestrating development workflows.
 
 ### What is MCP?
 
-The Model Context Protocol (MCP) is a standard for AI assistants to interact with external tools via structured JSON-RPC communication. Task Master's MCP server exposes 37+ tools for task management operations.
+The Model Context Protocol (MCP) is a standard for AI assistants to interact with external tools via structured JSON-RPC communication over stdio. Both Task Master and Dev-Loop expose their functionality as MCP tools.
 
-### Architecture Comparison
+### Architecture Overview
 
-**Without MCP (File-Based - Current Default):**
+**With Both MCP Servers Enabled:**
 ```
-┌─────────────────┐     ┌──────────────────┐     ┌─────────────────┐
-│  Cursor Agent   │────▶│  Dev-loop        │────▶│ tasks.json file │
-│  (Outer)        │     │  (Inner Agent)   │     │ (shared state)  │
-└─────────────────┘     └──────────────────┘     └─────────────────┘
+┌─────────────────────────────────────────────────────────────┐
+│                    Cursor Agent (Outer)                      │
+│              (AI Assistant in Evolution Mode)                │
+└─────────────────────────────────────────────────────────────┘
+        │                              │
+        │ MCP Tools                    │ MCP Tools
+        ▼                              ▼
+┌──────────────────────┐    ┌──────────────────────┐
+│  Task Master MCP     │    │  Dev-Loop MCP        │
+│  (37+ tools)         │    │  (17+ tools)         │
+│                      │    │                      │
+│  - parse_prd         │    │  - devloop_run       │
+│  - add_task          │    │  - devloop_status    │
+│  - list_tasks        │    │  - devloop_prd       │
+│  - set_status        │    │  - devloop_diagnose  │
+│  - expand_task       │    │  - devloop_pause     │
+│  - etc.              │    │  - devloop_evolution │
+└──────────────────────┘    └──────────────────────┘
+        │                              │
+        │                              │
+        └──────────────┬───────────────┘
+                       │
+                       ▼
+        ┌──────────────────────────────┐
+        │      tasks.json (shared)      │
+        │   (source of truth)           │
+        └──────────────────────────────┘
+                       │
+                       ▼
+        ┌──────────────────────────────┐
+        │   Dev-Loop Inner Agent        │
+        │   (executes tasks, runs tests)│
+        └──────────────────────────────┘
 ```
 
-**With MCP (Enhanced):**
-```
-┌─────────────────┐
-│  Cursor Agent   │──────────────┐
-│  (Outer)        │              │
-└─────────────────┘              │
-        │                        │
-        │ MCP Tools              │ MCP Tools
-        ▼                        ▼
-┌─────────────────────────────────────────────┐
-│        Task Master MCP Server               │
-│  (37 registered tools via stdio JSON-RPC)   │
-│  - parse_prd, add_task, list_tasks,         │
-│  - set_status, expand_task, etc.            │
-└─────────────────────────────────────────────┘
-        │
-        ▼
-┌──────────────────┐     ┌─────────────────┐
-│  Dev-loop        │────▶│ tasks.json      │
-│  (Inner Agent)   │     │ (still shared)  │
-└──────────────────┘     └─────────────────┘
-```
-
-### Setting Up Task Master MCP
+### Setting Up Both MCP Servers
 
 #### Step 1: Create MCP Configuration
 
@@ -1042,9 +1048,24 @@ Create `mcp.json` in your project root (or `.cursor/mcp.json` for Cursor-specifi
         "PERPLEXITY_API_KEY": "${PERPLEXITY_API_KEY}",
         "OPENAI_API_KEY": "${OPENAI_API_KEY}"
       }
+    },
+    "dev-loop": {
+      "command": "node",
+      "args": ["packages/dev-loop/dist/mcp/server.js"],
+      "cwd": "/path/to/your/project",
+      "env": {
+        "ANTHROPIC_API_KEY": "${ANTHROPIC_API_KEY}",
+        "PERPLEXITY_API_KEY": "${PERPLEXITY_API_KEY}",
+        "OPENAI_API_KEY": "${OPENAI_API_KEY}"
+      }
     }
   }
 }
+```
+
+**Note:** For dev-loop MCP, ensure you've built dev-loop first:
+```bash
+cd packages/dev-loop && npm run build
 ```
 
 #### Step 2: Configure Environment Variables
@@ -1059,11 +1080,11 @@ OPENAI_API_KEY=sk-...         # Optional, for fallback
 
 #### Step 3: Restart Cursor IDE
 
-After adding the MCP configuration, restart Cursor to load the new MCP server. The Task Master tools will appear in the available MCP tools.
+After adding the MCP configuration, restart Cursor to load both MCP servers. The tools will appear in the available MCP tools list.
 
-### Available MCP Tools
+### Task Master MCP Tools
 
-Task Master exposes these key tools via MCP:
+Task Master exposes 37+ tools for task management:
 
 | Tool | Description |
 |------|-------------|
@@ -1078,49 +1099,182 @@ Task Master exposes these key tools via MCP:
 | `delete_task` | Remove a task |
 | `analyze_project` | Analyze codebase for context |
 
-### Using MCP with Evolution Mode
+### Dev-Loop MCP Tools
 
-When operating in Evolution Mode with MCP enabled, the Cursor agent can:
+Dev-Loop exposes 17+ tools for workflow orchestration:
 
-1. **Create tasks directly** without editing `tasks.json` manually:
-   ```
-   Use task-master-ai: add_task with prompt "Fix the entity type validation issue"
-   ```
+#### Core Workflow Tools (5)
+| Tool | Description |
+|------|-------------|
+| `devloop_run` | Execute one workflow iteration |
+| `devloop_run_task` | Run specific task by ID |
+| `devloop_status` | Get current progress and state |
+| `devloop_list_tasks` | List tasks with filtering |
+| `devloop_prd` | Execute PRD autonomously |
 
-2. **Parse PRDs with progress feedback**:
-   ```
-   Use task-master-ai: parse_prd with input ".taskmaster/docs/new-feature.md"
-   ```
+#### Debugging Tools (5)
+| Tool | Description |
+|------|-------------|
+| `devloop_diagnose` | Analyze failures and suggest fixes |
+| `devloop_trace` | Get execution trace for task |
+| `devloop_logs` | View and analyze logs |
+| `devloop_evolve` | Get improvement suggestions |
+| `devloop_metrics` | View debug metrics and trends |
 
-3. **Check task status** without running CLI commands:
-   ```
-   Use task-master-ai: list_tasks with status "pending"
-   ```
+#### Control Tools (4)
+| Tool | Description |
+|------|-------------|
+| `devloop_pause` | Pause workflow execution |
+| `devloop_resume` | Resume paused execution |
+| `devloop_reset` | Reset task(s) to pending |
+| `devloop_validate` | Validate config and environment |
 
-4. **Expand complex tasks** into subtasks:
-   ```
-   Use task-master-ai: expand_task with id "task-123"
-   ```
+#### Evolution Mode Tools (3)
+| Tool | Description |
+|------|-------------|
+| `devloop_evolution_start` | Activate evolution mode with PRD |
+| `devloop_evolution_status` | Check evolution mode state |
+| `devloop_evolution_stop` | Deactivate evolution mode |
+
+### Workflow Modes
+
+#### Normal Mode (Outside Evolution Mode)
+
+In normal development mode, you can use both MCP servers independently:
+
+**Task Management (Task Master MCP):**
+```
+Use task-master-ai: add_task
+- prompt: "Implement user authentication"
+- priority: "high"
+```
+
+**Workflow Control (Dev-Loop MCP):**
+```
+Use dev-loop: devloop_run
+- debug: true
+```
+
+**Check Status:**
+```
+Use dev-loop: devloop_status
+```
+
+#### Evolution Mode (Outer Agent Workflow)
+
+In Evolution Mode, the Cursor agent (outer agent) orchestrates the entire workflow using both MCP servers:
+
+**1. Activate Evolution Mode:**
+```
+Use dev-loop: devloop_evolution_start
+- prd: ".taskmaster/docs/openapi_wizard_v3.md"
+```
+
+**2. Parse PRD into Tasks:**
+```
+Use task-master-ai: parse_prd
+- input: ".taskmaster/docs/openapi_wizard_v3.md"
+```
+
+**3. Execute PRD Autonomously:**
+```
+Use dev-loop: devloop_prd
+- prdPath: ".taskmaster/docs/openapi_wizard_v3.md"
+- debug: true
+```
+
+**4. Monitor Progress:**
+```
+Use dev-loop: devloop_status
+```
+
+**5. Diagnose Issues:**
+```
+Use dev-loop: devloop_diagnose
+- taskId: "task-123"
+```
+
+**6. Control Execution:**
+```
+Use dev-loop: devloop_pause
+# ... make changes ...
+Use dev-loop: devloop_resume
+```
+
+**7. Check Evolution Status:**
+```
+Use dev-loop: devloop_evolution_status
+```
+
+**8. Deactivate When Complete:**
+```
+Use dev-loop: devloop_evolution_stop
+```
 
 ### MCP Benefits
 
 | Benefit | Description |
 |---------|-------------|
-| **Direct integration** | Call Task Master tools directly from AI assistants |
-| **Streaming support** | Progress reporting for long operations like PRD parsing |
+| **Direct integration** | Call tools directly from AI assistants without CLI parsing |
+| **Streaming support** | Progress reporting for long operations (PRD parsing, test execution) |
 | **Rich tool discovery** | Structured tool schemas for better AI understanding |
 | **Better error handling** | Structured JSON-RPC responses vs CLI output parsing |
-| **Session persistence** | MCP server maintains state, reducing file I/O |
+| **Session persistence** | MCP servers maintain state, reducing file I/O |
 | **AI-native interface** | Designed specifically for AI assistant interaction |
+| **No CLI dependencies** | Full workflow control without terminal commands |
 
 ### Hybrid Approach
 
-Dev-loop continues to work with file-based task management even when MCP is enabled:
-- Dev-loop reads/writes `tasks.json` directly for execution
-- MCP provides an enhanced interface for the Cursor agent to manage tasks
-- Both systems share the same `tasks.json` file as source of truth
+Both MCP servers work alongside file-based operations:
 
-This means you can use MCP for task creation and management while dev-loop handles execution.
+- **Task Master MCP** provides enhanced task management interface
+- **Dev-Loop MCP** provides workflow orchestration interface
+- **Dev-Loop CLI** continues to work for direct execution
+- **Both systems** share the same `tasks.json` file as source of truth
+
+This means:
+- Use **Task Master MCP** for task creation, parsing, and management
+- Use **Dev-Loop MCP** for workflow control, monitoring, and debugging
+- Use **Dev-Loop CLI** for automated execution in CI/CD or scripts
+- All three interfaces work together seamlessly
+
+### Quick Reference: Common MCP Workflows
+
+**Starting a New PRD:**
+```
+1. Use task-master-ai: parse_prd with input "path/to/prd.md"
+2. Use dev-loop: devloop_evolution_start with prd "path/to/prd.md"
+3. Use dev-loop: devloop_prd with prdPath "path/to/prd.md" and debug true
+```
+
+**Monitoring Progress:**
+```
+Use dev-loop: devloop_status
+Use dev-loop: devloop_list_tasks with status "pending"
+```
+
+**Debugging Failures:**
+```
+Use dev-loop: devloop_diagnose with taskId "task-123"
+Use dev-loop: devloop_logs with analyze true
+Use dev-loop: devloop_trace with taskId "task-123"
+```
+
+**Controlling Execution:**
+```
+Use dev-loop: devloop_pause
+# ... make changes to dev-loop or config ...
+Use dev-loop: devloop_resume
+Use dev-loop: devloop_reset with taskId "task-123"
+```
+
+**Evolution Mode Management:**
+```
+Use dev-loop: devloop_evolution_status
+# Check completion status, boundaries, etc.
+Use dev-loop: devloop_evolution_stop
+# When PRD is 100% complete
+```
 
 ## CI Output Formats
 
