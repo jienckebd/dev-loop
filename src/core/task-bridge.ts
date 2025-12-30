@@ -375,9 +375,30 @@ export class TaskMasterBridge {
     }
 
     // Always save in master format for Task Master CLI compatibility
-    const output = { master: { tasks: mainTasks } };
+    const output = { 
+      master: { 
+        tasks: mainTasks,
+        metadata: {
+          updated: new Date().toISOString(),
+        }
+      } 
+    };
 
-    await fs.writeJson(this.tasksPath, output, { spaces: 2 });
+    // Atomic write: write to temp file first, then rename
+    const tempPath = `${this.tasksPath}.tmp`;
+    try {
+      await fs.writeJson(tempPath, output, { spaces: 2 });
+      // Verify the JSON is valid before replacing original
+      const verification = await fs.readJson(tempPath);
+      if (!verification?.master?.tasks) {
+        throw new Error('Written JSON is invalid - missing master.tasks');
+      }
+      await fs.rename(tempPath, this.tasksPath);
+    } catch (writeError) {
+      // Clean up temp file if it exists
+      try { await fs.remove(tempPath); } catch {}
+      throw new Error(`Failed to save tasks atomically: ${writeError instanceof Error ? writeError.message : String(writeError)}`);
+    }
   }
 
   async initializeTaskMaster(): Promise<void> {
