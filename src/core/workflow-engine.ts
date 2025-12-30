@@ -1075,17 +1075,59 @@ export class WorkflowEngine {
       } else if (file.operation === 'patch' && file.patches) {
         // Apply search/replace patches to existing file
         if (await fs.pathExists(filePath)) {
-          let content = await fs.readFile(filePath, 'utf-8');
+          const originalContent = await fs.readFile(filePath, 'utf-8');
+          let content = originalContent;
           let patchesApplied = 0;
+          const fileExtension = path.extname(filePath);
 
           for (let i = 0; i < file.patches.length; i++) {
             const patch = file.patches[i];
+            const patchContentBefore = content;
 
-            // Pre-flight verification: check if search string exists
+            // Enhancement 2: Check for duplicate method declarations before applying patch
+            if (fileExtension === '.php' && this.wouldCreateDuplicateMethod(content, patch.replace)) {
+              const methodName = this.extractMethodNameFromPatch(patch.replace);
+              const errorMsg = `PATCH_SKIPPED: File ${file.path}, patch ${i + 1}: Would create duplicate method "${methodName}". Method already exists.`;
+              console.warn(`[WorkflowEngine] ${errorMsg}`);
+              failedPatches.push(errorMsg);
+              continue;
+            }
+
+            // Enhancement 3: Improved patch matching with fuzzy fallback
+            let patchApplied = false;
             if (content.includes(patch.search)) {
+              // Exact match found
               content = content.replace(patch.search, patch.replace);
-              patchesApplied++;
-              console.log(`[WorkflowEngine] Applied patch ${patchesApplied} to ${file.path}`);
+              patchApplied = true;
+            } else {
+              // Try fuzzy matching with whitespace tolerance
+              const fuzzyMatch = this.findFuzzyMatch(content, patch.search);
+              if (fuzzyMatch) {
+                content = content.replace(fuzzyMatch, patch.replace);
+                console.log(`[WorkflowEngine] Applied patch ${i + 1} using fuzzy match (whitespace tolerance)`);
+                patchApplied = true;
+              }
+            }
+
+            if (patchApplied) {
+              // Enhancement 6: Per-patch syntax validation
+              const tempFilePath = `${filePath}.tmp`;
+              await fs.writeFile(tempFilePath, content, 'utf-8');
+              const isValid = await this.validateFileSyntax(tempFilePath);
+              
+              if (isValid) {
+                // Syntax is valid, keep the patch
+                await fs.move(tempFilePath, filePath, { overwrite: true });
+                patchesApplied++;
+                console.log(`[WorkflowEngine] Applied patch ${patchesApplied} to ${file.path}`);
+              } else {
+                // Syntax error detected, revert this patch only
+                await fs.remove(tempFilePath);
+                content = patchContentBefore; // Revert to content before this patch
+                const errorMsg = `PATCH_REVERTED: File ${file.path}, patch ${i + 1}: Syntax error detected, patch reverted`;
+                console.error(`[WorkflowEngine] ${errorMsg}`);
+                failedPatches.push(errorMsg);
+              }
             } else {
               // Log detailed failure information for AI to learn from
               const searchPreview = patch.search.substring(0, 150).replace(/\n/g, '\\n');
@@ -1107,7 +1149,6 @@ export class WorkflowEngine {
           }
 
           if (patchesApplied > 0) {
-            await fs.writeFile(filePath, content, 'utf-8');
             console.log(`[WorkflowEngine] Applied ${patchesApplied}/${file.patches.length} patches to ${file.path}`);
           } else if (file.patches.length > 0) {
             console.error(`[WorkflowEngine] NO patches applied to ${file.path} - all ${file.patches.length} patches failed`);
@@ -1120,13 +1161,13 @@ export class WorkflowEngine {
       } else if (file.operation === 'create' || file.operation === 'update') {
         await fs.ensureDir(path.dirname(filePath));
         await fs.writeFile(filePath, file.content || '', 'utf-8');
-      }
-
-      // Validate syntax for supported languages
-      const isValid = await this.validateFileSyntax(filePath);
-      if (!isValid) {
-        console.error(`[WorkflowEngine] File ${file.path} has syntax errors, reverted`);
-        failedPatches.push(`SYNTAX_ERROR: File ${file.path} has syntax errors and was reverted`);
+        
+        // Validate syntax for new/updated files
+        const isValid = await this.validateFileSyntax(filePath);
+        if (!isValid) {
+          console.error(`[WorkflowEngine] File ${file.path} has syntax errors, reverted`);
+          failedPatches.push(`SYNTAX_ERROR: File ${file.path} has syntax errors and was reverted`);
+        }
       }
     }
 
@@ -1165,6 +1206,142 @@ export class WorkflowEngine {
 
       return false;
     }
+  }
+
+  /**
+   * Check if applying a patch would create a duplicate method declaration
+   */
+  private wouldCreateDuplicateMethod(content: string, patchReplace: string): boolean {
+    // Extract method name from patch replacement
+    const methodName = this.extractMethodNameFromPatch(patchReplace);
+    if (!methodName) return false;
+
+    // Check if method already exists in content
+    // Match PHP method declarations: public/protected/private function methodName(
+    const methodPattern = new RegExp(`(?:public|protected|private)\\s+function\\s+${methodName}\\s*\\(`, 'g');
+    const existingMatches = content.match(methodPattern);
+    
+    // If we find the method already exists, this patch would create a duplicate
+    return existingMatches !== null && existingMatches.length > 0;
+  }
+
+  /**
+   * Extract method name from patch replacement text
+   */
+  private extractMethodNameFromPatch(patchReplace: string): string | null {
+    // Match PHP method declaration: public/protected/private function methodName(
+    const methodMatch = patchReplace.match(/(?:public|protected|private)\s+function\s+([a-zA-Z_][a-zA-Z0-9_]*)\s*\(/);
+    return methodMatch ? methodMatch[1] : null;
+  }
+
+  /**
+   * Find fuzzy match for search string with whitespace tolerance
+   */
+  private findFuzzyMatch(content: string, search: string): string | null {
+    // Normalize whitespace in search string
+    const normalizedSearch = search.replace(/\s+/g, ' ').trim();
+    const searchLines = normalizedSearch.split('\n');
+    
+    if (searchLines.length === 0) return null;
+
+    // Try to find first line of search string
+    const firstLine = searchLines[0].trim();
+    if (firstLine.length < 10) return null; // Too short for reliable matching
+
+    // Find all occurrences of first line (with whitespace tolerance)
+    const contentLines = content.split('\n');
+    const candidates: Array<{ startIdx: number; match: string }> = [];
+
+    for (let i = 0; i < contentLines.length; i++) {
+      const normalizedLine = contentLines[i].replace(/\s+/g, ' ').trim();
+      if (normalizedLine.includes(firstLine) || firstLine.includes(normalizedLine)) {
+        // Found potential match, try to match full search string
+        let matchedLines: string[] = [];
+        let searchIdx = 0;
+        let contentIdx = i;
+
+        // Try to match consecutive lines
+        while (searchIdx < searchLines.length && contentIdx < contentLines.length) {
+          const normalizedSearchLine = searchLines[searchIdx].replace(/\s+/g, ' ').trim();
+          const normalizedContentLine = contentLines[contentIdx].replace(/\s+/g, ' ').trim();
+          
+          if (normalizedContentLine.includes(normalizedSearchLine) || 
+              normalizedSearchLine.includes(normalizedContentLine) ||
+              (normalizedSearchLine.length > 20 && normalizedContentLine.length > 20 && 
+               this.calculateSimilarity(normalizedSearchLine, normalizedContentLine) > 0.8)) {
+            matchedLines.push(contentLines[contentIdx]);
+            searchIdx++;
+            contentIdx++;
+          } else {
+            // Allow skipping blank lines in content
+            if (normalizedContentLine.trim() === '') {
+              contentIdx++;
+              continue;
+            }
+            break;
+          }
+        }
+
+        // If we matched most of the search string, consider it a match
+        if (matchedLines.length >= Math.max(1, searchLines.length * 0.7)) {
+          candidates.push({
+            startIdx: i,
+            match: matchedLines.join('\n')
+          });
+        }
+      }
+    }
+
+    // Return the first candidate that's close enough
+    if (candidates.length > 0) {
+      return candidates[0].match;
+    }
+
+    return null;
+  }
+
+  /**
+   * Calculate similarity between two strings (simple Levenshtein-based)
+   */
+  private calculateSimilarity(str1: string, str2: string): number {
+    const longer = str1.length > str2.length ? str1 : str2;
+    const shorter = str1.length > str2.length ? str2 : str1;
+    
+    if (longer.length === 0) return 1.0;
+    
+    const distance = this.levenshteinDistance(longer, shorter);
+    return (longer.length - distance) / longer.length;
+  }
+
+  /**
+   * Calculate Levenshtein distance between two strings
+   */
+  private levenshteinDistance(str1: string, str2: string): number {
+    const matrix: number[][] = [];
+    
+    for (let i = 0; i <= str2.length; i++) {
+      matrix[i] = [i];
+    }
+    
+    for (let j = 0; j <= str1.length; j++) {
+      matrix[0][j] = j;
+    }
+    
+    for (let i = 1; i <= str2.length; i++) {
+      for (let j = 1; j <= str1.length; j++) {
+        if (str2.charAt(i - 1) === str1.charAt(j - 1)) {
+          matrix[i][j] = matrix[i - 1][j - 1];
+        } else {
+          matrix[i][j] = Math.min(
+            matrix[i - 1][j - 1] + 1,
+            matrix[i][j - 1] + 1,
+            matrix[i - 1][j] + 1
+          );
+        }
+      }
+    }
+    
+    return matrix[str2.length][str1.length];
   }
 
   private async getCodebaseContext(task: Task): Promise<{
@@ -1824,6 +2001,24 @@ export class WorkflowEngine {
             await this.taskBridge.updateTaskStatus(task.id, 'done');
           } else {
             console.warn(`[WorkflowEngine] Failed to apply changes for task ${task.id}`);
+            
+            // Enhancement 5: Record failed approach in context
+            const failedPatchesSummary = applyResult.failedPatches
+              .slice(0, 3)
+              .map(p => p.substring(0, 100))
+              .join('; ');
+            
+            context.knowledge.failedApproaches.push({
+              id: `failed-${Date.now()}-${task.id}`,
+              description: `Task ${task.id}: ${task.title}`,
+              reason: `Patches failed: ${failedPatchesSummary || 'Unknown error'}`,
+              attemptedAt: new Date().toISOString(),
+            });
+            
+            // Keep only last 20 failed approaches to prevent context bloat
+            if (context.knowledge.failedApproaches.length > 20) {
+              context.knowledge.failedApproaches = context.knowledge.failedApproaches.slice(-20);
+            }
           }
         } catch (error) {
           console.error(`[WorkflowEngine] Error executing task ${task.id}:`, error);

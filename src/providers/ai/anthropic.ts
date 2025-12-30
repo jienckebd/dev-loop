@@ -256,8 +256,9 @@ ${prompt}`;
           }
         }
 
-        // Try to find JSON object with "files" key (our expected format)
+        // Try to find JSON object with "files" key (our expected format) - improved regex
         if (!jsonText) {
+          // More flexible matching for "files" array and "summary" field
           const filesJsonMatch = text.match(/\{\s*"files"\s*:\s*\[[\s\S]*?\]\s*,\s*"summary"\s*:\s*"[^"]*"\s*\}/);
           if (filesJsonMatch) {
             jsonText = filesJsonMatch[0];
@@ -270,15 +271,34 @@ ${prompt}`;
           const jsonStartMatch = text.match(/\{\s*"files"\s*:/);
           if (jsonStartMatch && jsonStartMatch.index !== undefined) {
             const startIndex = jsonStartMatch.index;
-            // Find the matching closing brace
+            // Find the matching closing brace, handling strings properly
             let depth = 0;
+            let inString = false;
+            let escaped = false;
             let endIndex = startIndex;
             for (let i = startIndex; i < text.length; i++) {
-              if (text[i] === '{') depth++;
-              if (text[i] === '}') depth--;
-              if (depth === 0) {
-                endIndex = i + 1;
-                break;
+              const char = text[i];
+              if (escaped) {
+                escaped = false;
+                continue;
+              }
+              if (char === '\\') {
+                escaped = true;
+                continue;
+              }
+              if (char === '"') {
+                inString = !inString;
+                continue;
+              }
+              if (!inString) {
+                if (char === '{') depth++;
+                if (char === '}') {
+                  depth--;
+                  if (depth === 0) {
+                    endIndex = i + 1;
+                    break;
+                  }
+                }
               }
             }
             jsonText = text.substring(startIndex, endIndex);
@@ -290,9 +310,21 @@ ${prompt}`;
             const parsed = JSON.parse(jsonText);
             return parsed as CodeChanges;
           } catch (parseError) {
+            // Try to clean common JSON issues before repair
+            let cleaned = this.cleanJsonString(jsonText);
+            
+            // Try parsing cleaned version
+            try {
+              const parsed = JSON.parse(cleaned);
+              console.log('[Anthropic] Successfully parsed after cleaning');
+              return parsed as CodeChanges;
+            } catch {
+              // Continue to repair attempt
+            }
+
             // Try to repair truncated JSON by closing open structures
             console.warn('[Anthropic] JSON parse failed, attempting repair...', parseError instanceof Error ? parseError.message : String(parseError));
-            const repaired = this.repairTruncatedJson(jsonText);
+            const repaired = this.repairTruncatedJson(cleaned);
             if (repaired) {
               try {
                 const parsed = JSON.parse(repaired);
@@ -462,6 +494,21 @@ Provide a JSON response with:
     }
 
     return false;
+  }
+
+  /**
+   * Clean common JSON syntax issues
+   */
+  private cleanJsonString(json: string): string {
+    let cleaned = json.trim();
+
+    // Remove trailing commas before closing brackets/braces (common JSON error)
+    cleaned = cleaned.replace(/,(\s*[}\]])/g, '$1');
+
+    // Note: We don't escape newlines/tabs here because they might be in string values
+    // The JSON parser should handle them correctly if the JSON is otherwise valid
+
+    return cleaned;
   }
 
   /**
