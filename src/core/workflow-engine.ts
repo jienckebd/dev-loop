@@ -1146,44 +1146,20 @@ export class WorkflowEngine {
                 failedPatches.push(errorMsg);
               }
             } else {
-              // Try aggressive content-based matching as last resort
-              const aggressiveMatch = this.findAggressiveMatch(content, patch.search, patch.replace);
-              if (aggressiveMatch) {
-                content = aggressiveMatch.newContent;
-                console.log(`[WorkflowEngine] Applied patch ${i + 1} using aggressive matching (line ${aggressiveMatch.lineNumber})`);
-                patchApplied = true;
-                
-                // Validate syntax after aggressive match
-                const tempFilePath = `${filePath}.tmp`;
-                await fs.writeFile(tempFilePath, content, 'utf-8');
-                const isValid = await this.validateFileSyntax(tempFilePath);
-                
-                if (isValid) {
-                  await fs.move(tempFilePath, filePath, { overwrite: true });
-                  patchesApplied++;
-                } else {
-                  await fs.remove(tempFilePath);
-                  content = patchContentBefore;
-                  const errorMsg = `PATCH_REVERTED: File ${file.path}, patch ${i + 1}: Aggressive match caused syntax error`;
-                  console.error(`[WorkflowEngine] ${errorMsg}`);
-                  failedPatches.push(errorMsg);
-                }
-              } else {
-                // Log detailed failure information for AI to learn from
-                const searchPreview = patch.search.substring(0, 150).replace(/\n/g, '\\n');
-                const errorMsg = `PATCH_FAILED: File ${file.path}, patch ${i + 1}: Search string not found. Looking for: "${searchPreview}"`;
-                console.error(`[WorkflowEngine] ${errorMsg}`);
-                failedPatches.push(errorMsg);
+              // Log detailed failure information for AI to learn from
+              const searchPreview = patch.search.substring(0, 150).replace(/\n/g, '\\n');
+              const errorMsg = `PATCH_FAILED: File ${file.path}, patch ${i + 1}: Search string not found. Looking for: "${searchPreview}"`;
+              console.error(`[WorkflowEngine] ${errorMsg}`);
+              failedPatches.push(errorMsg);
 
-                // Try to find similar content to help debug
-                const firstLine = patch.search.split('\n')[0].trim();
-                if (firstLine.length > 10) {
-                  const similarLines = content.split('\n')
-                    .map((line, idx) => ({ line: line.trim(), idx }))
-                    .filter(({ line }) => line.includes(firstLine.substring(0, 20)));
-                  if (similarLines.length > 0) {
-                    console.error(`[WorkflowEngine] Similar content found at lines: ${similarLines.map(s => s.idx + 1).join(', ')}`);
-                  }
+              // Try to find similar content to help debug
+              const firstLine = patch.search.split('\n')[0].trim();
+              if (firstLine.length > 10) {
+                const similarLines = content.split('\n')
+                  .map((line, idx) => ({ line: line.trim(), idx }))
+                  .filter(({ line }) => line.includes(firstLine.substring(0, 20)));
+                if (similarLines.length > 0) {
+                  console.error(`[WorkflowEngine] Similar content found at lines: ${similarLines.map(s => s.idx + 1).join(', ')}`);
                 }
               }
             }
