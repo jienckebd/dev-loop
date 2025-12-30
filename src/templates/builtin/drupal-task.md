@@ -90,6 +90,29 @@ For LARGE PHP files (over 100 lines), use SEARCH/REPLACE patches to avoid trunca
 5. For constructor changes, include the entire constructor in both search and replace
 6. Test each patch could be applied in isolation
 
+## CRITICAL: Copying Exact Code
+
+**YOU MUST COPY-PASTE EXACTLY from the "Existing Code Context" section above.**
+
+Common mistakes to AVOID:
+- Using `EntityInterface` when the code has `ContentEntityInterface`
+- Using `$entity` when the code has `$this->entity`
+- Adding/removing whitespace or newlines
+- Changing variable names or type hints
+- "Improving" the code style (keep it exactly as-is)
+
+When the existing code shows:
+```
+317|  public function prepopulateSchemaMappings(ContentEntityInterface $entity, FormStateInterface $form_state): void {
+```
+
+Your search string MUST start with exactly:
+```
+  public function prepopulateSchemaMappings(ContentEntityInterface $entity, FormStateInterface $form_state): void {
+```
+
+NOT `EntityInterface`, NOT different spacing, NOT a different docblock format.
+
 ## Example: Adding Logger to a Service
 
 For a task "Add LoggerInterface to EntityFormService", generate:
