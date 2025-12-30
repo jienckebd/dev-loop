@@ -601,6 +601,7 @@ Provide a JSON response with:
     let openBrackets = 0;
     let inString = false;
     let escaped = false;
+    let lastStringStart = -1;
 
     for (let i = 0; i < repaired.length; i++) {
       const char = repaired[i];
@@ -616,6 +617,9 @@ Provide a JSON response with:
       }
 
       if (char === '"') {
+        if (!inString) {
+          lastStringStart = i;
+        }
         inString = !inString;
         continue;
       }
@@ -628,9 +632,31 @@ Provide a JSON response with:
       }
     }
 
-    // If we're in a string, try to close it
+    // Handle unterminated strings - close them properly
     if (inString) {
+      // Check if we're in the middle of a string value (not a key)
+      // Look backwards from lastStringStart to see if it's a key or value
+      let isValue = false;
+      if (lastStringStart > 0) {
+        const beforeString = repaired.substring(0, lastStringStart).trim();
+        // If we see "key": before the string, it's a value
+        if (beforeString.endsWith(':') || beforeString.match(/:\s*$/)) {
+          isValue = true;
+        }
+      }
+      
+      // Close the string
       repaired += '"';
+      
+      // If it was a value and we're in an object, add comma if needed
+      if (isValue && openBraces > 0) {
+        // Check if there's already content after (shouldn't be, but be safe)
+        const afterPos = repaired.length;
+        // Add comma only if we're not at the end of object
+        if (openBraces > 0) {
+          // Actually, don't add comma - let the brace closing handle it
+        }
+      }
     }
 
     // Close open brackets and braces
@@ -644,6 +670,44 @@ Provide a JSON response with:
     }
 
     // Try to parse the repaired JSON
+    try {
+      JSON.parse(repaired);
+      return repaired;
+    } catch {
+      // If repair failed, try one more time with more aggressive fixes
+      return this.aggressiveJsonRepair(repaired);
+    }
+  }
+
+  /**
+   * More aggressive JSON repair for difficult cases
+   */
+  private aggressiveJsonRepair(json: string): string | null {
+    let repaired = json.trim();
+    
+    // Remove trailing commas before closing brackets/braces (common error)
+    repaired = repaired.replace(/,(\s*[}\]])/g, '$1');
+    
+    // Try to fix unterminated strings by finding the last quote and closing properly
+    const lastQuoteIndex = repaired.lastIndexOf('"');
+    if (lastQuoteIndex >= 0) {
+      const afterLastQuote = repaired.substring(lastQuoteIndex + 1);
+      // If there's content after last quote but no closing quote, add one
+      if (afterLastQuote.trim().length > 0 && !afterLastQuote.includes('"')) {
+        // Find where the string should end (before next : or , or })
+        const nextSpecial = afterLastQuote.search(/[,\}:]/);
+        if (nextSpecial > 0) {
+          // Insert closing quote before the special character
+          const insertPos = lastQuoteIndex + 1 + nextSpecial;
+          repaired = repaired.substring(0, insertPos) + '"' + repaired.substring(insertPos);
+        } else {
+          // Just close it at the end
+          repaired += '"';
+        }
+      }
+    }
+    
+    // Try parsing again
     try {
       JSON.parse(repaired);
       return repaired;
