@@ -2228,7 +2228,7 @@ export class WorkflowEngine {
     const lines = content.split('\n');
     const sections: string[] = [];
     const seenRanges: Set<string> = new Set();
-    
+
     // Increased limits for better patch context
     const isPhpFile = filePath.endsWith('.php');
     const maxSections = isPhpFile ? 8 : 5; // More sections for PHP
@@ -2269,7 +2269,7 @@ export class WorkflowEngine {
           if (regex.test(lines[i])) {
             let start: number;
             let end: number;
-            
+
             // For PHP files, try to find the complete method body
             if (isPhpFile && this.isMethodDeclaration(lines[i])) {
               // Find method start (including docblock above)
@@ -2291,7 +2291,7 @@ export class WorkflowEngine {
               start = Math.max(0, i - (isPhpFile ? 20 : 10));
               end = Math.min(lines.length, i + (isPhpFile ? 40 : 15));
             }
-            
+
             const rangeKey = `${start}-${end}`;
             if (!seenRanges.has(rangeKey)) {
               seenRanges.add(rangeKey);
@@ -2342,7 +2342,7 @@ export class WorkflowEngine {
    */
   private findMethodStart(lines: string[], methodLineIndex: number): number {
     let start = methodLineIndex;
-    
+
     // Look backwards for docblock or other annotations
     for (let i = methodLineIndex - 1; i >= 0 && i >= methodLineIndex - 30; i--) {
       const line = lines[i].trim();
@@ -2354,7 +2354,7 @@ export class WorkflowEngine {
         break;
       }
     }
-    
+
     return start;
   }
 
@@ -2364,10 +2364,10 @@ export class WorkflowEngine {
   private findMethodEnd(lines: string[], methodLineIndex: number): number {
     let braceCount = 0;
     let foundOpenBrace = false;
-    
+
     for (let i = methodLineIndex; i < lines.length && i < methodLineIndex + 300; i++) {
       const line = lines[i];
-      
+
       // Count braces (simple approach - doesn't handle strings/comments perfectly)
       for (const char of line) {
         if (char === '{') {
@@ -2381,7 +2381,7 @@ export class WorkflowEngine {
         }
       }
     }
-    
+
     // Fallback if we can't find the end
     return Math.min(lines.length, methodLineIndex + 100);
   }

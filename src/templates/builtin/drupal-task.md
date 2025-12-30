@@ -207,6 +207,21 @@ For a task "Fix DRUPAL_ROOT path to use dirname()":
 }
 ```
 
+## DEBUGGING TASKS
+
+If the task asks to "add logging" or "debug", your patches should:
+1. Add `\Drupal::logger('openapi_entity')->debug()` statements
+2. Log the values of key variables
+3. NOT change any logic - only add visibility
+
+Example debug patch:
+```json
+{
+  "search": "    $entity->save();\n",
+  "replace": "    \\Drupal::logger('openapi_entity')->debug('Saving entity @id with @count mappings', [\n      '@id' => $entity->id(),\n      '@count' => count($schema_mapping_ids),\n    ]);\n    $entity->save();\n"
+}
+```
+
 ## Requirements
 
 1. **PATCH large files** (over 500 lines) - use search/replace patches
@@ -219,4 +234,5 @@ For a task "Fix DRUPAL_ROOT path to use dirname()":
 8. Keep the total JSON response under 5000 characters to avoid truncation
 9. **For deletions**: Use empty string `""` as replace value, include full block with surrounding whitespace
 10. **Verify paths**: `etc/` folder is at project root, use `dirname(DRUPAL_ROOT)` not `DRUPAL_ROOT`
+11. **SMALLEST POSSIBLE PATCHES**: Each patch search should be 1-3 lines maximum to reduce match errors
 

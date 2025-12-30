@@ -182,13 +182,13 @@ export class ValidationGate {
   private tryFuzzyMatch(content: string, search: string): string | null {
     // Normalize the search string for comparison
     const normalizedSearch = this.normalizeWhitespace(search);
-    
+
     // Find all meaningful code lines in search (non-empty, not just whitespace/braces)
     const searchLines = search.split('\n');
     const meaningfulSearchLines = searchLines
       .map(l => l.trim())
       .filter(l => l.length > 5 && !l.match(/^[{}\s]*$/));
-    
+
     if (meaningfulSearchLines.length === 0) {
       return null;
     }
@@ -196,21 +196,21 @@ export class ValidationGate {
     // Find the first meaningful line in the content
     const firstLine = meaningfulSearchLines[0];
     const contentLines = content.split('\n');
-    
+
     for (let i = 0; i < contentLines.length; i++) {
       const contentLine = contentLines[i].trim();
-      
+
       // Check if this line matches the first meaningful line
       if (contentLine === firstLine || this.similarity(contentLine, firstLine) > 0.9) {
         // Found a potential match - try to extract the same number of lines
         const extractStart = Math.max(0, i - 3); // Look a bit before for context
-        
+
         // Try different window sizes around the match
         for (let windowStart = extractStart; windowStart <= i; windowStart++) {
           for (let windowSize = searchLines.length; windowSize <= searchLines.length + 5; windowSize++) {
             const windowEnd = Math.min(contentLines.length, windowStart + windowSize);
             const extractedContent = contentLines.slice(windowStart, windowEnd).join('\n');
-            
+
             // Check if this section semantically matches
             if (this.normalizeWhitespace(extractedContent) === normalizedSearch) {
               if (this.debug) {
