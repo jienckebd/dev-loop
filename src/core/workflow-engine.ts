@@ -1129,6 +1129,18 @@ export class WorkflowEngine {
               continue;
             }
 
+            // Enhancement: Validate YAML service references before applying
+            if (fileExtension === '.yml' && file.path.includes('.services.yml')) {
+              const invalidRefs = await this.validateYamlServiceReferences(patch.replace);
+              if (invalidRefs.length > 0) {
+                const skipMsg = `PATCH_SKIPPED: File ${file.path}, patch ${i + 1}: Uses non-existent service(s): ${invalidRefs.join(', ')}. These services do not exist in the registry.`;
+                console.warn(`[WorkflowEngine] ${skipMsg}`);
+                skippedPatches.push(skipMsg);
+                patchesSkipped++;
+                continue;
+              }
+            }
+
             // Enhancement 3: Improved patch matching with fuzzy fallback
             let patchApplied = false;
             if (content.includes(patch.search)) {
@@ -1305,6 +1317,36 @@ export class WorkflowEngine {
   /**
    * Check if applying a patch would create a duplicate method declaration
    */
+  /**
+   * Check if a YAML services patch uses service references that don't exist.
+   * Returns array of invalid service names if any, or empty array if valid.
+   */
+  private async validateYamlServiceReferences(patchContent: string): Promise<string[]> {
+    // Extract service references from the patch (format: @service.name or '@service.name')
+    const serviceRefPattern = /@([a-zA-Z_][a-zA-Z0-9_\.]*)/g;
+    const referencedServices: string[] = [];
+    let match;
+    
+    while ((match = serviceRefPattern.exec(patchContent)) !== null) {
+      const serviceName = match[1];
+      if (!referencedServices.includes(serviceName)) {
+        referencedServices.push(serviceName);
+      }
+    }
+
+    if (referencedServices.length === 0) {
+      return [];
+    }
+
+    // Get available services
+    const availableServices = await this.extractDrupalServices();
+    
+    // Find invalid references
+    const invalidRefs = referencedServices.filter(ref => !availableServices.includes(ref));
+    
+    return invalidRefs;
+  }
+
   private wouldCreateDuplicateMethod(content: string, patchReplace: string): boolean {
     // Extract method name from patch replacement
     const methodName = this.extractMethodNameFromPatch(patchReplace);
@@ -1522,6 +1564,80 @@ export class WorkflowEngine {
   }
 
   /**
+   * Extract Drupal service definitions from .services.yml files in the workspace.
+   * Returns a list of service names that can be used in dependency injection.
+   */
+  private async extractDrupalServices(): Promise<string[]> {
+    const services: string[] = [];
+    const servicesDir = path.join(process.cwd(), 'docroot/modules/share');
+    
+    try {
+      // Find all .services.yml files
+      const glob = await import('glob');
+      const serviceFiles = await glob.glob('**/*.services.yml', {
+        cwd: servicesDir,
+        absolute: true,
+      });
+
+      for (const file of serviceFiles) {
+        try {
+          const content = await fs.readFile(file, 'utf-8');
+          // Match service definitions (lines starting with 2 spaces followed by service name and colon)
+          const servicePattern = /^  ([a-zA-Z_][a-zA-Z0-9_\.]*):$/gm;
+          let match;
+          while ((match = servicePattern.exec(content)) !== null) {
+            const serviceName = match[1];
+            if (!services.includes(serviceName)) {
+              services.push(serviceName);
+            }
+          }
+        } catch {
+          // Skip files that can't be read
+        }
+      }
+    } catch (err) {
+      if (this.debug) {
+        console.log('[DEBUG] Could not extract Drupal services:', err);
+      }
+    }
+
+    return services.sort();
+  }
+
+  /**
+   * Get Drupal service registry context for AI prompts.
+   * This helps prevent the AI from using non-existent service names.
+   */
+  private async getDrupalServiceContext(): Promise<string> {
+    const services = await this.extractDrupalServices();
+    
+    if (services.length === 0) {
+      return '';
+    }
+
+    // Group services by prefix for readability
+    const grouped: Record<string, string[]> = {};
+    for (const service of services) {
+      const prefix = service.split('.')[0];
+      if (!grouped[prefix]) {
+        grouped[prefix] = [];
+      }
+      grouped[prefix].push(service);
+    }
+
+    let context = '\n### DRUPAL SERVICE REGISTRY (USE ONLY THESE SERVICE NAMES)\n';
+    context += 'When adding service dependencies in *.services.yml files, ONLY use services from this list:\n\n';
+    
+    for (const [prefix, prefixServices] of Object.entries(grouped)) {
+      context += `**${prefix}.***: ${prefixServices.join(', ')}\n`;
+    }
+
+    context += '\n**CRITICAL**: Do NOT invent service names. If a service does not exist in this list, do not use it.\n';
+
+    return context;
+  }
+
+  /**
    * Calculate Levenshtein distance between two strings
    */
   private levenshteinDistance(str1: string, str2: string): number {
@@ -1734,10 +1850,26 @@ export class WorkflowEngine {
       console.log(`[DEBUG] Files mentioned but not found/skipped: ${mentionedFiles.filter(f => !validFiles.includes(f)).join(', ')}`);
     }
 
+    // Add Drupal service registry context for Drupal projects
+    let serviceContext = '';
+    const isDrupalProject = validFiles.some(f => f.includes('.services.yml') || f.includes('docroot/modules'));
+    if (isDrupalProject) {
+      try {
+        serviceContext = await this.getDrupalServiceContext();
+        if (this.debug && serviceContext) {
+          console.log(`[DEBUG] Added Drupal service registry context (${serviceContext.length} chars)`);
+        }
+      } catch (err) {
+        if (this.debug) {
+          console.log('[DEBUG] Could not get Drupal service context:', err);
+        }
+      }
+    }
+
     return {
       codebaseContext: contexts.length > 0
-        ? `## Existing Code Files (MODIFY THESE, DO NOT CREATE NEW FILES UNLESS NECESSARY)\n${contexts.join('\n---\n')}`
-        : '',
+        ? `## Existing Code Files (MODIFY THESE, DO NOT CREATE NEW FILES UNLESS NECESSARY)\n${contexts.join('\n---\n')}${serviceContext}`
+        : serviceContext,
       targetFiles: validFiles.length > 0 ? validFiles.join('\n') : undefined,
       existingCode: existingCodeSections.length > 0 ? existingCodeSections.join('\n---\n') : undefined,
     };
