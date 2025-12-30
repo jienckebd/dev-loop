@@ -993,42 +993,107 @@ The Model Context Protocol (MCP) is a standard for AI assistants to interact wit
 
 ### Architecture Overview
 
-**With Both MCP Servers Enabled:**
+Both Task Master and Dev-Loop MCP servers work together, but their usage patterns differ between evolution mode and non-evolution mode.
+
+#### Non-Evolution Mode (Direct Task Execution)
+
+In non-evolution mode, you (the Cursor agent) directly implement tasks using Task Master for task management:
+
+```mermaid
+flowchart TB
+    subgraph cursor["Cursor Agent (You)"]
+        implement["Implement Code Changes"]
+        test["Run Tests"]
+    end
+
+    subgraph mcp["MCP Servers"]
+        tm["Task Master MCP<br/>─────────────────<br/>• get_tasks<br/>• next_task<br/>• set_task_status<br/>• expand_task"]
+        dl["Dev-Loop MCP<br/>─────────────────<br/>• devloop_status<br/>• devloop_diagnose<br/>• devloop_validate"]
+    end
+
+    tasks[("tasks.json<br/>(source of truth)")]
+    codebase["Project Codebase<br/>(docroot/, tests/, config/)"]
+
+    cursor -->|"1. Query tasks"| tm
+    tm -->|"2. Read/write"| tasks
+    cursor -->|"3. Edit files directly"| codebase
+    cursor -->|"4. Run tests"| codebase
+    cursor -->|"5. Update status"| tm
+    cursor -.->|"Optional: diagnose failures"| dl
 ```
-┌─────────────────────────────────────────────────────────────┐
-│                    Cursor Agent (Outer)                      │
-│              (AI Assistant in Evolution Mode)                │
-└─────────────────────────────────────────────────────────────┘
-        │                              │
-        │ MCP Tools                    │ MCP Tools
-        ▼                              ▼
-┌──────────────────────┐    ┌──────────────────────┐
-│  Task Master MCP     │    │  Dev-Loop MCP        │
-│  (37+ tools)         │    │  (17+ tools)         │
-│                      │    │                      │
-│  - parse_prd         │    │  - devloop_run       │
-│  - add_task          │    │  - devloop_status    │
-│  - list_tasks        │    │  - devloop_prd       │
-│  - set_status        │    │  - devloop_diagnose  │
-│  - expand_task       │    │  - devloop_pause     │
-│  - etc.              │    │  - devloop_evolution │
-└──────────────────────┘    └──────────────────────┘
-        │                              │
-        │                              │
-        └──────────────┬───────────────┘
-                       │
-                       ▼
-        ┌──────────────────────────────┐
-        │      tasks.json (shared)      │
-        │   (source of truth)           │
-        └──────────────────────────────┘
-                       │
-                       ▼
-        ┌──────────────────────────────┐
-        │   Dev-Loop Inner Agent        │
-        │   (executes tasks, runs tests)│
-        └──────────────────────────────┘
+
+**Workflow:**
+1. Use Task Master MCP to query available tasks (`get_tasks`, `next_task`)
+2. Implement the task by editing code directly
+3. Run tests to verify changes
+4. Update task status via Task Master MCP (`set_task_status`)
+
+#### Evolution Mode (Autonomous Development)
+
+In evolution mode, a **two-agent architecture** enables autonomous development. The outer agent (you) orchestrates while the inner agent implements:
+
+```mermaid
+flowchart TB
+    subgraph outer["Outer Agent (Cursor - You)"]
+        direction TB
+        observe["Observe Progress"]
+        enhance["Enhance Dev-Loop"]
+        update["Update PRD/Tasks"]
+    end
+
+    subgraph mcp["MCP Servers"]
+        tm["Task Master MCP<br/>─────────────────<br/>• parse_prd<br/>• add_task<br/>• expand_task<br/>• set_task_status"]
+        dlmcp["Dev-Loop MCP<br/>─────────────────<br/>• devloop_evolution_start<br/>• devloop_evolution_status<br/>• devloop_evolution_stop<br/>• devloop_diagnose"]
+    end
+
+    tasks[("tasks.json<br/>(shared state)")]
+    state[(".devloop/<br/>evolution state")]
+
+    subgraph inner["Inner Agent (Dev-Loop Spawned)"]
+        direction TB
+        fetch["Fetch Next Task"]
+        impl["Implement Changes"]
+        test["Run Tests"]
+        report["Report Results"]
+    end
+
+    codebase["Project Codebase<br/>(docroot/, tests/, config/)"]
+    devloop["packages/dev-loop/<br/>(outer agent scope)"]
+
+    outer -->|"1. Start evolution"| dlmcp
+    outer -->|"2. Add/update tasks"| tm
+    tm -->|"Read/write"| tasks
+    dlmcp -->|"Manage"| state
+    dlmcp -->|"3. Spawn & monitor"| inner
+    inner -->|"4. Query tasks"| tasks
+    inner -->|"5. Edit code"| codebase
+    inner -->|"6. Update status"| tasks
+    outer -.->|"7. If stuck, enhance"| devloop
+    outer -->|"8. Check status"| dlmcp
 ```
+
+**Workflow:**
+1. Start evolution mode via Dev-Loop MCP (`devloop_evolution_start`)
+2. Create/update tasks via Task Master MCP (`parse_prd`, `add_task`)
+3. Dev-Loop spawns inner agent to implement tasks autonomously
+4. Inner agent fetches tasks, implements code, runs tests, updates status
+5. Outer agent monitors progress via Dev-Loop MCP (`devloop_evolution_status`)
+6. If inner agent gets stuck, outer agent can:
+   - Enhance dev-loop (edit `packages/dev-loop/`)
+   - Update tasks/PRD (via Task Master MCP)
+   - Diagnose failures (`devloop_diagnose`)
+7. Repeat until PRD is complete
+
+#### Key Differences
+
+| Aspect | Non-Evolution Mode | Evolution Mode |
+|--------|-------------------|----------------|
+| **Who implements?** | You (Cursor agent) | Inner agent (spawned by dev-loop) |
+| **Your role** | Direct implementation | Orchestration & enhancement |
+| **Code editing** | You edit all files | You only edit `packages/dev-loop/` |
+| **Task Master use** | Task tracking | Task creation & management |
+| **Dev-Loop use** | Optional diagnostics | Core orchestration |
+| **Autonomy** | Manual | Autonomous with oversight |
 
 ### Setting Up Both MCP Servers
 
