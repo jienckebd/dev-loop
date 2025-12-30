@@ -344,7 +344,8 @@ export class WorkflowEngine {
 
       // NEW: Analyze task description for complex issues BEFORE execution
       // Skip analysis for investigation tasks (they shouldn't create more investigation tasks)
-      let isInvestigationTask = task.id.startsWith('investigation-');
+      const taskIdStr = String(task.id);
+      let isInvestigationTask = taskIdStr.startsWith('investigation-');
       if (!isInvestigationTask && (task as any).details) {
         try {
           const parsedDetails = JSON.parse((task as any).details);
@@ -356,45 +357,79 @@ export class WorkflowEngine {
 
       if (!isInvestigationTask && this.debuggingStrategyAdvisor && this.investigationTaskGenerator) {
         try {
-          const taskDescription = task.description || '';
-          const taskDetails = (task as any).details || '';
-          const combinedDescription = `${taskDescription}\n\n${taskDetails}`;
-
-          const framework = (this.config as any).framework?.type;
-          const classification = this.debuggingStrategyAdvisor.classifyError(combinedDescription, {
-            framework,
-            components: this.extractComponentsFromError(combinedDescription),
-            hasMultipleComponents: this.hasMultipleComponents(combinedDescription),
-            previousFixAttempts: await this.getPreviousFixAttempts(task.id),
+          // Check if investigation tasks already exist for this parent task
+          const allTasks = await this.taskBridge.getAllTasks();
+          const taskIdStr = String(task.id);
+          const existingInvestigationTasks = allTasks.filter((t: any) => {
+            const tIdStr = String(t.id);
+            if (!tIdStr.startsWith('investigation-')) return false;
+            // Check if this investigation task is for the current parent task
+            try {
+              const details = typeof t.details === 'string' ? JSON.parse(t.details) : t.details;
+              return String(details?.parentTaskId) === taskIdStr;
+            } catch {
+              return tIdStr.includes(`investigation-${taskIdStr}-`);
+            }
           });
 
-          // Generate investigation tasks if needed
-          if (classification.needsInvestigation) {
-            // Get target files first (needed for investigation tasks)
-            const { targetFiles } = await this.getCodebaseContext(task);
+          if (existingInvestigationTasks.length > 0) {
+            // Investigation tasks already exist - check if they're all done
+            const pendingInvTasks = existingInvestigationTasks.filter((t: any) => t.status === 'pending' || t.status === 'in-progress');
+            if (pendingInvTasks.length > 0) {
+              if (this.debug) {
+                console.log(`[WorkflowEngine] Task ${task.id} has ${pendingInvTasks.length} pending investigation tasks - skipping, will run investigation tasks first`);
+              }
+              // Don't create more investigation tasks, just wait for existing ones
+              await this.taskBridge.updateTaskStatus(task.id, 'pending');
+              await this.updateState({ status: 'idle' });
+              return { completed: false, noTasks: false };
+            }
+            // All investigation tasks are done - proceed with main task
+            if (this.debug) {
+              console.log(`[WorkflowEngine] All investigation tasks for task ${task.id} are complete - proceeding with main task`);
+            }
+          } else {
+            // No investigation tasks exist - check if we need to create them
+            const taskDescription = task.description || '';
+            const taskDetails = (task as any).details || '';
+            const combinedDescription = `${taskDescription}\n\n${taskDetails}`;
 
-            const invTasks = this.investigationTaskGenerator.generateInvestigationTasks(combinedDescription, {
+            const framework = (this.config as any).framework?.type;
+            const classification = this.debuggingStrategyAdvisor.classifyError(combinedDescription, {
               framework,
               components: this.extractComponentsFromError(combinedDescription),
-              targetFiles: targetFiles?.split('\n').filter(f => f.trim()),
+              hasMultipleComponents: this.hasMultipleComponents(combinedDescription),
               previousFixAttempts: await this.getPreviousFixAttempts(task.id),
             });
 
-            if (invTasks.length > 0) {
-              console.log(`[WorkflowEngine] Task requires investigation - creating ${invTasks.length} investigation task(s) first`);
-              for (const invTask of invTasks) {
-                const taskMasterTask = this.investigationTaskGenerator.toTaskMasterTask(invTask, task.id);
-                await this.taskBridge.createTask(taskMasterTask as any);
-                if (this.debug) {
-                  console.log(`[WorkflowEngine] Created investigation task: ${invTask.title}`);
-                }
-              }
+            // Generate investigation tasks if needed
+            if (classification.needsInvestigation) {
+              // Get target files first (needed for investigation tasks)
+              const { targetFiles } = await this.getCodebaseContext(task);
 
-              // Mark original task as pending to wait for investigation
-              await this.taskBridge.updateTaskStatus(task.id, 'pending');
-              console.log(`[WorkflowEngine] Task ${task.id} marked as pending - investigation tasks must complete first`);
-              await this.updateState({ status: 'idle' });
-              return { completed: false, noTasks: false }; // Exit early - investigation tasks created
+              const invTasks = this.investigationTaskGenerator.generateInvestigationTasks(combinedDescription, {
+                framework,
+                components: this.extractComponentsFromError(combinedDescription),
+                targetFiles: targetFiles?.split('\n').filter(f => f.trim()),
+                previousFixAttempts: await this.getPreviousFixAttempts(task.id),
+              });
+
+              if (invTasks.length > 0) {
+                console.log(`[WorkflowEngine] Task requires investigation - creating ${invTasks.length} investigation task(s) first`);
+                for (const invTask of invTasks) {
+                  const taskMasterTask = this.investigationTaskGenerator.toTaskMasterTask(invTask, task.id);
+                  await this.taskBridge.createTask(taskMasterTask as any);
+                  if (this.debug) {
+                    console.log(`[WorkflowEngine] Created investigation task: ${invTask.title}`);
+                  }
+                }
+
+                // Mark original task as pending to wait for investigation
+                await this.taskBridge.updateTaskStatus(task.id, 'pending');
+                console.log(`[WorkflowEngine] Task ${task.id} marked as pending - investigation tasks must complete first`);
+                await this.updateState({ status: 'idle' });
+                return { completed: false, noTasks: false }; // Exit early - investigation tasks created
+              }
             }
           }
         } catch (err) {

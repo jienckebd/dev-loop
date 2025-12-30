@@ -77,6 +77,10 @@ export class DebuggingStrategyAdvisor {
       'SEARCH FOR THIS EXACT STRING', // Exact fix pattern
       '$ENTITY->SAVE()', // Specific code to change
       'LINE ', // References specific line number
+      'IMPLEMENT ', // Implementation task (not debugging)
+      '::ENSUR', // Method implementation (e.g., ensureFieldConfig)
+      '::HOOK_', // Hook implementation
+      'USE MAPPING:', // Explicit mapping instruction
     ];
 
     const hasFixIndicator = fixIndicators.some(indicator => upperText.includes(indicator));
