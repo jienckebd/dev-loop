@@ -2,7 +2,7 @@
 
 /**
  * Dev-Loop MCP Server (ESM Module)
- * 
+ *
  * This is a separate ESM entry point for the MCP server since fastmcp requires ESM.
  * It dynamically imports the CommonJS modules from dev-loop.
  */
@@ -15,7 +15,24 @@ import { fileURLToPath } from 'url';
 import { config as dotenvConfig } from 'dotenv';
 
 // Load .env file from current working directory
-dotenvConfig({ path: path.join(process.cwd(), '.env') });
+const envPath = path.join(process.cwd(), '.env');
+const dotenvResult = dotenvConfig({ path: envPath });
+
+// Debug: Write dotenv loading result to a debug file
+const debugInfo = {
+  timestamp: new Date().toISOString(),
+  cwd: process.cwd(),
+  envPath,
+  dotenvLoaded: !dotenvResult.error,
+  dotenvError: dotenvResult.error?.message,
+  anthropicKeySet: !!process.env.ANTHROPIC_API_KEY,
+  anthropicKeyPrefix: process.env.ANTHROPIC_API_KEY?.substring(0, 20) || 'NOT_SET',
+};
+try {
+  fs.writeFileSync('/tmp/dev-loop-mcp-debug.json', JSON.stringify(debugInfo, null, 2));
+} catch (e) {
+  // Silently fail
+}
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -26,13 +43,13 @@ const MCP_LOG_PATH = process.env.MCP_LOG_PATH || '/tmp/dev-loop-mcp.log';
 function logMcp(type: 'REQUEST' | 'RESPONSE' | 'ERROR', toolName: string, data: any): void {
   const timestamp = new Date().toISOString();
   const logLine = `[${timestamp}] ${type} ${toolName}: ${JSON.stringify(data)}\n`;
-  
+
   try {
     fs.appendFileSync(MCP_LOG_PATH, logLine);
   } catch (e) {
     // Silently fail if we can't write to log
   }
-  
+
   // Also output to stderr for debug visibility (MCP uses stdout for protocol)
   if (process.env.MCP_DEBUG === 'true') {
     console.error(`[MCP ${type}] ${toolName}:`, JSON.stringify(data, null, 2));
@@ -84,7 +101,7 @@ addLoggedTool({
     // Dynamic import of CommonJS modules
     const { loadConfig } = await import('../config/loader.js');
     const { WorkflowEngine } = await import('../core/workflow-engine.js');
-    
+
     const config = await loadConfig(args.config);
     if (args.debug) {
       (config as any).debug = true;
@@ -111,7 +128,7 @@ addLoggedTool({
   execute: async (args: { config?: string }) => {
     const { loadConfig } = await import('../config/loader.js');
     const { StateManager } = await import('../core/state-manager.js');
-    
+
     const config = await loadConfig(args.config);
     const stateManager = new StateManager(config);
     const state = await stateManager.getWorkflowState();
@@ -141,7 +158,7 @@ addLoggedTool({
   execute: async (args: { config?: string; status?: string }) => {
     const { loadConfig } = await import('../config/loader.js');
     const { TaskMasterBridge } = await import('../core/task-bridge.js');
-    
+
     const config = await loadConfig(args.config);
     const taskBridge = new TaskMasterBridge(config);
 
@@ -182,7 +199,7 @@ addLoggedTool({
   execute: async (args: { prdPath: string; config?: string; debug?: boolean; resume?: boolean }) => {
     const { loadConfig } = await import('../config/loader.js');
     const { prdCommand } = await import('../cli/commands/prd.js');
-    
+
     const config = await loadConfig(args.config);
     if (args.debug) {
       (config as any).debug = true;
@@ -223,10 +240,10 @@ addLoggedTool({
   execute: async (args: { prd: string; config?: string }) => {
     const { loadConfig } = await import('../config/loader.js');
     const { PrdTracker } = await import('../core/prd-tracker.js');
-    
+
     const config = await loadConfig(args.config);
     const prdTracker = new PrdTracker(config);
-    
+
     // Initialize evolution mode state
     const evolutionState = {
       active: true,
@@ -234,11 +251,11 @@ addLoggedTool({
       startedAt: new Date().toISOString(),
       iterations: 0,
     };
-    
+
     const statePath = path.join(process.cwd(), '.devloop', 'evolution-state.json');
     fs.mkdirSync(path.dirname(statePath), { recursive: true });
     fs.writeFileSync(statePath, JSON.stringify(evolutionState, null, 2));
-    
+
     return JSON.stringify({
       success: true,
       message: 'Evolution mode started',
@@ -253,7 +270,7 @@ addLoggedTool({
   parameters: z.object({}),
   execute: async () => {
     const statePath = path.join(process.cwd(), '.devloop', 'evolution-state.json');
-    
+
     try {
       const content = fs.readFileSync(statePath, 'utf-8');
       const state = JSON.parse(content);
@@ -276,14 +293,14 @@ addLoggedTool({
   parameters: z.object({}),
   execute: async () => {
     const statePath = path.join(process.cwd(), '.devloop', 'evolution-state.json');
-    
+
     try {
       const content = fs.readFileSync(statePath, 'utf-8');
       const state = JSON.parse(content);
       state.active = false;
       state.stoppedAt = new Date().toISOString();
       fs.writeFileSync(statePath, JSON.stringify(state, null, 2));
-      
+
       return JSON.stringify({
         success: true,
         message: 'Evolution mode stopped',
@@ -312,7 +329,7 @@ addLoggedTool({
   execute: async (args: { lines?: number; source?: string }) => {
     const lines = args.lines || 50;
     const source = args.source || 'mcp';
-    
+
     let logPath: string;
     switch (source) {
       case 'mcp':
@@ -324,12 +341,12 @@ addLoggedTool({
       default:
         logPath = MCP_LOG_PATH;
     }
-    
+
     try {
       const content = fs.readFileSync(logPath, 'utf-8');
       const allLines = content.split('\n');
       const lastLines = allLines.slice(-lines).join('\n');
-      
+
       return JSON.stringify({
         source,
         lines: lastLines,
@@ -352,13 +369,13 @@ addLoggedTool({
   execute: async (args: { taskId?: string }) => {
     const { loadConfig } = await import('../config/loader.js');
     const { TaskMasterBridge } = await import('../core/task-bridge.js');
-    
+
     const config = await loadConfig();
     const taskBridge = new TaskMasterBridge(config);
-    
+
     const allTasks = await taskBridge.getAllTasks();
     const failedTasks = allTasks.filter((t: any) => t.status === 'failed' || t.status === 'blocked');
-    
+
     return JSON.stringify({
       failedTasks: failedTasks.map((t: any) => ({
         id: t.id,
@@ -384,10 +401,10 @@ addLoggedTool({
   execute: async (args: { taskId?: string }) => {
     const { loadConfig } = await import('../config/loader.js');
     const { TaskMasterBridge } = await import('../core/task-bridge.js');
-    
+
     const config = await loadConfig();
     const taskBridge = new TaskMasterBridge(config);
-    
+
     if (args.taskId === 'all') {
       const allTasks = await taskBridge.getAllTasks();
       for (const task of allTasks) {
@@ -404,7 +421,7 @@ addLoggedTool({
         message: `Reset task ${args.taskId} to pending`,
       });
     }
-    
+
     return JSON.stringify({
       success: false,
       error: 'No task ID provided',
@@ -420,10 +437,10 @@ addLoggedTool({
   }),
   execute: async (args: { config?: string }) => {
     const { loadConfig } = await import('../config/loader.js');
-    
+
     try {
       const config = await loadConfig(args.config);
-      
+
       // Check essential config
       const checks = {
         configLoaded: true,
@@ -431,9 +448,9 @@ addLoggedTool({
         testingConfigured: !!config.testing?.runner,
         logsConfigured: !!config.logs?.sources,
       };
-      
+
       const allPassed = Object.values(checks).every(Boolean);
-      
+
       return JSON.stringify({
         valid: allPassed,
         checks,

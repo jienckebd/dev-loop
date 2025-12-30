@@ -2221,14 +2221,18 @@ export class WorkflowEngine {
   }
 
   /**
-   * Extract relevant sections from a large file based on keywords
+   * Extract relevant sections from a large file based on keywords.
+   * For PHP files, extracts complete method bodies when method names are matched.
    */
   private extractRelevantSections(content: string, keywords: string[], filePath: string): string | null {
     const lines = content.split('\n');
     const sections: string[] = [];
     const seenRanges: Set<string> = new Set();
-    const maxSections = 5; // Limit number of sections to prevent massive context
-    const maxTotalChars = 10000; // Limit total chars from this file
+    
+    // Increased limits for better patch context
+    const isPhpFile = filePath.endsWith('.php');
+    const maxSections = isPhpFile ? 8 : 5; // More sections for PHP
+    const maxTotalChars = isPhpFile ? 30000 : 10000; // Much more context for PHP
     let totalChars = 0;
 
     // First, handle LINE: markers
@@ -2252,7 +2256,7 @@ export class WorkflowEngine {
       }
     }
 
-    // Search for keyword occurrences in the file
+    // For PHP files, try to extract complete method bodies when a method name is found
     const keywordPatterns = keywords.filter(k => !k.startsWith('LINE:'));
     for (const keyword of keywordPatterns) {
       if (sections.length >= maxSections || totalChars >= maxTotalChars) break;
@@ -2263,8 +2267,31 @@ export class WorkflowEngine {
           if (sections.length >= maxSections || totalChars >= maxTotalChars) break;
 
           if (regex.test(lines[i])) {
-            const start = Math.max(0, i - 10);
-            const end = Math.min(lines.length, i + 15);
+            let start: number;
+            let end: number;
+            
+            // For PHP files, try to find the complete method body
+            if (isPhpFile && this.isMethodDeclaration(lines[i])) {
+              // Find method start (including docblock above)
+              start = this.findMethodStart(lines, i);
+              // Find method end (closing brace)
+              end = this.findMethodEnd(lines, i);
+            } else if (isPhpFile && this.isInsideMethod(lines, i)) {
+              // We're inside a method, find the method boundaries
+              const methodStart = this.findContainingMethodStart(lines, i);
+              if (methodStart >= 0) {
+                start = this.findMethodStart(lines, methodStart);
+                end = this.findMethodEnd(lines, methodStart);
+              } else {
+                start = Math.max(0, i - 15);
+                end = Math.min(lines.length, i + 25);
+              }
+            } else {
+              // Default: expand context for PHP, keep smaller for other files
+              start = Math.max(0, i - (isPhpFile ? 20 : 10));
+              end = Math.min(lines.length, i + (isPhpFile ? 40 : 15));
+            }
+            
             const rangeKey = `${start}-${end}`;
             if (!seenRanges.has(rangeKey)) {
               seenRanges.add(rangeKey);
@@ -2291,6 +2318,84 @@ export class WorkflowEngine {
     }
 
     return null;
+  }
+
+  /**
+   * Check if a line is a PHP method declaration
+   */
+  private isMethodDeclaration(line: string): boolean {
+    // Match public/protected/private function declarations
+    return /^\s*(public|protected|private)\s+(static\s+)?function\s+\w+\s*\(/.test(line);
+  }
+
+  /**
+   * Check if we're inside a method body (has leading whitespace typical of method body)
+   */
+  private isInsideMethod(lines: string[], lineIndex: number): boolean {
+    const line = lines[lineIndex];
+    // Method body lines typically have 4+ spaces of indentation
+    return /^\s{4,}/.test(line) && !/^\s*(public|protected|private|class|interface|trait)\s+/.test(line);
+  }
+
+  /**
+   * Find the start of a method including its docblock
+   */
+  private findMethodStart(lines: string[], methodLineIndex: number): number {
+    let start = methodLineIndex;
+    
+    // Look backwards for docblock or other annotations
+    for (let i = methodLineIndex - 1; i >= 0 && i >= methodLineIndex - 30; i--) {
+      const line = lines[i].trim();
+      if (line === '' || line.startsWith('*') || line.startsWith('/**') || line.startsWith('*/') || line.startsWith('#[')) {
+        start = i;
+      } else if (line.startsWith('//')) {
+        start = i;
+      } else {
+        break;
+      }
+    }
+    
+    return start;
+  }
+
+  /**
+   * Find the end of a method (matching closing brace)
+   */
+  private findMethodEnd(lines: string[], methodLineIndex: number): number {
+    let braceCount = 0;
+    let foundOpenBrace = false;
+    
+    for (let i = methodLineIndex; i < lines.length && i < methodLineIndex + 300; i++) {
+      const line = lines[i];
+      
+      // Count braces (simple approach - doesn't handle strings/comments perfectly)
+      for (const char of line) {
+        if (char === '{') {
+          braceCount++;
+          foundOpenBrace = true;
+        } else if (char === '}') {
+          braceCount--;
+          if (foundOpenBrace && braceCount === 0) {
+            return i + 1; // Include the closing brace line
+          }
+        }
+      }
+    }
+    
+    // Fallback if we can't find the end
+    return Math.min(lines.length, methodLineIndex + 100);
+  }
+
+  /**
+   * Find the method declaration line for a line that's inside a method body
+   */
+  private findContainingMethodStart(lines: string[], lineIndex: number): number {
+    for (let i = lineIndex; i >= 0 && i >= lineIndex - 200; i--) {
+      if (this.isMethodDeclaration(lines[i])) {
+        return i;
+      }
+    }
+    return -1;
   }
 
   /**
