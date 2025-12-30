@@ -233,7 +233,19 @@ ${prompt}`;
           }
         }
 
-        // Try code block without json marker
+        // Try code block without json marker (but with language hint)
+        if (!jsonText) {
+          const plainBlockMatch = text.match(/```(?:typescript|ts|javascript|js)?\s*([\s\S]*?)\s*```/);
+          if (plainBlockMatch) {
+            const blockContent = plainBlockMatch[1].trim();
+            // Check if it looks like JSON (starts with { and has "files" key)
+            if (blockContent.startsWith('{') && (blockContent.includes('"files"') || blockContent.includes("'files'"))) {
+              jsonText = blockContent;
+            }
+          }
+        }
+
+        // Try plain code block (no language marker)
         if (!jsonText) {
           const plainBlockMatch = text.match(/```\s*([\s\S]*?)\s*```/);
           if (plainBlockMatch) {
@@ -246,6 +258,7 @@ ${prompt}`;
 
         // Handle truncated code blocks (no closing ```)
         if (!jsonText) {
+          // Try with json marker
           const truncatedMatch = text.match(/```json\s*([\s\S]*)$/);
           if (truncatedMatch) {
             const blockContent = truncatedMatch[1].trim();
@@ -254,14 +267,70 @@ ${prompt}`;
               jsonText = blockContent;
             }
           }
+          
+          // Try without marker
+          if (!jsonText) {
+            const truncatedPlainMatch = text.match(/```\s*([\s\S]*)$/);
+            if (truncatedPlainMatch) {
+              const blockContent = truncatedPlainMatch[1].trim();
+              if (blockContent.startsWith('{') && blockContent.includes('"files"')) {
+                console.warn('[Anthropic] Response appears truncated (no closing ```), attempting to repair JSON');
+                jsonText = blockContent;
+              }
+            }
+          }
         }
 
         // Try to find JSON object with "files" key (our expected format) - improved regex
         if (!jsonText) {
           // More flexible matching for "files" array and "summary" field
-          const filesJsonMatch = text.match(/\{\s*"files"\s*:\s*\[[\s\S]*?\]\s*,\s*"summary"\s*:\s*"[^"]*"\s*\}/);
+          // Allow for optional whitespace and flexible structure
+          const filesJsonMatch = text.match(/\{\s*"files"\s*:\s*\[[\s\S]*?\]\s*(?:,\s*"summary"\s*:\s*"[^"]*")?\s*\}/);
           if (filesJsonMatch) {
             jsonText = filesJsonMatch[0];
+          }
+        }
+        
+        // Try to find JSON that starts with "files" key (alternative structure)
+        if (!jsonText) {
+          const altFilesMatch = text.match(/\{\s*"files"\s*:\s*\[/);
+          if (altFilesMatch && altFilesMatch.index !== undefined) {
+            // Find matching closing brace from the start
+            const startIdx = altFilesMatch.index;
+            let depth = 0;
+            let inString = false;
+            let escaped = false;
+            let endIdx = startIdx;
+            
+            for (let i = startIdx; i < text.length; i++) {
+              const char = text[i];
+              if (escaped) {
+                escaped = false;
+                continue;
+              }
+              if (char === '\\') {
+                escaped = true;
+                continue;
+              }
+              if (char === '"') {
+                inString = !inString;
+                continue;
+              }
+              if (!inString) {
+                if (char === '{') depth++;
+                if (char === '}') {
+                  depth--;
+                  if (depth === 0) {
+                    endIdx = i + 1;
+                    break;
+                  }
+                }
+              }
+            }
+            
+            if (endIdx > startIdx) {
+              jsonText = text.substring(startIdx, endIdx);
+            }
           }
         }
 
@@ -312,7 +381,7 @@ ${prompt}`;
           } catch (parseError) {
             // Try to clean common JSON issues before repair
             let cleaned = this.cleanJsonString(jsonText);
-            
+
             // Try parsing cleaned version
             try {
               const parsed = JSON.parse(cleaned);
@@ -374,6 +443,16 @@ ${prompt}`;
         // Fallback: create a single file with the response for debugging
         const fileExtension = isFrameworkTask ? (this.frameworkConfig?.type === 'drupal' ? 'php' : 'ts') : 'ts';
         const filePath = `generated-code.${fileExtension}`;
+        
+        // Log diagnostic info to help understand why JSON extraction failed
+        if (this.debug) {
+          const hasJsonBlock = text.includes('```json') || text.includes('```');
+          const hasFilesKey = text.includes('"files"') || text.includes("'files'");
+          const hasOpeningBrace = text.includes('{');
+          console.warn(`[Anthropic] JSON extraction failed. Diagnostics: hasJsonBlock=${hasJsonBlock}, hasFilesKey=${hasFilesKey}, hasOpeningBrace=${hasOpeningBrace}`);
+          console.warn(`[Anthropic] Response preview (first 500 chars): ${text.substring(0, 500)}`);
+        }
+        
         console.warn('[Anthropic] Using raw response fallback - code will need manual review');
         return {
           files: [

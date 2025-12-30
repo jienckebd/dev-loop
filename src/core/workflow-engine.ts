@@ -1114,7 +1114,7 @@ export class WorkflowEngine {
               const tempFilePath = `${filePath}.tmp`;
               await fs.writeFile(tempFilePath, content, 'utf-8');
               const isValid = await this.validateFileSyntax(tempFilePath);
-              
+
               if (isValid) {
                 // Syntax is valid, keep the patch
                 await fs.move(tempFilePath, filePath, { overwrite: true });
@@ -1161,7 +1161,7 @@ export class WorkflowEngine {
       } else if (file.operation === 'create' || file.operation === 'update') {
         await fs.ensureDir(path.dirname(filePath));
         await fs.writeFile(filePath, file.content || '', 'utf-8');
-        
+
         // Validate syntax for new/updated files
         const isValid = await this.validateFileSyntax(filePath);
         if (!isValid) {
@@ -1220,7 +1220,7 @@ export class WorkflowEngine {
     // Match PHP method declarations: public/protected/private function methodName(
     const methodPattern = new RegExp(`(?:public|protected|private)\\s+function\\s+${methodName}\\s*\\(`, 'g');
     const existingMatches = content.match(methodPattern);
-    
+
     // If we find the method already exists, this patch would create a duplicate
     return existingMatches !== null && existingMatches.length > 0;
   }
@@ -1241,7 +1241,7 @@ export class WorkflowEngine {
     // Normalize whitespace in search string
     const normalizedSearch = search.replace(/\s+/g, ' ').trim();
     const searchLines = normalizedSearch.split('\n');
-    
+
     if (searchLines.length === 0) return null;
 
     // Try to find first line of search string
@@ -1264,10 +1264,10 @@ export class WorkflowEngine {
         while (searchIdx < searchLines.length && contentIdx < contentLines.length) {
           const normalizedSearchLine = searchLines[searchIdx].replace(/\s+/g, ' ').trim();
           const normalizedContentLine = contentLines[contentIdx].replace(/\s+/g, ' ').trim();
-          
-          if (normalizedContentLine.includes(normalizedSearchLine) || 
+
+          if (normalizedContentLine.includes(normalizedSearchLine) ||
               normalizedSearchLine.includes(normalizedContentLine) ||
-              (normalizedSearchLine.length > 20 && normalizedContentLine.length > 20 && 
+              (normalizedSearchLine.length > 20 && normalizedContentLine.length > 20 &&
                this.calculateSimilarity(normalizedSearchLine, normalizedContentLine) > 0.8)) {
             matchedLines.push(contentLines[contentIdx]);
             searchIdx++;
@@ -1306,9 +1306,9 @@ export class WorkflowEngine {
   private calculateSimilarity(str1: string, str2: string): number {
     const longer = str1.length > str2.length ? str1 : str2;
     const shorter = str1.length > str2.length ? str2 : str1;
-    
+
     if (longer.length === 0) return 1.0;
-    
+
     const distance = this.levenshteinDistance(longer, shorter);
     return (longer.length - distance) / longer.length;
   }
@@ -1318,15 +1318,15 @@ export class WorkflowEngine {
    */
   private levenshteinDistance(str1: string, str2: string): number {
     const matrix: number[][] = [];
-    
+
     for (let i = 0; i <= str2.length; i++) {
       matrix[i] = [i];
     }
-    
+
     for (let j = 0; j <= str1.length; j++) {
       matrix[0][j] = j;
     }
-    
+
     for (let i = 1; i <= str2.length; i++) {
       for (let j = 1; j <= str1.length; j++) {
         if (str2.charAt(i - 1) === str1.charAt(j - 1)) {
@@ -1340,7 +1340,7 @@ export class WorkflowEngine {
         }
       }
     }
-    
+
     return matrix[str2.length][str1.length];
   }
 
@@ -2001,20 +2001,20 @@ export class WorkflowEngine {
             await this.taskBridge.updateTaskStatus(task.id, 'done');
           } else {
             console.warn(`[WorkflowEngine] Failed to apply changes for task ${task.id}`);
-            
+
             // Enhancement 5: Record failed approach in context
             const failedPatchesSummary = applyResult.failedPatches
               .slice(0, 3)
               .map(p => p.substring(0, 100))
               .join('; ');
-            
+
             context.knowledge.failedApproaches.push({
               id: `failed-${Date.now()}-${task.id}`,
               description: `Task ${task.id}: ${task.title}`,
               reason: `Patches failed: ${failedPatchesSummary || 'Unknown error'}`,
               attemptedAt: new Date().toISOString(),
             });
-            
+
             // Keep only last 20 failed approaches to prevent context bloat
             if (context.knowledge.failedApproaches.length > 20) {
               context.knowledge.failedApproaches = context.knowledge.failedApproaches.slice(-20);
