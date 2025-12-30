@@ -1236,6 +1236,49 @@ export class WorkflowEngine {
   }
 
   /**
+   * Check Drupal site health after applying patches
+   * Runs drush cr and checks for entity type errors
+   */
+  private async checkDrupalSiteHealth(): Promise<{ healthy: boolean; error?: string }> {
+    // Check if this is a Drupal project by looking for common Drupal paths
+    const isDrupal = await fs.pathExists('docroot/modules') || 
+                     await fs.pathExists('web/modules') ||
+                     (this.config as any).framework?.type === 'drupal';
+    if (!isDrupal) {
+      return { healthy: true };
+    }
+
+    try {
+      // Run drush cache rebuild to detect entity type and service errors
+      await execAsync('ddev exec bash -c "drush cr"', {
+        timeout: 60000,
+        cwd: process.cwd(),
+      });
+      return { healthy: true };
+    } catch (error: any) {
+      const errorOutput = error.stderr || error.stdout || error.message || String(error);
+      
+      // Check for common fatal errors
+      const isFatal = errorOutput.includes('entity type does not exist') ||
+                     errorOutput.includes('service does not exist') ||
+                     errorOutput.includes('Class not found') ||
+                     errorOutput.includes('Parse error') ||
+                     errorOutput.includes('Fatal error');
+      
+      if (isFatal) {
+        console.error(`[WorkflowEngine] CRITICAL: Drupal site health check failed: ${errorOutput.substring(0, 500)}`);
+        return { 
+          healthy: false, 
+          error: `Site health check failed: ${errorOutput.substring(0, 200)}` 
+        };
+      }
+      
+      // Non-fatal drush errors are OK
+      return { healthy: true };
+    }
+  }
+
+  /**
    * Check if applying a patch would create a duplicate method declaration
    */
   private wouldCreateDuplicateMethod(content: string, patchReplace: string): boolean {
@@ -2154,6 +2197,39 @@ export class WorkflowEngine {
             // Run post-apply hooks
             if (this.config.hooks?.postApply && this.config.hooks.postApply.length > 0) {
               await this.executePostApplyHooks();
+            }
+
+            // Check site health after applying changes (critical for Drupal)
+            const healthCheck = await this.checkDrupalSiteHealth();
+            if (!healthCheck.healthy) {
+              console.error(`[WorkflowEngine] Site health check failed, reverting changes`);
+              
+              // Revert all modified files
+              for (const file of changes.files) {
+                try {
+                  const filePath = path.resolve(process.cwd(), file.path);
+                  await execAsync(`git checkout "${filePath}"`);
+                  console.log(`[WorkflowEngine] Reverted ${file.path}`);
+                } catch (revertErr) {
+                  console.warn(`[WorkflowEngine] Could not revert ${file.path}`);
+                }
+              }
+              
+              // Re-run cache clear after revert
+              try {
+                await execAsync('ddev exec bash -c "drush cr"', { timeout: 60000 });
+              } catch { /* ignore */ }
+              
+              // Record as failed approach
+              context.knowledge.failedApproaches.push({
+                id: `site-health-${Date.now()}-${task.id}`,
+                description: `Task ${task.id}: ${task.title}`,
+                reason: `Site health check failed after applying patches: ${healthCheck.error}`,
+                attemptedAt: new Date().toISOString(),
+              });
+              
+              // Don't mark task as done
+              continue;
             }
 
             await this.taskBridge.updateTaskStatus(task.id, 'done');
