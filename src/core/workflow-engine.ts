@@ -360,7 +360,7 @@ export class WorkflowEngine {
       if (this.debug) {
         console.log(`[DEBUG] skipInvestigation config value: ${skipInvestigation}`);
       }
-      
+
       if (!skipInvestigation && !isInvestigationTask && this.debuggingStrategyAdvisor && this.investigationTaskGenerator) {
         try {
           // Check if investigation tasks already exist for this parent task

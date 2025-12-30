@@ -375,13 +375,13 @@ export class TaskMasterBridge {
     }
 
     // Always save in master format for Task Master CLI compatibility
-    const output = { 
-      master: { 
+    const output = {
+      master: {
         tasks: mainTasks,
         metadata: {
           updated: new Date().toISOString(),
         }
-      } 
+      }
     };
 
     // Atomic write: write to temp file first, then rename
