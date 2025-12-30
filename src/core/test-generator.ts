@@ -246,7 +246,21 @@ export class TestGenerator {
       `**Wait Strategies:**`,
       `- Wait for form: \`await page.waitForSelector('form[data-drupal-selector*="wizard"]', { timeout: 15000 })\``,
       `- Wait for load: \`await page.waitForLoadState('domcontentloaded')\``,
-      `- Wait after navigation: \`await page.waitForTimeout(500)\` (small delay for AJAX)`
+      `- Wait after navigation: \`await page.waitForTimeout(500)\` (small delay for AJAX)`,
+      ``,
+      `### CRITICAL: Test Isolation Rules`,
+      `- DO NOT complete the wizard all the way through - this creates real entity types that persist`,
+      `- Tests should VERIFY UI behavior without actually creating production data`,
+      `- For testing "wizard completion", verify the FORM shows success without checking database`,
+      `- If a test must create entities, use UNIQUE names with timestamps: \`'Test_' + Date.now()\``,
+      `- Prefer testing individual steps in isolation rather than full wizard flow`,
+      `- Tests should NOT depend on data created by other tests`,
+      ``,
+      `### Test Structure for Wizard Steps`,
+      `- Step 1-2: Fill form fields, verify they're visible, click Next, verify next step loads`,
+      `- Later steps: Verify form elements exist and are interactive`,
+      `- DO NOT submit the final "Complete" button unless specifically testing completion`,
+      `- If testing completion: Use a test.afterEach hook to clean up created entities`
     );
 
     // Add learned knowledge
