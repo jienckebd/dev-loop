@@ -432,10 +432,10 @@ stateDiagram-v2
    - Prevents wasted iterations from invalid patches
 
 8. **PatternLearningSystem** (`src/core/pattern-learner.ts`)
-   - Remembers common failure patterns
+   - Learns from execution outcomes to improve future runs
    - Injects "do not repeat" guidance into prompts
    - Built-in patterns for common AI errors
-   - Records patterns from test failures
+   - Records patterns from test results and validation errors
    - Persists learned patterns in `.devloop/patterns.json`
 
 9. **FrameworkPatternLibrary** (`src/core/framework-pattern-library.ts`)
@@ -803,9 +803,9 @@ Validates code changes before applying to filesystem:
 
 ### Pattern Learning System
 
-Remembers common failure patterns and injects "do not repeat" guidance:
+Learns from execution outcomes and injects "do not repeat" guidance:
 - Built-in patterns for common AI errors
-- Records patterns from test failures, log analysis, and validation errors
+- Records patterns from test results, log analysis, and validation errors
 - Persists learned patterns in `.devloop/patterns.json`
 - Automatically applies relevant patterns to subsequent prompts
 
@@ -891,7 +891,7 @@ Evolution mode is for improving dev-loop itself based on **real-world use cases 
 
 **Why Evolution Mode?**
 
-Different projects reveal different failure patterns and use cases:
+Different projects reveal different challenges and use cases:
 - **Drupal projects** expose schema/config issues, entity type generation challenges, and Drush command patterns
 - **React projects** reveal import/type issues, component structure problems, and build configuration needs
 - **Node.js projects** show module resolution issues, async/await patterns, and API integration challenges
@@ -1544,7 +1544,7 @@ MIT
 - ✓ `watch` - Continuous execution mode
 - ⚠ `watch` - Smart scheduling with dependency resolution (basic watch exists)
 - `run --parallel` - Parallel task execution
-- ⚠ Self-healing on common failure patterns (pattern learning exists, auto-healing pending)
+- ⚠ Self-healing on common issues (pattern learning exists, auto-healing pending)
 - ⚠ Proactive pattern application before execution (reactive only)
 - `prd expand` - AI-powered PRD expansion
 - `split` - Automatic subtask generation
