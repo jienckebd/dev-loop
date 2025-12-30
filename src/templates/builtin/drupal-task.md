@@ -209,9 +209,9 @@ For a task "Fix DRUPAL_ROOT path to use dirname()":
 
 ## Requirements
 
-1. **PATCH existing files** - NEVER use "content" to replace entire files
-2. Use PATCH operations for ALL PHP files regardless of size
-3. Use UPDATE operations only for small config files (YAML, JSON under 50 lines)
+1. **PATCH large files** (over 500 lines) - use search/replace patches
+2. **UPDATE medium files** (under 500 lines) - you MAY use operation "update" with full file content if patching is causing issues
+3. Use UPDATE operations for small config files (YAML, JSON under 50 lines)
 4. Each patch search string must be UNIQUE in the file
 5. Include proper error handling and logging
 6. Follow Drupal coding standards
