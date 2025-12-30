@@ -1,9 +1,17 @@
-import { FastMCP } from 'fastmcp';
 import { Config } from '../../config/schema';
+
+// Use 'any' type for FastMCP since it's dynamically imported
+export type FastMCPType = any;
 
 export type ConfigLoader = (configPath?: string) => Promise<Config>;
 
 export interface ToolContext {
-  mcp: FastMCP;
+  mcp: FastMCPType;
   getConfig: ConfigLoader;
 }
+
+// Re-export tool registration functions
+export { registerCoreTools } from './core';
+export { registerDebugTools } from './debug';
+export { registerControlTools } from './control';
+export { registerEvolutionTools } from './evolution';

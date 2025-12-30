@@ -1,11 +1,10 @@
-import { FastMCP } from 'fastmcp';
 import { z } from 'zod';
 import * as fs from 'fs-extra';
 import { TaskMasterBridge } from '../../core/task-bridge';
 import { LogAnalyzerFactory } from '../../providers/log-analyzers/factory';
-import { ConfigLoader } from './index';
+import { ConfigLoader, FastMCPType } from './index';
 
-export function registerDebugTools(mcp: FastMCP, getConfig: ConfigLoader): void {
+export function registerDebugTools(mcp: FastMCPType, getConfig: ConfigLoader): void {
   // devloop_diagnose - Analyze failures and suggest fixes
   mcp.addTool({
     name: 'devloop_diagnose',
@@ -15,7 +14,7 @@ export function registerDebugTools(mcp: FastMCP, getConfig: ConfigLoader): void 
       config: z.string().optional().describe('Path to config file (optional)'),
       suggest: z.boolean().optional().describe('Suggest fixes for issues'),
     }),
-    execute: async (args: { taskId?: string; config?: string; suggest?: boolean }, context) => {
+    execute: async (args: { taskId?: string; config?: string; suggest?: boolean }, context: any) => {
       const config = await getConfig(args.config);
       const taskBridge = new TaskMasterBridge(config);
 
@@ -54,7 +53,7 @@ export function registerDebugTools(mcp: FastMCP, getConfig: ConfigLoader): void 
               type: 'file',
               path: config.logs.outputPath,
             }]);
-            
+
             if (logAnalysis.errors.length > 0) {
               analysis.issues.push(...logAnalysis.errors.map((e: string) => ({
                 type: 'log_error',
@@ -92,7 +91,7 @@ export function registerDebugTools(mcp: FastMCP, getConfig: ConfigLoader): void 
       config: z.string().optional().describe('Path to config file (optional)'),
       tokens: z.boolean().optional().describe('Include token usage information'),
     }),
-    execute: async (args: { taskId: string; config?: string; tokens?: boolean }, context) => {
+    execute: async (args: { taskId: string; config?: string; tokens?: boolean }, context: any) => {
       const config = await getConfig(args.config);
       const taskBridge = new TaskMasterBridge(config);
       const task = await taskBridge.getTask(args.taskId);
@@ -122,7 +121,7 @@ export function registerDebugTools(mcp: FastMCP, getConfig: ConfigLoader): void 
       analyze: z.boolean().optional().describe('Analyze project logs'),
       tail: z.number().optional().describe('Number of lines to show (default: 50)'),
     }),
-    execute: async (args: { config?: string; analyze?: boolean; tail?: number }, context) => {
+    execute: async (args: { config?: string; analyze?: boolean; tail?: number }, context: any) => {
       const config = await getConfig(args.config);
       const logPath = config.logs.outputPath;
 
@@ -143,7 +142,7 @@ export function registerDebugTools(mcp: FastMCP, getConfig: ConfigLoader): void 
           type: 'file',
           path: logPath,
         }]);
-        
+
         return JSON.stringify({
           logs: displayLines,
           analysis: {
@@ -170,7 +169,7 @@ export function registerDebugTools(mcp: FastMCP, getConfig: ConfigLoader): void 
       config: z.string().optional().describe('Path to config file (optional)'),
       projectType: z.string().optional().describe('Filter observations by project type'),
     }),
-    execute: async (args: { config?: string; projectType?: string }, context) => {
+    execute: async (args: { config?: string; projectType?: string }, context: any) => {
       return JSON.stringify({
         note: 'Evolution insights available via CLI: npx dev-loop evolve',
         message: 'Use the evolve command for detailed insights',
@@ -188,7 +187,7 @@ export function registerDebugTools(mcp: FastMCP, getConfig: ConfigLoader): void 
       task: z.string().optional().describe('Show metrics for specific task'),
       summary: z.boolean().optional().describe('Show summary only'),
     }),
-    execute: async (args: { config?: string; last?: number; task?: string; summary?: boolean }, context) => {
+    execute: async (args: { config?: string; last?: number; task?: string; summary?: boolean }, context: any) => {
       return JSON.stringify({
         note: 'Metrics available via CLI: npx dev-loop metrics',
         message: 'Use the metrics command for detailed metrics',

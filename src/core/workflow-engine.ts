@@ -1598,9 +1598,9 @@ export class WorkflowEngine {
     const servicesDir = path.join(process.cwd(), 'docroot/modules/share');
 
     try {
-      // Find all .services.yml files
-      const glob = await import('glob');
-      const serviceFiles = await glob.glob('**/*.services.yml', {
+      // Find all .services.yml files using glob
+      const { glob } = await import('glob');
+      const serviceFiles = await glob('**/*.services.yml', {
         cwd: servicesDir,
         absolute: true,
       });

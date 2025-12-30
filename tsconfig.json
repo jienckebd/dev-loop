@@ -17,6 +17,6 @@
     "allowSyntheticDefaultImports": true
   },
   "include": ["src/**/*"],
-  "exclude": ["node_modules", "dist", "tests"]
+  "exclude": ["node_modules", "dist", "tests", "src/mcp/server.mts", "src/mcp/server.ts", "src/mcp/tools"]
 }
 

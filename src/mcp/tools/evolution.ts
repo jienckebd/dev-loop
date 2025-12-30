@@ -1,9 +1,8 @@
-import { FastMCP } from 'fastmcp';
 import { z } from 'zod';
 import * as fs from 'fs-extra';
 import * as path from 'path';
 import { PrdTracker } from '../../core/prd-tracker';
-import { ConfigLoader } from './index';
+import { ConfigLoader, FastMCPType } from './index';
 
 const EVOLUTION_MODE_FILE = path.join(process.cwd(), '.devloop', 'evolution-mode.json');
 
@@ -32,7 +31,7 @@ async function saveEvolutionModeState(state: EvolutionModeState): Promise<void> 
   await fs.writeJson(EVOLUTION_MODE_FILE, state, { spaces: 2 });
 }
 
-export function registerEvolutionTools(mcp: FastMCP, getConfig: ConfigLoader): void {
+export function registerEvolutionTools(mcp: FastMCPType, getConfig: ConfigLoader): void {
   // devloop_evolution_start - Activate evolution mode with PRD
   mcp.addTool({
     name: 'devloop_evolution_start',
@@ -41,7 +40,7 @@ export function registerEvolutionTools(mcp: FastMCP, getConfig: ConfigLoader): v
       prd: z.string().describe('Path to PRD file'),
       config: z.string().optional().describe('Path to config file (optional)'),
     }),
-    execute: async (args, context) => {
+    execute: async (args: { prd: string; config?: string }, context: any) => {
       try {
         const prdPath = path.resolve(process.cwd(), args.prd);
         if (!(await fs.pathExists(prdPath))) {
@@ -103,7 +102,7 @@ export function registerEvolutionTools(mcp: FastMCP, getConfig: ConfigLoader): v
     parameters: z.object({
       config: z.string().optional().describe('Path to config file (optional)'),
     }),
-    execute: async (args: { config?: string }, context) => {
+    execute: async (args: { config?: string }, context: any) => {
       try {
         const state = await loadEvolutionModeState();
         if (!state || !state.active) {
@@ -125,7 +124,7 @@ export function registerEvolutionTools(mcp: FastMCP, getConfig: ConfigLoader): v
           const config = await getConfig(args.config);
           const tracker = new PrdTracker(config);
           const status = await tracker.getCompletionStatus();
-          
+
           result.completion = {
             totalTasks: status.totalTasks,
             completedTasks: status.completedTasks,
@@ -154,7 +153,7 @@ export function registerEvolutionTools(mcp: FastMCP, getConfig: ConfigLoader): v
     name: 'devloop_evolution_stop',
     description: 'Deactivate evolution mode',
     parameters: z.object({}),
-    execute: async (args: {}, context) => {
+    execute: async (args: {}, context: any) => {
       try {
         const state = await loadEvolutionModeState();
         if (!state || !state.active) {

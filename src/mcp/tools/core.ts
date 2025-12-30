@@ -1,11 +1,10 @@
-import { FastMCP, Tool } from 'fastmcp';
 import { z } from 'zod';
 import { WorkflowEngine } from '../../core/workflow-engine';
 import { TaskMasterBridge } from '../../core/task-bridge';
 import { StateManager } from '../../core/state-manager';
-import { ConfigLoader } from './index';
+import { ConfigLoader, FastMCPType } from './index';
 
-export function registerCoreTools(mcp: FastMCP, getConfig: ConfigLoader): void {
+export function registerCoreTools(mcp: FastMCPType, getConfig: ConfigLoader): void {
   // devloop_run - Execute one workflow iteration
   mcp.addTool({
     name: 'devloop_run',
@@ -14,7 +13,7 @@ export function registerCoreTools(mcp: FastMCP, getConfig: ConfigLoader): void {
       config: z.string().optional().describe('Path to config file (optional)'),
       debug: z.boolean().optional().describe('Enable debug mode'),
     }),
-    execute: async (args: { config?: string; debug?: boolean }, context) => {
+    execute: async (args: { config?: string; debug?: boolean }, context: any) => {
       const config = await getConfig(args.config);
       if (args.debug) {
         (config as any).debug = true;
@@ -41,7 +40,7 @@ export function registerCoreTools(mcp: FastMCP, getConfig: ConfigLoader): void {
       config: z.string().optional().describe('Path to config file (optional)'),
       debug: z.boolean().optional().describe('Enable debug mode'),
     }),
-    execute: async (args: { taskId: string; config?: string; debug?: boolean }, context) => {
+    execute: async (args: { taskId: string; config?: string; debug?: boolean }, context: any) => {
       const config = await getConfig(args.config);
       if (args.debug) {
         (config as any).debug = true;
@@ -49,7 +48,7 @@ export function registerCoreTools(mcp: FastMCP, getConfig: ConfigLoader): void {
 
       const taskBridge = new TaskMasterBridge(config);
       const task = await taskBridge.getTask(args.taskId);
-      
+
       if (!task) {
         return JSON.stringify({
           error: `Task not found: ${args.taskId}`,
@@ -79,7 +78,7 @@ export function registerCoreTools(mcp: FastMCP, getConfig: ConfigLoader): void {
     parameters: z.object({
       config: z.string().optional().describe('Path to config file (optional)'),
     }),
-    execute: async (args: { config?: string }, context) => {
+    execute: async (args: { config?: string }, context: any) => {
       const config = await getConfig(args.config);
       const stateManager = new StateManager(config);
       const state = await stateManager.getWorkflowState();
@@ -108,7 +107,7 @@ export function registerCoreTools(mcp: FastMCP, getConfig: ConfigLoader): void {
       status: z.string().optional().describe('Filter by status (pending, in-progress, done, failed, blocked)'),
       json: z.boolean().optional().describe('Output as JSON'),
     }),
-    execute: async (args: { config?: string; status?: string; json?: boolean }, context) => {
+    execute: async (args: { config?: string; status?: string; json?: boolean }, context: any) => {
       const config = await getConfig(args.config);
       const taskBridge = new TaskMasterBridge(config);
 
@@ -147,7 +146,7 @@ export function registerCoreTools(mcp: FastMCP, getConfig: ConfigLoader): void {
       debug: z.boolean().optional().describe('Enable debug mode'),
       resume: z.boolean().optional().describe('Resume from previous execution state'),
     }),
-    execute: async (args: { prdPath: string; config?: string; debug?: boolean; resume?: boolean }, context) => {
+    execute: async (args: { prdPath: string; config?: string; debug?: boolean; resume?: boolean }, context: any) => {
       const config = await getConfig(args.config);
       if (args.debug) {
         (config as any).debug = true;
@@ -155,7 +154,7 @@ export function registerCoreTools(mcp: FastMCP, getConfig: ConfigLoader): void {
 
       // Import the PRD command handler
       const { prdCommand } = await import('../../cli/commands/prd');
-      
+
       try {
         await prdCommand({
           prd: args.prdPath,

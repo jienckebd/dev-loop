@@ -1,17 +1,16 @@
-import { FastMCP } from 'fastmcp';
 import { z } from 'zod';
 import * as fs from 'fs-extra';
 import * as path from 'path';
 import { TaskMasterBridge } from '../../core/task-bridge';
-import { ConfigLoader } from './index';
+import { ConfigLoader, FastMCPType } from './index';
 
-export function registerControlTools(mcp: FastMCP, getConfig: ConfigLoader): void {
+export function registerControlTools(mcp: FastMCPType, getConfig: ConfigLoader): void {
   // devloop_pause - Pause after current task
   mcp.addTool({
     name: 'devloop_pause',
     description: 'Pause workflow execution after current task',
     parameters: z.object({}),
-    execute: async (args: {}, context) => {
+    execute: async (args: {}, context: any) => {
       try {
         const pauseFile = path.join(process.cwd(), '.devloop', 'pause');
         await fs.ensureDir(path.dirname(pauseFile));
@@ -34,7 +33,7 @@ export function registerControlTools(mcp: FastMCP, getConfig: ConfigLoader): voi
     name: 'devloop_resume',
     description: 'Resume paused workflow execution',
     parameters: z.object({}),
-    execute: async (args: {}, context) => {
+    execute: async (args: {}, context: any) => {
       try {
         const pauseFile = path.join(process.cwd(), '.devloop', 'pause');
         if (await fs.pathExists(pauseFile)) {
@@ -68,7 +67,7 @@ export function registerControlTools(mcp: FastMCP, getConfig: ConfigLoader): voi
       allFailed: z.boolean().optional().describe('Reset all blocked/failed tasks'),
       all: z.boolean().optional().describe('Reset all tasks to pending'),
     }),
-    execute: async (args: { taskId?: string; config?: string; allFailed?: boolean; all?: boolean }, context) => {
+    execute: async (args: { taskId?: string; config?: string; allFailed?: boolean; all?: boolean }, context: any) => {
       const config = await getConfig(args.config);
       const taskBridge = new TaskMasterBridge(config);
 
@@ -127,7 +126,7 @@ export function registerControlTools(mcp: FastMCP, getConfig: ConfigLoader): voi
       environment: z.boolean().optional().describe('Check dependencies and environment'),
       fix: z.boolean().optional().describe('Attempt to fix issues'),
     }),
-    execute: async (args: { config?: string; configOnly?: boolean; tasks?: boolean; environment?: boolean; fix?: boolean }, context) => {
+    execute: async (args: { config?: string; configOnly?: boolean; tasks?: boolean; environment?: boolean; fix?: boolean }, context: any) => {
       try {
         const config = await getConfig(args.config);
         const issues: string[] = [];
@@ -156,7 +155,7 @@ export function registerControlTools(mcp: FastMCP, getConfig: ConfigLoader): voi
           }
 
           // Check for invalid task statuses
-          const invalidTasks = tasks.filter(t => 
+          const invalidTasks = tasks.filter(t =>
             !['pending', 'in-progress', 'done', 'blocked'].includes(t.status || '')
           );
           if (invalidTasks.length > 0) {
