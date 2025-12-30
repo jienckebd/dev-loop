@@ -49,6 +49,9 @@ export class TestExecutor {
    * Execute all tests and return results
    */
   async executeTests(tests: TestState[]): Promise<TestExecutionResult> {
+    // Clean up any stray test entity configurations before running tests
+    await this.cleanupTestEntities();
+    
     const results: ExtendedTestResult[] = [];
 
     for (const test of tests) {
@@ -304,5 +307,32 @@ export class TestExecutor {
     }
 
     return artifacts;
+  }
+
+  /**
+   * Clean up stray test entity configurations before running tests.
+   * This prevents broken Drupal site errors from previous test runs.
+   */
+  private async cleanupTestEntities(): Promise<void> {
+    try {
+      // Delete all test entity type configurations that may have been created by previous tests
+      const { stdout, stderr } = await execAsync(
+        'ddev exec bash -c "drush sql:query \\"DELETE FROM config WHERE name LIKE \'bd.entity_type.test_%\'\\" && drush cr"',
+        {
+          timeout: 60000,
+          cwd: process.cwd(),
+        }
+      );
+
+      if (this.debug) {
+        console.log('[TestExecutor] Cleaned up stray test entity configurations');
+        if (stdout) console.log('[TestExecutor] Cleanup stdout:', stdout);
+      }
+    } catch (error: any) {
+      // Log but don't fail - cleanup is best effort
+      if (this.debug) {
+        console.log('[TestExecutor] Warning: cleanup failed (non-critical):', error.message);
+      }
+    }
   }
 }
