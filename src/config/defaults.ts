@@ -51,5 +51,28 @@ export const defaultConfig: Partial<Config> = {
     screenshotsDir: '.devloop/screenshots',
     videoOnFailure: false,
   },
+  prd: {
+    defaultPath: '.taskmaster/docs/prd.md',
+    requirementPattern: 'REQ-',
+    useStructuredParsing: true,
+    generateImplementation: true,
+    resolveDependencies: false,
+  },
+  drupal: {
+    enabled: true,
+    cacheCommand: 'ddev exec drush cr',
+    servicesPath: 'docroot/modules/share/*/services.yml',
+    schemaPath: 'docroot/modules/share/bd/config/schema/bd.schema.yml',
+    entityTypeBuilder: 'entity_type.builder',
+  },
+  wizard: {
+    baseUrl: '/admin/content/wizard/add/api_spec',
+    editUrlPattern: '/admin/content/wizard/{id}/edit',
+    iefSelectors: {
+      container: '[data-drupal-selector*="inline-entity-form"]',
+      table: '.ief-table, table.ief-entity-table',
+      addButton: 'input[value*="Add"], button:has-text("Add")',
+    },
+  },
 };
 

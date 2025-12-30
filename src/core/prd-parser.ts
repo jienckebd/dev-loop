@@ -9,6 +9,88 @@ export class PrdParser {
   ) {}
 
   /**
+   * Parse PRD markdown using structured format (machine-parseable)
+   */
+  async parseStructured(prdPath: string): Promise<Requirement[]> {
+    const content = await fs.readFile(prdPath, 'utf-8');
+    const requirements: Requirement[] = [];
+
+    // Split content by requirement blocks (## REQ-XXX:)
+    const requirementBlocks = content.split(/^##\s+REQ-/m);
+
+    // Skip the first block (everything before first requirement)
+    for (let i = 1; i < requirementBlocks.length; i++) {
+      const block = `## REQ-${requirementBlocks[i]}`;
+      const req = this.parseStructuredRequirement(block);
+      if (req) {
+        requirements.push(req);
+      }
+    }
+
+    if (requirements.length === 0 && this.debug) {
+      console.warn('[PrdParser] No structured requirements found, falling back to AI parsing');
+    }
+
+    return requirements.length > 0 ? requirements : this.parse(prdPath);
+  }
+
+  /**
+   * Parse a single structured requirement block
+   */
+  private parseStructuredRequirement(block: string): Requirement | null {
+    const idMatch = block.match(/##\s+REQ-(\S+):/);
+    if (!idMatch) {
+      return null;
+    }
+
+    const id = idMatch[1];
+    const priorityMatch = block.match(/\*\*Priority\*\*:\s*(must|should|could)/i);
+    const priority = (priorityMatch?.[1]?.toLowerCase() || 'should') as 'must' | 'should' | 'could';
+
+    const typeMatch = block.match(/\*\*Type\*\*:\s*(\w+)/i);
+    const type = typeMatch?.[1]?.toLowerCase() as 'functional' | 'test' | 'fix' | undefined;
+
+    const descriptionMatch = block.match(/\*\*Description\*\*:\s*([^\n]+)/);
+    const description = descriptionMatch?.[1]?.trim() || '';
+
+    // Extract implementation files
+    const implFilesMatch = block.match(/\*\*Implementation Files\*\*:\n((?:- `[^`]+`[^\n]*\n?)+)/);
+    const implementationFiles = implFilesMatch
+      ? [...implFilesMatch[1].matchAll(/- `([^`]+)`/g)].map(m => m[1])
+      : [];
+
+    // Extract test file
+    const testFileMatch = block.match(/\*\*Test File\*\*:\s*`([^`]+)`/);
+    const testFile = testFileMatch?.[1];
+
+    // Extract acceptance criteria (checkboxes)
+    const criteriaMatch = block.match(/\*\*Acceptance Criteria\*\*:\n((?:- \[[ x]\][^\n]+\n?)+)/);
+    const acceptanceCriteria = criteriaMatch
+      ? [...criteriaMatch[1].matchAll(/- \[[ x]\]\s*([^\n]+)/g)].map(m => m[1].trim())
+      : [];
+
+    // If no checkbox format, try bullet points
+    if (acceptanceCriteria.length === 0) {
+      const bulletMatch = block.match(/\*\*Acceptance Criteria\*\*:\n((?:- [^\n]+\n?)+)/);
+      if (bulletMatch) {
+        const matches = Array.from(bulletMatch[1].matchAll(/- ([^\n]+)/g));
+        acceptanceCriteria.push(...matches.map((m: RegExpMatchArray) => m[1].trim()));
+      }
+    }
+
+    return {
+      id: `REQ-${id}`,
+      description,
+      acceptanceCriteria: acceptanceCriteria.length > 0 ? acceptanceCriteria : ['Requirement must be testable'],
+      priority,
+      status: 'pending',
+      type,
+      implementationFiles: implementationFiles.length > 0 ? implementationFiles : undefined,
+      testFile,
+    };
+  }
+
+  /**
    * Parse PRD markdown to extract structured requirements
    */
   async parse(prdPath: string): Promise<Requirement[]> {

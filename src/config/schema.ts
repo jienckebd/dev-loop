@@ -167,6 +167,124 @@ const configSchema = z.object({
     screenshotsDir: z.string().default('.devloop/screenshots'),
     videoOnFailure: z.boolean().default(false),
   }).optional(),
+
+  // PRD-driven implementation configuration
+  prd: z.object({
+    // PRD file path (can be overridden via CLI)
+    defaultPath: z.string().default('.taskmaster/docs/prd.md'),
+    // Requirement ID prefix pattern
+    requirementPattern: z.string().default('REQ-'),
+    // Auto-parse structured requirements (vs AI parsing)
+    useStructuredParsing: z.boolean().default(true),
+    // Generate implementation code (not just tests)
+    generateImplementation: z.boolean().default(true),
+    // Files that should never be modified
+    protectedFiles: z.array(z.string()).optional(),
+    // Requirement dependency graph (requirement ID -> array of prerequisite requirement IDs)
+    dependencies: z.record(z.array(z.string())).optional(),
+    // Execute requirements in dependency order
+    resolveDependencies: z.boolean().default(false),
+    // Requirement status tracking
+    statusTracking: z.object({
+      enabled: z.boolean().default(false),
+      outputPath: z.string().default('.devloop/prd-status.json'),
+    }).optional(),
+  }).optional(),
+
+  // Drupal-specific implementation configuration
+  drupal: z.object({
+    // Enable Drupal-specific code generation
+    enabled: z.boolean().default(true),
+    // DDEV project name (for commands)
+    ddevProject: z.string().optional(),
+    // Cache clear command
+    cacheCommand: z.string().default('ddev exec drush cr'),
+    // Site health check URL
+    healthCheckUrl: z.string().optional(),
+    // Service registry path (for dependency injection context)
+    servicesPath: z.string().default('docroot/modules/share/*/services.yml'),
+    // Schema path (for config schema context)
+    schemaPath: z.string().default('docroot/modules/share/bd/config/schema/bd.schema.yml'),
+    // Field type mapping (OpenAPI type -> Drupal field type)
+    fieldTypeMapping: z.record(z.string(), z.string()).optional(),
+    // Entity type builder service
+    entityTypeBuilder: z.string().default('entity_type.builder'),
+    // Common import namespaces
+    namespaces: z.array(z.string()).optional(),
+    // Wizard-specific patterns
+    wizardPatterns: z.object({
+      prePopulationHook: z.string().optional(),
+      entitySaveHook: z.string().optional(),
+      thirdPartySettings: z.record(z.array(z.string())).optional(),
+      idFormats: z.record(z.string()).optional(),
+      validationPatterns: z.array(z.string()).optional(),
+    }).optional(),
+    // Drupal coding standards
+    codingStandards: z.array(z.string()).optional(),
+  }).optional(),
+
+  // Wizard-specific testing configuration
+  wizard: z.object({
+    // Base URL for wizard
+    baseUrl: z.string().default('/admin/content/wizard/add/api_spec'),
+    // Existing wizard edit URL pattern
+    editUrlPattern: z.string().default('/admin/content/wizard/{id}/edit'),
+    // Steps configuration (for test generation)
+    steps: z.array(z.object({
+      number: z.number(),
+      name: z.string(),
+      formMode: z.string(),
+      visibilityCondition: z.string().optional(),
+      keyFields: z.array(z.string()),
+      nextButtonText: z.string().optional(),
+    })).optional(),
+    // IEF widget selectors
+    iefSelectors: z.object({
+      container: z.string().default('[data-drupal-selector*="inline-entity-form"]'),
+      table: z.string().default('.ief-table, table.ief-entity-table'),
+      addButton: z.string().default('input[value*="Add"], button:has-text("Add")'),
+    }).optional(),
+    // Sample OpenAPI schemas for testing
+    sampleSchemas: z.array(z.object({
+      name: z.string(),
+      path: z.string(),
+    })).optional(),
+    // Hook processing documentation
+    hooks: z.object({
+      prePopulation: z.string().optional(),
+      stepSave: z.string().optional(),
+      fieldCreation: z.string().optional(),
+    }).optional(),
+    // Step processing order
+    stepProcessing: z.record(z.string()).optional(),
+    // Validation requirements
+    validationRequirements: z.record(z.array(z.string())).optional(),
+  }).optional(),
+
+  // Test generation configuration (for AI prompts)
+  testGeneration: z.object({
+    // Import statements for generated tests
+    imports: z.array(z.string()).optional(),
+    // Base URL for tests
+    baseUrl: z.string().optional(),
+    // Test setup boilerplate pattern
+    setupPattern: z.string().optional(),
+    // Selector documentation
+    selectors: z.record(z.any()).optional(),
+    // Entity save timing rules
+    entitySaveTiming: z.object({
+      rules: z.array(z.object({
+        id: z.string(),
+        description: z.string(),
+      })).optional(),
+      stepProcessing: z.record(z.string()).optional(),
+      validationRequirements: z.record(z.array(z.string())).optional(),
+    }).optional(),
+    // Test isolation rules
+    isolationRules: z.array(z.string()).optional(),
+    // Test template with placeholders
+    template: z.string().optional(),
+  }).optional(),
 });
 
 export type Config = z.infer<typeof configSchema>;

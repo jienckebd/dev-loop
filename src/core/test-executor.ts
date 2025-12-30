@@ -51,7 +51,7 @@ export class TestExecutor {
   async executeTests(tests: TestState[]): Promise<TestExecutionResult> {
     // Clean up any stray test entity configurations before running tests
     await this.cleanupTestEntities();
-    
+
     const results: ExtendedTestResult[] = [];
 
     for (const test of tests) {
@@ -133,11 +133,11 @@ export class TestExecutor {
                                  output.includes('FAILED') ||
                                  output.includes('Test timeout') ||
                                  output.includes('expect(');
-      
+
       // Look for passing indicators
       const hasPassingIndicator = output.includes(' passed') ||  // Playwright's "X passed"
                                   (jsonResult?.status === 'passed');
-      
+
       // If JSON result says passed, trust it
       // Otherwise, check for failures - absence of failures with passing indicator = success
       const success = jsonResult?.status === 'passed' ||

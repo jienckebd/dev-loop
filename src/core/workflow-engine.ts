@@ -18,12 +18,13 @@ import { ValidationGate } from './validation-gate';
 import { PatternLearningSystem } from './pattern-learner';
 import { DebugMetrics } from './debug-metrics';
 import { logger } from './logger';
-import { PrdContextManager, PrdContext } from './prd-context';
+import { PrdContextManager, PrdContext, Requirement } from './prd-context';
 import { PrdParser } from './prd-parser';
 import { TestGenerator } from './test-generator';
 import { TestExecutor } from './test-executor';
 import { FailureAnalyzer } from './failure-analyzer';
 import { AutonomousTaskGenerator } from './autonomous-task-generator';
+import { DrupalImplementationGenerator } from './drupal-implementation-generator';
 
 const execAsync = promisify(exec);
 
@@ -1093,8 +1094,8 @@ export class WorkflowEngine {
 
       // Check if file is protected from modifications
       const fileName = path.basename(file.path);
-      if (this.protectedFiles.includes(fileName) || 
-          file.path.includes('global-setup') || 
+      if (this.protectedFiles.includes(fileName) ||
+          file.path.includes('global-setup') ||
           file.path.includes('global-teardown')) {
         const skipMsg = `PROTECTED_FILE_SKIPPED: ${file.path} is protected and cannot be modified`;
         console.warn(`[WorkflowEngine] ${skipMsg}`);
@@ -1275,13 +1276,38 @@ export class WorkflowEngine {
    * Check Drupal site health after applying patches
    * Runs drush cr and checks for entity type errors
    */
-  private async checkDrupalSiteHealth(): Promise<{ healthy: boolean; error?: string }> {
+  private async checkDrupalSiteHealth(healthCheckUrl?: string): Promise<{ healthy: boolean; error?: string }> {
     // Check if this is a Drupal project by looking for common Drupal paths
-    const isDrupal = await fs.pathExists('docroot/modules') || 
+    const isDrupal = await fs.pathExists('docroot/modules') ||
                      await fs.pathExists('web/modules') ||
                      (this.config as any).framework?.type === 'drupal';
     if (!isDrupal) {
       return { healthy: true };
+    }
+
+    // If URL provided, do HTTP health check
+    if (healthCheckUrl) {
+      try {
+        const { default: fetch } = await import('node-fetch');
+        const response = await fetch(healthCheckUrl, {
+          method: 'GET',
+          timeout: 15000,
+        });
+
+        if (response.status >= 200 && response.status < 500) {
+          return { healthy: true };
+        } else {
+          return {
+            healthy: false,
+            error: `HTTP ${response.status} from ${healthCheckUrl}`
+          };
+        }
+      } catch (error: any) {
+        // HTTP check failed, fall through to drush check
+        if (this.debug) {
+          console.warn(`[WorkflowEngine] HTTP health check failed: ${error.message}`);
+        }
+      }
     }
 
     try {
@@ -1293,22 +1319,22 @@ export class WorkflowEngine {
       return { healthy: true };
     } catch (error: any) {
       const errorOutput = error.stderr || error.stdout || error.message || String(error);
-      
+
       // Check for common fatal errors
       const isFatal = errorOutput.includes('entity type does not exist') ||
                      errorOutput.includes('service does not exist') ||
                      errorOutput.includes('Class not found') ||
                      errorOutput.includes('Parse error') ||
                      errorOutput.includes('Fatal error');
-      
+
       if (isFatal) {
         console.error(`[WorkflowEngine] CRITICAL: Drupal site health check failed: ${errorOutput.substring(0, 500)}`);
-        return { 
-          healthy: false, 
-          error: `Site health check failed: ${errorOutput.substring(0, 200)}` 
+        return {
+          healthy: false,
+          error: `Site health check failed: ${errorOutput.substring(0, 200)}`
         };
       }
-      
+
       // Non-fatal drush errors are OK
       return { healthy: true };
     }
@@ -1326,7 +1352,7 @@ export class WorkflowEngine {
     const serviceRefPattern = /@([a-zA-Z_][a-zA-Z0-9_\.]*)/g;
     const referencedServices: string[] = [];
     let match;
-    
+
     while ((match = serviceRefPattern.exec(patchContent)) !== null) {
       const serviceName = match[1];
       if (!referencedServices.includes(serviceName)) {
@@ -1340,10 +1366,10 @@ export class WorkflowEngine {
 
     // Get available services
     const availableServices = await this.extractDrupalServices();
-    
+
     // Find invalid references
     const invalidRefs = referencedServices.filter(ref => !availableServices.includes(ref));
-    
+
     return invalidRefs;
   }
 
@@ -1570,7 +1596,7 @@ export class WorkflowEngine {
   private async extractDrupalServices(): Promise<string[]> {
     const services: string[] = [];
     const servicesDir = path.join(process.cwd(), 'docroot/modules/share');
-    
+
     try {
       // Find all .services.yml files
       const glob = await import('glob');
@@ -1610,7 +1636,7 @@ export class WorkflowEngine {
    */
   private async getDrupalServiceContext(): Promise<string> {
     const services = await this.extractDrupalServices();
-    
+
     if (services.length === 0) {
       return '';
     }
@@ -1627,7 +1653,7 @@ export class WorkflowEngine {
 
     let context = '\n### DRUPAL SERVICE REGISTRY (USE ONLY THESE SERVICE NAMES)\n';
     context += 'When adding service dependencies in *.services.yml files, ONLY use services from this list:\n\n';
-    
+
     for (const [prefix, prefixServices] of Object.entries(grouped)) {
       context += `**${prefix}.***: ${prefixServices.join(', ')}\n`;
     }
@@ -2258,8 +2284,113 @@ export class WorkflowEngine {
       context.status = 'generating-tests';
       await contextManager.save(context);
 
-      const requirements = await prdParser.parse(prdPath);
+      // Check if structured parsing should be used
+      const prdConfig = (this.config as any).prd || {};
+      const useStructuredParsing = prdConfig.useStructuredParsing !== false;
+
+      let requirements = useStructuredParsing
+        ? await prdParser.parseStructured(prdPath)
+        : await prdParser.parse(prdPath);
+
+      // Resolve dependencies if enabled
+      const resolveDependencies = prdConfig.resolveDependencies === true;
+      if (resolveDependencies && prdConfig.dependencies) {
+        requirements = this.resolveRequirementDependencies(requirements, prdConfig.dependencies);
+      }
+
       context.requirements = requirements;
+
+      // Generate implementation code if enabled and requirements have implementation files
+      const generateImplementation = prdConfig.generateImplementation !== false;
+      const drupalConfig = (this.config as any).drupal || {};
+
+      if (generateImplementation && drupalConfig.enabled) {
+        const implGenerator = new DrupalImplementationGenerator(this.aiProvider, this.config, this.debug);
+
+        console.log('[WorkflowEngine] Generating implementation code for requirements with implementation files...');
+        for (const req of requirements) {
+          if (req.implementationFiles && req.implementationFiles.length > 0 && req.status !== 'done') {
+            try {
+              console.log(`[WorkflowEngine] Generating implementation for ${req.id}...`);
+              const changes = await implGenerator.generateFix(req, context);
+
+              // Apply changes
+              const applyResult = await this.applyChanges(changes);
+
+              if (!applyResult.success) {
+                const errorMsg = applyResult.failedPatches.length > 0
+                  ? `Failed patches: ${applyResult.failedPatches.join(', ')}`
+                  : 'Unknown error';
+                console.warn(`[WorkflowEngine] Failed to apply changes for ${req.id}: ${errorMsg}`);
+                context.knowledge.failedApproaches.push({
+                  id: `impl-${req.id}`,
+                  description: `Implementation for ${req.id}`,
+                  reason: errorMsg,
+                  attemptedAt: new Date().toISOString(),
+                });
+                continue;
+              }
+
+              // Validate Drupal site health
+              if (drupalConfig.cacheCommand) {
+                try {
+                  await execAsync(drupalConfig.cacheCommand, { timeout: 60000 });
+                } catch (err) {
+                  console.warn(`[WorkflowEngine] Cache clear failed: ${err}`);
+                }
+              }
+
+              if (drupalConfig.healthCheckUrl) {
+                const healthCheck = await this.checkDrupalSiteHealth(drupalConfig.healthCheckUrl);
+                if (!healthCheck.healthy) {
+                  console.error(`[WorkflowEngine] Site health check failed for ${req.id}, reverting changes`);
+
+                  // Revert changes
+                  for (const file of changes.files) {
+                    try {
+                      const filePath = path.resolve(process.cwd(), file.path);
+                      await execAsync(`git checkout "${filePath}"`);
+                    } catch (revertErr) {
+                      console.warn(`[WorkflowEngine] Could not revert ${file.path}`);
+                    }
+                  }
+
+                  context.knowledge.failedApproaches.push({
+                    id: `impl-${req.id}-health`,
+                    description: `Implementation for ${req.id} broke site`,
+                    reason: healthCheck.error || 'Site health check failed',
+                    attemptedAt: new Date().toISOString(),
+                  });
+                  continue;
+                }
+              }
+
+              console.log(`[WorkflowEngine] Successfully applied implementation for ${req.id}`);
+
+              // Record working pattern
+              if (changes.files.length > 0) {
+                context.knowledge.workingPatterns.push({
+                  id: `pattern-${req.id}`,
+                  description: `Implementation pattern for ${req.id}`,
+                  code: changes.files.map(f => f.content || '').join('\n\n'),
+                  context: req.description,
+                  discoveredAt: new Date().toISOString(),
+                });
+              }
+            } catch (error: any) {
+              console.error(`[WorkflowEngine] Error generating implementation for ${req.id}:`, error);
+              context.knowledge.failedApproaches.push({
+                id: `impl-${req.id}-error`,
+                description: `Implementation generation for ${req.id}`,
+                reason: error.message || 'Unknown error',
+                attemptedAt: new Date().toISOString(),
+              });
+            }
+          }
+        }
+
+        await contextManager.save(context);
+      }
 
       const tests = await testGenerator.generateTests(requirements, context);
       context.tests = tests;
@@ -2359,7 +2490,7 @@ export class WorkflowEngine {
             const healthCheck = await this.checkDrupalSiteHealth();
             if (!healthCheck.healthy) {
               console.error(`[WorkflowEngine] Site health check failed, reverting changes`);
-              
+
               // Revert all modified files
               for (const file of changes.files) {
                 try {
@@ -2370,12 +2501,12 @@ export class WorkflowEngine {
                   console.warn(`[WorkflowEngine] Could not revert ${file.path}`);
                 }
               }
-              
+
               // Re-run cache clear after revert
               try {
                 await execAsync('ddev exec bash -c "drush cr"', { timeout: 60000 });
               } catch { /* ignore */ }
-              
+
               // Record as failed approach
               context.knowledge.failedApproaches.push({
                 id: `site-health-${Date.now()}-${task.id}`,
@@ -2383,7 +2514,7 @@ export class WorkflowEngine {
                 reason: `Site health check failed after applying patches: ${healthCheck.error}`,
                 attemptedAt: new Date().toISOString(),
               });
-              
+
               // Don't mark task as done
               continue;
             }
@@ -2486,6 +2617,86 @@ export class WorkflowEngine {
     }
 
     return false;
+  }
+
+  /**
+   * Resolve requirement dependencies using topological sort
+   * Ensures requirements are ordered so dependencies come before dependents
+   */
+  private resolveRequirementDependencies(
+    requirements: Requirement[],
+    dependencies: Record<string, string[]>
+  ): Requirement[] {
+    // Create a map of requirement ID to requirement
+    const reqMap = new Map<string, Requirement>();
+    requirements.forEach(req => reqMap.set(req.id, req));
+
+    // Build dependency graph
+    const graph = new Map<string, string[]>();
+    const inDegree = new Map<string, number>();
+
+    // Initialize in-degree for all requirements
+    requirements.forEach(req => {
+      graph.set(req.id, []);
+      inDegree.set(req.id, 0);
+    });
+
+    // Build graph and calculate in-degrees
+    Object.entries(dependencies).forEach(([reqId, deps]) => {
+      if (reqMap.has(reqId)) {
+        deps.forEach(depId => {
+          if (reqMap.has(depId)) {
+            const current = graph.get(depId) || [];
+            current.push(reqId);
+            graph.set(depId, current);
+            inDegree.set(reqId, (inDegree.get(reqId) || 0) + 1);
+          }
+        });
+      }
+    });
+
+    // Topological sort using Kahn's algorithm
+    const queue: string[] = [];
+    const result: Requirement[] = [];
+
+    // Find all nodes with no incoming edges
+    inDegree.forEach((degree, reqId) => {
+      if (degree === 0) {
+        queue.push(reqId);
+      }
+    });
+
+    while (queue.length > 0) {
+      const reqId = queue.shift()!;
+      const req = reqMap.get(reqId);
+      if (req) {
+        result.push(req);
+      }
+
+      // Decrease in-degree for all neighbors
+      const neighbors = graph.get(reqId) || [];
+      neighbors.forEach(neighborId => {
+        const currentDegree = inDegree.get(neighborId) || 0;
+        inDegree.set(neighborId, currentDegree - 1);
+        if (inDegree.get(neighborId) === 0) {
+          queue.push(neighborId);
+        }
+      });
+    }
+
+    // Add any remaining requirements that weren't in the dependency graph
+    const resultIds = new Set(result.map(r => r.id));
+    requirements.forEach(req => {
+      if (!resultIds.has(req.id)) {
+        result.push(req);
+      }
+    });
+
+    if (this.debug) {
+      console.log(`[WorkflowEngine] Resolved dependencies: ${result.map(r => r.id).join(' -> ')}`);
+    }
+
+    return result;
   }
 }
 

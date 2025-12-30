@@ -117,151 +117,256 @@ export class TestGenerator {
       ...req.acceptanceCriteria.map(c => `- ${c}`),
     ];
 
+    // Read test generation config
+    const testGenConfig = (this.config as any).testGeneration || {};
+    const baseUrl = testGenConfig.baseUrl || 'https://sysf.ddev.site';
+
     // Add CRITICAL test structure requirements first
     sections.push(
       '',
       `## CRITICAL: Test Structure Requirements`,
       ``,
       `Tests are generated in \`${this.testDir}/\` directory.`,
-      ``,
-      `### Required Imports (USE EXACTLY THESE)`,
-      `\`\`\`typescript`,
-      `import { test, expect } from '@playwright/test';`,
-      `import { AuthHelper } from '../helpers/auth';`,
-      `import { DrupalAPI } from '../helpers/drupal-api';`,
-      `import { WizardHelper, WizardTestUtils } from '../helpers/wizard-helper';`,
-      `\`\`\``,
-      ``,
-      `### Required Test Setup Pattern`,
-      `\`\`\`typescript`,
-      `test.describe('Feature Name', () => {`,
-      `  test.beforeEach(async ({ page, request }) => {`,
-      `    const baseURL = 'https://sysf.ddev.site';`,
-      `    const api = new DrupalAPI(request, baseURL);`,
-      `    const auth = new AuthHelper(page, api);`,
-      `    const wizard = new WizardHelper(page, api);`,
-      `    `,
-      `    // Login as admin before each test`,
-      `    await auth.login();`,
-      `  });`,
-      ``,
-      `  test('should do something', async ({ page }) => {`,
-      `    // Navigate with full URL`,
-      `    await page.goto('https://sysf.ddev.site/admin/content/wizard/add/api_spec');`,
-      `    // ... test code`,
-      `  });`,
-      `});`,
-      `\`\`\``,
-      ``,
-      `### Available Helper Classes`,
-      `- **AuthHelper**: Call \`await auth.login()\` in beforeEach to authenticate`,
-      `- **DrupalAPI**: API helper for Drupal operations`,
-      `- **WizardHelper**: Helper for wizard interactions (waitForWizardStep, fillAceEditor, clickNextAndWait, etc.)`,
-      `- **WizardTestUtils**: Static utilities (generateSampleSchema, generateWizardName)`,
-      ``,
-      `### Key URLs`,
-      `- Base URL: \`https://sysf.ddev.site\``,
-      `- Wizard add page: \`https://sysf.ddev.site/admin/content/wizard/add/api_spec\``,
-      `- For existing wizard: \`https://sysf.ddev.site/admin/content/wizard/{wizard_id}/edit\``,
-      ``,
-      `### Important Rules`,
-      `1. ALWAYS use full URLs starting with https://sysf.ddev.site`,
-      `2. NEVER use relative paths like '/admin/...' - always use full URLs`,
-      `3. Import helpers from '../helpers/' (one directory up from auto/)`,
-      `4. Use .ts extension imports, NOT .js`,
-      `5. DrupalAPI constructor requires (request, baseURL) parameters`,
-      `6. Add test.describe.configure({ mode: 'serial' }) to run tests serially (avoid login conflicts)`,
-      `7. Use appropriate timeouts (page.waitForTimeout(2000)) after form submissions`,
-      ``,
-      `### Serial Execution Pattern`,
-      `\`\`\`typescript`,
-      `test.describe('Feature Name', () => {`,
-      `  // Run tests one at a time to avoid login race conditions`,
-      `  test.describe.configure({ mode: 'serial' });`,
-      `  `,
-      `  test.beforeEach(async ({ page, request }) => {`,
-      `    // ... setup ONLY - no helper function definitions here!`,
-      `  });`,
-      ``,
-      `  // Helper functions go OUTSIDE beforeEach/test blocks`,
-      `  // OR define them at the top of the file BEFORE test.describe`,
-      `});`,
-      `\`\`\``,
-      ``,
-      `### CRITICAL: Function Placement Rules`,
-      `- DO NOT define helper functions inside test.beforeEach or test()`,
-      `- Helper functions must be defined:`,
-      `  1. At the TOP of the file, before test.describe()`,
-      `  2. OR as standalone exported functions`,
-      `  3. OR import them from '../helpers/' files`,
-      `- Never write 'async functionName() {}' inside a test block - this is a syntax error`,
-      `- Use arrow functions if needed: 'const helperFn = async (page) => { ... }'`,
-      ``,
-      `### Wizard Page Structure & Selectors (USE THESE)`,
-      ``,
-      `**IMPORTANT: Step Indicator Structure (NOT data-step attributes):**`,
-      `The wizard has a step list in the sidebar. Steps are marked with numbers in paragraphs:`,
-      `- Step list: \`main ul > li\` (contains step name and number)`,
-      `- DO NOT look for \`[data-step="1"].active\` - this does NOT exist`,
-      `- To verify you're on step 1, check the page content or form fields instead`,
-      ``,
-      `**Form Selectors (try in order):**`,
-      `- \`main form\` - Main form (most reliable)`,
-      `- \`form[data-drupal-selector*="wizard"]\` - Primary wizard form`,
-      `- \`.layout-content form\` - Form in layout content area`,
-      ``,
-      `**Navigation Buttons:**`,
-      `- Next: \`button:has-text("Next")\` - The Next button contains text like "Next: Entity storage"`,
-      `- Back: \`button:has-text("Back"), input[value*="Back"]\``,
-      `- Complete: \`button:has-text("Complete"), input[value*="Complete"]\``,
-      ``,
-      `**Form Fields (Step 1 - Feature Selection):**`,
-      `- Wizard name: Use label text: \`page.getByRole('textbox', { name: 'Wizard name' })\` or \`page.getByLabel('Wizard name')\``,
-      `- API Spec name: \`page.getByRole('textbox', { name: 'API Spec name' })\` or \`page.getByLabel('API Spec name')\``,
-      `- Description: \`page.getByRole('textbox', { name: 'Description' })\` or \`page.getByLabel('Description')\``,
-      `- Feature checkboxes: Use label-based selection:`,
-      `  - \`page.getByRole('checkbox', { name: 'API polling' })\``,
-      `  - \`page.getByRole('checkbox', { name: 'Entity storage' })\``,
-      `  - \`page.getByRole('checkbox', { name: 'Entity relations' })\``,
-      `- Schema input: \`page.locator('.ace_editor')\` or ACE editor textbox`,
-      ``,
-      `**PREFER getByRole and getByLabel over CSS selectors for form fields!**`,
-      `This is the most reliable way to find form elements in Drupal.`,
-      ``,
-      `**Verifying Current Step:**`,
-      `- Instead of looking for step indicators, verify by checking:`,
-      `  - Page heading: \`h1:has-text("Add API spec")\` for step 1`,
-      `  - Form field presence: Feature checkboxes visible = step 1`,
-      `  - Next button text: "Next: Entity storage" means you're on step 1`,
-      ``,
-      `**IEF (Inline Entity Form) Widgets:**`,
-      `- IEF container: \`[data-drupal-selector*="schema_mapping"], [data-drupal-selector*="feed_type"]\``,
-      `- IEF table: \`.ief-table, table.ief-entity-table\``,
-      `- IEF add button: \`input[value*="Add"], button:has-text("Add")\``,
-      ``,
-      `**Step Indicators:**`,
-      `- Active step: \`[data-step].active, .step.active\``,
-      `- Step number: \`[data-step="1"], [data-step="2"], etc.\``,
-      ``,
-      `**Wait Strategies:**`,
-      `- Wait for form: \`await page.waitForSelector('form[data-drupal-selector*="wizard"]', { timeout: 15000 })\``,
-      `- Wait for load: \`await page.waitForLoadState('domcontentloaded')\``,
-      `- Wait after navigation: \`await page.waitForTimeout(500)\` (small delay for AJAX)`,
-      ``,
-      `### CRITICAL: Test Isolation Rules`,
-      `- DO NOT complete the wizard all the way through - this creates real entity types that persist`,
-      `- Tests should VERIFY UI behavior without actually creating production data`,
-      `- For testing "wizard completion", verify the FORM shows success without checking database`,
-      `- If a test must create entities, use UNIQUE names with timestamps: \`'Test_' + Date.now()\``,
-      `- Prefer testing individual steps in isolation rather than full wizard flow`,
-      `- Tests should NOT depend on data created by other tests`,
-      ``,
-      `### Test Structure for Wizard Steps`,
-      `- Step 1-2: Fill form fields, verify they're visible, click Next, verify next step loads`,
-      `- Later steps: Verify form elements exist and are interactive`,
-      `- DO NOT submit the final "Complete" button unless specifically testing completion`,
-      `- If testing completion: Use a test.afterEach hook to clean up created entities`
+      ``
     );
+
+    // Add imports from config
+    if (testGenConfig.imports && testGenConfig.imports.length > 0) {
+      sections.push(
+        `### Required Imports (USE EXACTLY THESE)`,
+        `\`\`\`typescript`,
+        ...testGenConfig.imports,
+        `\`\`\``,
+        ``
+      );
+    }
+
+    // Add setup pattern from config
+    if (testGenConfig.setupPattern) {
+      sections.push(
+        `### Required Test Setup Pattern`,
+        `\`\`\`typescript`,
+        testGenConfig.setupPattern,
+        `\`\`\``,
+        ``,
+        `### Available Helper Classes`,
+        `- **AuthHelper**: Call \`await auth.login()\` in beforeEach to authenticate`,
+        `- **DrupalAPI**: API helper for Drupal operations`,
+        `- **WizardHelper**: Helper for wizard interactions (waitForWizardStep, fillAceEditor, clickNextAndWait, etc.)`,
+        `- **WizardTestUtils**: Static utilities (generateSampleSchema, generateWizardName)`,
+        ``,
+        `### Key URLs`,
+        `- Base URL: \`${baseUrl}\``,
+        `- Wizard add page: \`${baseUrl}/admin/content/wizard/add/api_spec\``,
+        `- For existing wizard: \`${baseUrl}/admin/content/wizard/{wizard_id}/edit\``,
+        ``,
+        `### Important Rules`,
+        `1. ALWAYS use full URLs starting with ${baseUrl}`,
+        `2. NEVER use relative paths like '/admin/...' - always use full URLs`,
+        `3. Import helpers from '../helpers/' (one directory up from test directory)`,
+        `4. Use .ts extension imports, NOT .js`,
+        `5. DrupalAPI constructor requires (request, baseURL) parameters`,
+        `6. Add test.describe.configure({ mode: 'serial' }) to run tests serially (avoid login conflicts)`,
+        `7. Use appropriate timeouts (page.waitForTimeout(2000)) after form submissions`,
+        ``,
+        `### Serial Execution Pattern`,
+        `\`\`\`typescript`,
+        `test.describe('Feature Name', () => {`,
+        `  // Run tests one at a time to avoid login race conditions`,
+        `  test.describe.configure({ mode: 'serial' });`,
+        `  `,
+        `  test.beforeEach(async ({ page, request }) => {`,
+        `    // ... setup ONLY - no helper function definitions here!`,
+        `  });`,
+        ``,
+        `  // Helper functions go OUTSIDE beforeEach/test blocks`,
+        `  // OR define them at the top of the file BEFORE test.describe`,
+        `});`,
+        `\`\`\``,
+        ``,
+        `### CRITICAL: Function Placement Rules`,
+        `- DO NOT define helper functions inside test.beforeEach or test()`,
+        `- Helper functions must be defined:`,
+        `  1. At the TOP of the file, before test.describe()`,
+        `  2. OR as standalone exported functions`,
+        `  3. OR import them from '../helpers/' files`,
+        `- Never write 'async functionName() {}' inside a test block - this is a syntax error`,
+        `- Use arrow functions if needed: 'const helperFn = async (page) => { ... }'`,
+        ``
+      );
+    }
+
+    // Add selectors from config
+    if (testGenConfig.selectors) {
+      sections.push(`### Wizard Page Structure & Selectors (USE THESE)`, ``);
+
+      const selectors = testGenConfig.selectors;
+      if (selectors.form) {
+        sections.push(
+          `**Form Selectors (try in order):**`,
+          ...selectors.form.map((s: string) => `- \`${s}\``),
+          ``
+        );
+      }
+
+      if (selectors.navigation) {
+        sections.push(
+          `**Navigation Buttons:**`,
+          ...Object.entries(selectors.navigation).map(([key, value]) => `- ${key.charAt(0).toUpperCase() + key.slice(1)}: \`${value}\``),
+          ``
+        );
+      }
+
+      if (selectors.fields) {
+        sections.push(
+          `**Form Fields (Step 1 - Feature Selection):**`,
+          ...Object.entries(selectors.fields).map(([key, value]) => {
+            const fieldName = key.replace(/([A-Z])/g, ' $1').replace(/^./, str => str.toUpperCase());
+            return `- ${fieldName}: ${value}`;
+          }),
+          ``,
+          `**PREFER getByRole and getByLabel over CSS selectors for form fields!**`,
+          `This is the most reliable way to find form elements in Drupal.`,
+          ``
+        );
+      }
+
+      if (selectors.ief) {
+        sections.push(
+          `**IEF (Inline Entity Form) Widgets:**`,
+          ...Object.entries(selectors.ief).map(([key, value]) => {
+            const label = key === 'container' ? 'IEF container' : key === 'table' ? 'IEF table' : 'IEF add button';
+            return `- ${label}: \`${value}\``;
+          }),
+          ``
+        );
+      }
+    }
+
+    // Add entity save timing rules from config
+    if (testGenConfig.entitySaveTiming) {
+      const timing = testGenConfig.entitySaveTiming;
+      sections.push(
+        `### CRITICAL: Wizard Entity Save Timing Rules`,
+        ``
+      );
+
+      if (timing.rules) {
+        timing.rules.forEach((rule: any, index: number) => {
+          sections.push(
+            `**Rule ${index + 1}: ${rule.id.replace(/_/g, ' ').replace(/\b\w/g, (l: string) => l.toUpperCase())}**`,
+            `- ${rule.description}`,
+            ``
+          );
+        });
+      }
+
+      if (timing.stepProcessing) {
+        sections.push(
+          `**Step-Specific Processing in hook_wizard_step_post_save()**:`,
+          ...Object.entries(timing.stepProcessing).map(([step, desc]) => `- Step ${step}: ${desc}`),
+          ``
+        );
+      }
+
+      if (timing.validationRequirements) {
+        sections.push(
+          `### Validation Requirements Before Pre-Population`,
+          ``
+        );
+        Object.entries(timing.validationRequirements).forEach(([step, reqs]) => {
+          sections.push(
+            `**Step ${step} Pre-Population Requires**:`,
+            ...(reqs as string[]).map((r: string) => `- ${r.replace(/_/g, ' ')}`),
+            ``
+          );
+        });
+      }
+
+      sections.push(
+        `**Test Pattern for Pre-Population Verification**:`,
+        `1. Navigate to step (e.g., Step 7)`,
+        `2. Verify IEF table shows rows (entities in memory)`,
+        `3. Click "Next" to save`,
+        `4. Verify entities exist in database (if needed)`,
+        ``,
+        `**Test Pattern for Step Processing Verification**:`,
+        `1. Complete prerequisite steps (e.g., Steps 1-6 for Step 7)`,
+        `2. Navigate to step`,
+        `3. Verify pre-population (IEF table has rows)`,
+        `4. Click "Next" to trigger hook_wizard_step_post_save()`,
+        `5. Verify processing results (e.g., fields created for Step 7)`,
+        ``
+      );
+    }
+
+    // Add isolation rules from config
+    if (testGenConfig.isolationRules && testGenConfig.isolationRules.length > 0) {
+      sections.push(
+        `### CRITICAL: Test Isolation Rules`,
+        ...testGenConfig.isolationRules.map((rule: string) => `- ${rule}`),
+        ``,
+        `### Test Structure for Wizard Steps`,
+        `- Step 1-2: Fill form fields, verify they're visible, click Next, verify next step loads`,
+        `- Later steps: Verify form elements exist and are interactive`,
+        `- DO NOT submit the final "Complete" button unless specifically testing completion`,
+        `- If testing completion: Use a test.afterEach hook to clean up created entities`,
+        ``
+      );
+
+      // Add wizard hook processing
+      sections.push(
+        `### Wizard Hook Processing`,
+        ``,
+        `**hook_wizard_step_post_save()** is called:`,
+        `- After clicking "Next" (forward navigation)`,
+        `- After clicking "Complete" (final step)`,
+        `- NOT called when clicking "Back"`,
+        ``,
+        `**Test Pattern**:`,
+        `- Verify entities exist in memory (IEF table) before clicking Next`,
+        `- Click Next to trigger hook processing`,
+        `- Verify processing results (fields, bundles, etc.) after hook completes`,
+        ``
+      );
+    }
+
+    // Add wizard-specific context from config
+    const wizardConfig = (this.config as any).wizard;
+    if (wizardConfig) {
+      sections.push(
+        '',
+        `## OpenAPI Wizard Specifics`,
+        ``,
+        `**Wizard Steps Configuration**:`,
+        ...(wizardConfig.steps || []).map((step: any) =>
+          `- Step ${step.number}: ${step.name} (form mode: ${step.formMode})${step.visibilityCondition ? ` [visible if: ${step.visibilityCondition}]` : ''}`
+        ),
+        ``,
+        `**IEF Widget Selectors**:`,
+        `- Container: \`${wizardConfig.iefSelectors?.container || '[data-drupal-selector*="inline-entity-form"]'}\``,
+        `- Table: \`${wizardConfig.iefSelectors?.table || '.ief-table, table.ief-entity-table'}\``,
+        `- Add Button: \`${wizardConfig.iefSelectors?.addButton || 'input[value*="Add"], button:has-text("Add")'}\``,
+        ``,
+        `**Step Processing Notes**:`,
+        `- IEF widgets use hook_inline_entity_form_entity_form_alter()`,
+        `- Pre-population happens on form load via EntityFormService`,
+        `- Entities save on forward navigation only`,
+        `- Step 7 (Entity Mapping) should show pre-populated schemadotorg_mapping entities in IEF`,
+        `- Step 8 (API Sync) should show pre-populated feed_type entities`,
+        `- Step 9 (Webhooks) should show pre-populated webhook_config entities`,
+        ``,
+        `**Key Services**:`,
+        `- EntityFormService::prepopulateSchemaMappings() - Step 7 pre-pop`,
+        `- SchemaMappingRecommendationService - AI recommendations`,
+        `- EntityBundleFieldFeedService - Feed/field creation`,
+        ``,
+        `**Common Assertions**:`,
+        `- Check IEF table has rows: \`await page.locator('.ief-table tbody tr').count() > 0\``,
+        `- Check field created: \`await api.fieldExists(entityType, bundle, fieldName)\``,
+        `- Check bundle created: \`await api.bundleExists(entityType, bundleId)\``
+      );
+    }
 
     // Add learned knowledge
     if (context.knowledge.codeLocations.length > 0) {

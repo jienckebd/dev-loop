@@ -7,7 +7,10 @@ export interface Requirement {
   description: string;
   acceptanceCriteria: string[];
   priority: 'must' | 'should' | 'could';
-  status: 'pending' | 'tested' | 'passing' | 'failing';
+  status: 'pending' | 'tested' | 'passing' | 'failing' | 'done';
+  type?: 'functional' | 'test' | 'fix';
+  implementationFiles?: string[];
+  testFile?: string;
 }
 
 export interface TestState {
