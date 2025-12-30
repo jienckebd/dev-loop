@@ -121,6 +121,7 @@ export class ValidationGate {
 
   /**
    * Validate that patch search strings exist in the target file.
+   * Tries exact match first, then fuzzy matching with whitespace normalization.
    */
   async validatePatches(filePath: string, patches: CodePatch[]): Promise<ValidationError[]> {
     const errors: ValidationError[] = [];
@@ -134,30 +135,109 @@ export class ValidationGate {
     for (let i = 0; i < patches.length; i++) {
       const patch = patches[i];
 
-      if (!content.includes(patch.search)) {
-        // Try to find similar content to suggest
-        const suggestion = this.findSimilarContent(content, patch.search);
-
-        // Log the failed search string for debugging (first 200 chars)
-        const searchPreview = patch.search.length > 200
-          ? patch.search.substring(0, 200) + '...'
-          : patch.search;
-        if (this.debug) {
-          console.log(`[ValidationGate] Patch ${i + 1} FAILED search string (first 200 chars):`);
-          console.log(`  "${searchPreview.replace(/\n/g, '\\n')}"`);
-        }
-
-        errors.push({
-          type: 'patch_not_found',
-          file: path.relative(process.cwd(), filePath),
-          patchIndex: i + 1,
-          message: `Patch ${i + 1}: Search string not found in file`,
-          suggestion: suggestion || 'Ensure the search string matches EXACTLY, including whitespace and line endings.',
-        });
+      // Try exact match first
+      if (content.includes(patch.search)) {
+        continue; // Exact match found, patch is valid
       }
+
+      // Try fuzzy match with whitespace normalization
+      const correctedSearch = this.tryFuzzyMatch(content, patch.search);
+      if (correctedSearch) {
+        // Auto-correct the patch search string
+        patch.search = correctedSearch;
+        if (this.debug) {
+          console.log(`[ValidationGate] Patch ${i + 1}: Auto-corrected whitespace differences`);
+        }
+        continue; // Fuzzy match found and corrected
+      }
+
+      // No match found - report error
+      const suggestion = this.findSimilarContent(content, patch.search);
+
+      // Log the failed search string for debugging (first 200 chars)
+      const searchPreview = patch.search.length > 200
+        ? patch.search.substring(0, 200) + '...'
+        : patch.search;
+      if (this.debug) {
+        console.log(`[ValidationGate] Patch ${i + 1} FAILED search string (first 200 chars):`);
+        console.log(`  "${searchPreview.replace(/\n/g, '\\n')}"`);
+      }
+
+      errors.push({
+        type: 'patch_not_found',
+        file: path.relative(process.cwd(), filePath),
+        patchIndex: i + 1,
+        message: `Patch ${i + 1}: Search string not found in file`,
+        suggestion: suggestion || 'Ensure the search string matches EXACTLY, including whitespace and line endings.',
+      });
     }
 
     return errors;
+  }
+
+  /**
+   * Try to find a matching section in the file with whitespace normalization.
+   * Returns the corrected search string if found, null otherwise.
+   */
+  private tryFuzzyMatch(content: string, search: string): string | null {
+    // Normalize the search string for comparison
+    const normalizedSearch = this.normalizeWhitespace(search);
+    
+    // Find all meaningful code lines in search (non-empty, not just whitespace/braces)
+    const searchLines = search.split('\n');
+    const meaningfulSearchLines = searchLines
+      .map(l => l.trim())
+      .filter(l => l.length > 5 && !l.match(/^[{}\s]*$/));
+    
+    if (meaningfulSearchLines.length === 0) {
+      return null;
+    }
+
+    // Find the first meaningful line in the content
+    const firstLine = meaningfulSearchLines[0];
+    const contentLines = content.split('\n');
+    
+    for (let i = 0; i < contentLines.length; i++) {
+      const contentLine = contentLines[i].trim();
+      
+      // Check if this line matches the first meaningful line
+      if (contentLine === firstLine || this.similarity(contentLine, firstLine) > 0.9) {
+        // Found a potential match - try to extract the same number of lines
+        const extractStart = Math.max(0, i - 3); // Look a bit before for context
+        
+        // Try different window sizes around the match
+        for (let windowStart = extractStart; windowStart <= i; windowStart++) {
+          for (let windowSize = searchLines.length; windowSize <= searchLines.length + 5; windowSize++) {
+            const windowEnd = Math.min(contentLines.length, windowStart + windowSize);
+            const extractedContent = contentLines.slice(windowStart, windowEnd).join('\n');
+            
+            // Check if this section semantically matches
+            if (this.normalizeWhitespace(extractedContent) === normalizedSearch) {
+              if (this.debug) {
+                console.log(`[ValidationGate] Fuzzy match found at lines ${windowStart + 1}-${windowEnd}`);
+              }
+              return extractedContent;
+            }
+          }
+        }
+      }
+    }
+
+    return null;
+  }
+
+  /**
+   * Normalize whitespace for comparison: collapse multiple spaces/newlines,
+   * trim lines, remove trailing whitespace.
+   */
+  private normalizeWhitespace(text: string): string {
+    return text
+      .split('\n')
+      .map(l => l.trim())
+      .filter(l => l.length > 0)
+      .join('\n')
+      .replace(/\s+/g, ' ')
+      .trim();
   }
 
   /**
