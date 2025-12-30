@@ -412,6 +412,34 @@ export class TestGenerator {
       );
     }
 
+    // Add helper method signatures and anti-patterns from config
+    if (testGenConfig.helperMethodSignatures) {
+      sections.push(
+        '',
+        `## CRITICAL: Helper Method Signatures (MUST USE CORRECT SIGNATURES)`,
+        ``
+      );
+      Object.entries(testGenConfig.helperMethodSignatures).forEach(([method, signature]) => {
+        if (method !== 'NOTE') {
+          sections.push(`- **${method}**: \`${signature}\``);
+        } else {
+          sections.push(`**${signature}**`);
+        }
+      });
+      sections.push(``);
+    }
+
+    if (testGenConfig.antiPatterns && testGenConfig.antiPatterns.length > 0) {
+      sections.push(
+        `## CRITICAL: Common Mistakes to Avoid (ANTI-PATTERNS)`,
+        ``
+      );
+      testGenConfig.antiPatterns.forEach((pattern: string) => {
+        sections.push(`- ${pattern}`);
+      });
+      sections.push(``);
+    }
+
     // Add framework-specific guidance
     const frameworkType = (this.config as any).framework?.type || 'generic';
     sections.push(

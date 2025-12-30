@@ -4,7 +4,8 @@
   "description": "Automated development workflow orchestrator that wraps task-master-ai with multi-provider AI support, testing, and log analysis",
   "main": "dist/index.js",
   "bin": {
-    "dev-loop": "./dist/index.js"
+    "dev-loop": "./dist/index.js",
+    "dev-loop-mcp": "./dist/mcp/server.js"
   },
   "scripts": {
     "build": "tsc && cp -r src/templates dist/",
@@ -38,7 +39,8 @@
     "ora": "^5.4.1",
     "chokidar": "^3.5.3",
     "fs-extra": "^11.1.1",
-    "yaml": "^2.3.4"
+    "yaml": "^2.3.4",
+    "fastmcp": "^3.23.1"
   },
   "devDependencies": {
     "@types/node": "^20.10.0",
