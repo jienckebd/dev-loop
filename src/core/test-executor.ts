@@ -125,10 +125,20 @@ export class TestExecutor {
       }
 
       // Determine success from output
-      const success = !output.includes('failed') &&
-                     !output.includes('Failed') &&
-                     !output.includes('Error:') &&
-                     (jsonResult?.status === 'passed' || output.includes('passed'));
+      // Check for explicit test failure markers, not just any "Error:" (which could be console output)
+      const hasExplicitFailure = output.includes(' failed') ||  // Playwright's " 1 failed"
+                                 output.includes('FAILED') ||
+                                 output.includes('Test timeout') ||
+                                 output.includes('expect(');
+      
+      // Look for passing indicators
+      const hasPassingIndicator = output.includes(' passed') ||  // Playwright's "X passed"
+                                  (jsonResult?.status === 'passed');
+      
+      // If JSON result says passed, trust it
+      // Otherwise, check for failures - absence of failures with passing indicator = success
+      const success = jsonResult?.status === 'passed' ||
+                     (!hasExplicitFailure && hasPassingIndicator);
 
       // Extract failure details if test failed
       let failureDetails: FailureDetails | undefined;
