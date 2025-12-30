@@ -1336,6 +1336,24 @@ export class WorkflowEngine {
   }
 
   /**
+   * Extract PHP method names from file content
+   */
+  private extractPhpMethodNames(content: string): string[] {
+    const methodNames: string[] = [];
+    const methodPattern = /(?:public|protected|private|static)\s+function\s+([a-zA-Z_][a-zA-Z0-9_]*)\s*\(/g;
+    let match;
+    
+    while ((match = methodPattern.exec(content)) !== null) {
+      const methodName = match[1];
+      if (!methodNames.includes(methodName)) {
+        methodNames.push(methodName);
+      }
+    }
+    
+    return methodNames.sort();
+  }
+
+  /**
    * Calculate Levenshtein distance between two strings
    */
   private levenshteinDistance(str1: string, str2: string): number {
@@ -1466,11 +1484,20 @@ export class WorkflowEngine {
           const isPrimaryFile = file === primaryFile;
           let fileContext: string;
 
+          // Extract existing method names for PHP files to help AI avoid duplicates
+          let existingMethodsInfo = '';
+          if (file.endsWith('.php') && isPrimaryFile) {
+            const methodNames = this.extractPhpMethodNames(content);
+            if (methodNames.length > 0) {
+              existingMethodsInfo = `\n### EXISTING METHODS IN THIS FILE (DO NOT ADD THESE - THEY ALREADY EXIST):\n${methodNames.map(m => `- ${m}`).join('\n')}\n`;
+            }
+          }
+
           if (isPrimaryFile && content.length < 100000) {
             // Primary file under 100KB: include full content (numbered lines for patch accuracy)
             const numberedContent = content.split('\n').map((line, i) => `${i + 1}|${line}`).join('\n');
-            fileContext = `\n### PRIMARY FILE TO MODIFY: ${file}\n### FULL CONTENT (use exact strings for patches):\n${numberedContent}`;
-            existingCodeSections.push(`\n### ${file} (FULL - PRIMARY FILE):\n${numberedContent}`);
+            fileContext = `\n### PRIMARY FILE TO MODIFY: ${file}${existingMethodsInfo}\n### FULL CONTENT (use exact strings for patches):\n${numberedContent}`;
+            existingCodeSections.push(`\n### ${file} (FULL - PRIMARY FILE)${existingMethodsInfo}:\n${numberedContent}`);
             if (this.debug) {
               console.log(`[DEBUG] Including FULL content of primary file: ${file} (${content.length} chars)`);
             }
