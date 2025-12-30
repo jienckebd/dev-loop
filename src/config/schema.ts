@@ -216,7 +216,11 @@ const configSchema = z.object({
       prePopulationHook: z.string().optional(),
       entitySaveHook: z.string().optional(),
       thirdPartySettings: z.record(z.array(z.string())).optional(),
-      idFormats: z.record(z.string()).optional(),
+      idFormats: z.object({
+        feedType: z.string().optional(),
+        webhook: z.string().optional(),
+        maxLength: z.number().optional(),
+      }).optional(),
       validationPatterns: z.array(z.string()).optional(),
     }).optional(),
     // Drupal coding standards
