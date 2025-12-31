@@ -1,12 +1,18 @@
 import * as fs from 'fs-extra';
 import { AIProvider } from '../providers/ai/interface';
 import { Requirement } from './prd-context';
+import { PrdConfigParser } from './prd-config-parser';
+import { Config } from '../config/schema';
 
 export class PrdParser {
+  private configParser: PrdConfigParser;
+
   constructor(
     private aiProvider: AIProvider,
     private debug: boolean = false
-  ) {}
+  ) {
+    this.configParser = new PrdConfigParser(debug);
+  }
 
   /**
    * Parse PRD markdown using structured format (machine-parseable)
@@ -252,5 +258,29 @@ Extract ALL requirements from the PRD. Include functional requirements, non-func
     }
 
     return requirements;
+  }
+
+  /**
+   * Parse PRD and extract both requirements and configuration overlay
+   * 
+   * This method parses the PRD for requirements and also extracts any
+   * embedded Dev-Loop Configuration section that provides config overlays.
+   */
+  async parseWithConfig(prdPath: string, useStructuredParsing: boolean = true): Promise<{
+    requirements: Requirement[];
+    configOverlay?: Partial<Config>;
+  }> {
+    // Parse requirements
+    const requirements = useStructuredParsing
+      ? await this.parseStructured(prdPath)
+      : await this.parse(prdPath);
+
+    // Parse config overlay
+    const configOverlay = await this.configParser.parsePrdConfig(prdPath);
+
+    return {
+      requirements,
+      configOverlay: configOverlay || undefined,
+    };
   }
 }

@@ -20,6 +20,7 @@ import { DebugMetrics } from './debug-metrics';
 import { logger } from './logger';
 import { PrdContextManager, PrdContext, Requirement } from './prd-context';
 import { PrdParser } from './prd-parser';
+import { PrdConfigParser } from './prd-config-parser';
 import { TestGenerator } from './test-generator';
 import { TestExecutor } from './test-executor';
 import { FailureAnalyzer } from './failure-analyzer';
@@ -2529,7 +2530,21 @@ export class WorkflowEngine {
    * Run autonomous PRD execution - test-driven development loop
    */
   async runAutonomousPrd(prdPath: string): Promise<PrdExecutionResult> {
-    const autonomousConfig = (this.config as any).autonomous || {};
+    // Parse PRD config overlay and merge with base config
+    const configParser = new PrdConfigParser(this.debug);
+    const prdConfigOverlay = await configParser.parsePrdConfig(prdPath);
+    
+    let effectiveConfig = this.config;
+    if (prdConfigOverlay) {
+      console.log('[WorkflowEngine] PRD config overlay detected, merging with base config...');
+      effectiveConfig = configParser.mergeWithBaseConfig(this.config, prdConfigOverlay);
+      
+      if (this.debug) {
+        logger.debug(`[WorkflowEngine] Merged PRD config overlay. Keys: ${Object.keys(prdConfigOverlay).join(', ')}`);
+      }
+    }
+
+    const autonomousConfig = (effectiveConfig as any).autonomous || {};
     const contextPath = autonomousConfig.contextPath || '.devloop/prd-context';
     const maxIterations = autonomousConfig.maxIterations || 100;
     const testEvolutionInterval = autonomousConfig.testEvolutionInterval || 5;
@@ -2539,11 +2554,11 @@ export class WorkflowEngine {
     const contextManager = new PrdContextManager(contextPath, this.debug);
     const context = await contextManager.loadOrCreate(prdPath);
 
-    // Initialize components
+    // Initialize components (use merged config)
     const prdParser = new PrdParser(this.aiProvider, this.debug);
-    const testGenerator = new TestGenerator(this.aiProvider, this.config, this.debug);
+    const testGenerator = new TestGenerator(this.aiProvider, effectiveConfig, this.debug);
     const testExecutor = new TestExecutor(
-      this.config.testing.artifactsDir,
+      effectiveConfig.testing.artifactsDir,
       this.debug
     );
     const failureAnalyzer = new FailureAnalyzer(this.aiProvider, this.debug);
@@ -2557,15 +2572,24 @@ export class WorkflowEngine {
       context.status = 'generating-tests';
       await contextManager.save(context);
 
-      // Check if structured parsing should be used
-      const prdConfig = (this.config as any).prd || {};
+      // Check if structured parsing should be used (use merged config)
+      const prdConfig = (effectiveConfig as any).prd || {};
       const useStructuredParsing = prdConfig.useStructuredParsing !== false;
 
-      let requirements = useStructuredParsing
-        ? await prdParser.parseStructured(prdPath)
-        : await prdParser.parse(prdPath);
+      // Use parseWithConfig to get both requirements and any config overlay
+      // (though we already merged config above, this ensures consistency)
+      const parseResult = await prdParser.parseWithConfig(prdPath, useStructuredParsing);
+      let requirements = parseResult.requirements;
 
-      // Resolve dependencies if enabled
+      // If config overlay was found in parse result, merge again (in case parseWithConfig found different overlay)
+      if (parseResult.configOverlay) {
+        effectiveConfig = configParser.mergeWithBaseConfig(effectiveConfig, parseResult.configOverlay);
+        // Update prdConfig reference
+        const updatedPrdConfig = (effectiveConfig as any).prd || {};
+        Object.assign(prdConfig, updatedPrdConfig);
+      }
+
+      // Resolve dependencies if enabled (use merged config)
       const resolveDependencies = prdConfig.resolveDependencies === true;
       if (resolveDependencies && prdConfig.dependencies) {
         requirements = this.resolveRequirementDependencies(requirements, prdConfig.dependencies);
@@ -2575,10 +2599,10 @@ export class WorkflowEngine {
 
       // Generate implementation code if enabled and requirements have implementation files
       const generateImplementation = prdConfig.generateImplementation !== false;
-      const drupalConfig = (this.config as any).drupal || {};
+      const drupalConfig = (effectiveConfig as any).drupal || {};
 
       if (generateImplementation && drupalConfig.enabled) {
-        const implGenerator = new DrupalImplementationGenerator(this.aiProvider, this.config, this.debug);
+        const implGenerator = new DrupalImplementationGenerator(this.aiProvider, effectiveConfig, this.debug);
 
         console.log('[WorkflowEngine] Generating implementation code for requirements with implementation files...');
         for (const req of requirements) {

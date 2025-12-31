@@ -152,6 +152,19 @@ export function registerCoreTools(mcp: FastMCPType, getConfig: ConfigLoader): vo
         (config as any).debug = true;
       }
 
+      // Check for PRD config overlay
+      const { PrdConfigParser } = await import('../../core/prd-config-parser');
+      const configParser = new PrdConfigParser(args.debug || false);
+      const prdConfigOverlay = await configParser.parsePrdConfig(args.prdPath);
+      const prdConfigInfo = prdConfigOverlay
+        ? {
+            detected: true,
+            sections: Object.keys(prdConfigOverlay),
+          }
+        : {
+            detected: false,
+          };
+
       // Import the PRD command handler
       const { prdCommand } = await import('../../cli/commands/prd');
 
@@ -166,11 +179,13 @@ export function registerCoreTools(mcp: FastMCPType, getConfig: ConfigLoader): vo
         return JSON.stringify({
           success: true,
           message: 'PRD execution completed',
+          prdConfig: prdConfigInfo,
         });
       } catch (error) {
         return JSON.stringify({
           success: false,
           error: error instanceof Error ? error.message : String(error),
+          prdConfig: prdConfigInfo,
         });
       }
     },
