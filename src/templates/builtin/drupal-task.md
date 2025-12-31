@@ -14,6 +14,17 @@ You are an expert Drupal developer. Generate PHP code changes to implement the f
 
 ## FILE CREATION TASKS (CRITICAL)
 
+### Before Returning Empty Files Array - VERIFY:
+
+1. **Does the task say "Create [path]"?** If YES, you MUST create that exact file
+2. **Does the exact file already exist at the exact path?** If NO, you MUST create it
+3. **Did you find a SIMILAR file?** Similar is NOT the same:
+   - `bd.entity_type.*.yml` is NOT `node.type.*.yml`
+   - `config/install/*.yml` is NOT `config/default/*.yml`
+   - Files in module directories are NOT files in `config/default/`
+
+### File Creation Rules
+
 When task details specify an EXACT file path to create (e.g., "Create config/default/node.type.test_content.yml"):
 - **You MUST create that EXACT file** - use operation "create" with the exact path from task details
 - **Similar files DO NOT fulfill the requirement** - if task says `node.type.*.yml`, creating `bd.entity_type.*.yml` is WRONG
@@ -21,10 +32,33 @@ When task details specify an EXACT file path to create (e.g., "Create config/def
 - **Check file existence FIRST** - if the exact file doesn't exist, you MUST create it
 - **Never assume** - if task says "Create X" and X doesn't exist, return it in your files array with operation "create"
 
-Example: Task says "Create config/default/node.type.test_content.yml"
-- ✅ CORRECT: `{"path": "config/default/node.type.test_content.yml", "operation": "create", "content": "..."}`
-- ❌ WRONG: Returning empty files array because you found `config/install/node.type.test_content.yml`
-- ❌ WRONG: Returning empty files array because you found `bd.entity_type.test_content.yml`
+### Common AI Mistakes to AVOID:
+
+1. **Seeing similar files and assuming task is done**: Finding `bd.entity_type.test_content.yml` does NOT mean `node.type.test_content.yml` exists
+2. **Wrong location**: Creating in `config/install/` instead of `config/default/`
+3. **Wrong file type**: Creating BD entity type config when Node content type is required
+4. **Empty response with "already exists"**: If the EXACT file at the EXACT path doesn't exist, this is WRONG
+
+### Example: Task says "Create config/default/node.type.test_content.yml"
+
+✅ CORRECT Response:
+```json
+{
+  "files": [
+    {
+      "path": "config/default/node.type.test_content.yml",
+      "operation": "create",
+      "content": "langcode: en\nstatus: true\ndependencies: {}\nname: Test Content\ntype: test_content\ndescription: 'Test content type for dev-loop validation'\nhelp: ''\nnew_revision: true\npreview_mode: 1\ndisplay_submitted: true"
+    }
+  ],
+  "summary": "Created Node content type configuration for test_content"
+}
+```
+
+❌ WRONG Responses:
+- Returning empty files array because you found `config/install/node.type.test_content.yml`
+- Returning empty files array because you found `bd.entity_type.test_content.yml`
+- Returning `{"files": [], "summary": "Configuration already exists"}` when the exact file doesn't exist
 
 ## PATH VERIFICATION (CRITICAL)
 

@@ -49,6 +49,22 @@ export interface RunMetrics {
     tokensPerSuccess?: number; // tokens used per successful task
     iterationsToSuccess?: number; // how many attempts before success
   };
+  // Evolution mode metrics for file creation tracking
+  evolution?: {
+    fileCreation?: {
+      filesRequested: string[];      // Files explicitly required by task
+      filesCreated: string[];        // Files AI actually created
+      missingFiles: string[];        // Files that should have been created but weren't
+      wrongLocationFiles: string[];  // Files created in wrong location
+    };
+    investigationTasks?: {
+      requested: boolean;            // Whether investigation was requested
+      skipped: boolean;              // Whether it was skipped due to config
+      created: number;               // Number of investigation tasks created
+    };
+    blockingReason?: string;         // Why task was blocked (if blocked)
+    aiSummary?: string;              // What AI said it did
+  };
 }
 
 export interface MetricsData {
@@ -183,6 +199,126 @@ export class DebugMetrics {
     }
     if (tokensPerSuccess !== undefined) this.currentRun.efficiency.tokensPerSuccess = tokensPerSuccess;
     if (iterationsToSuccess !== undefined) this.currentRun.efficiency.iterationsToSuccess = iterationsToSuccess;
+  }
+
+  /**
+   * Record file creation attempt for evolution mode analysis
+   */
+  recordFileCreation(
+    filesRequested: string[],
+    filesCreated: string[],
+    missingFiles: string[],
+    wrongLocationFiles: string[] = []
+  ): void {
+    if (!this.currentRun.evolution) {
+      this.currentRun.evolution = {};
+    }
+    this.currentRun.evolution.fileCreation = {
+      filesRequested,
+      filesCreated,
+      missingFiles,
+      wrongLocationFiles,
+    };
+  }
+
+  /**
+   * Record investigation task handling for evolution mode analysis
+   */
+  recordInvestigationHandling(requested: boolean, skipped: boolean, created: number): void {
+    if (!this.currentRun.evolution) {
+      this.currentRun.evolution = {};
+    }
+    this.currentRun.evolution.investigationTasks = {
+      requested,
+      skipped,
+      created,
+    };
+  }
+
+  /**
+   * Record blocking reason for evolution mode analysis
+   */
+  recordBlockingReason(reason: string): void {
+    if (!this.currentRun.evolution) {
+      this.currentRun.evolution = {};
+    }
+    this.currentRun.evolution.blockingReason = reason;
+  }
+
+  /**
+   * Record AI summary for evolution mode analysis
+   */
+  recordAiSummary(summary: string): void {
+    if (!this.currentRun.evolution) {
+      this.currentRun.evolution = {};
+    }
+    this.currentRun.evolution.aiSummary = summary?.substring(0, 500); // Truncate to prevent bloat
+  }
+
+  /**
+   * Get evolution mode analytics for diagnosis
+   */
+  getEvolutionAnalytics(): {
+    totalFileCreationAttempts: number;
+    successfulFileCreations: number;
+    fileCreationSuccessRate: number;
+    commonMissingPatterns: string[];
+    investigationTasksCreated: number;
+    investigationTasksSkipped: number;
+    commonBlockingReasons: Record<string, number>;
+  } {
+    const runs = this.metrics.runs.filter(r => r.evolution);
+    
+    let totalAttempts = 0;
+    let successfulCreations = 0;
+    const missingPatterns: string[] = [];
+    let invCreated = 0;
+    let invSkipped = 0;
+    const blockingReasons: Record<string, number> = {};
+
+    for (const run of runs) {
+      if (run.evolution?.fileCreation) {
+        totalAttempts++;
+        const fc = run.evolution.fileCreation;
+        if (fc.missingFiles.length === 0 && fc.wrongLocationFiles.length === 0) {
+          successfulCreations++;
+        }
+        missingPatterns.push(...fc.missingFiles);
+      }
+      if (run.evolution?.investigationTasks) {
+        if (run.evolution.investigationTasks.skipped) {
+          invSkipped++;
+        }
+        invCreated += run.evolution.investigationTasks.created;
+      }
+      if (run.evolution?.blockingReason) {
+        const reason = run.evolution.blockingReason;
+        blockingReasons[reason] = (blockingReasons[reason] || 0) + 1;
+      }
+    }
+
+    // Get top 5 most common missing file patterns
+    const patternCounts: Record<string, number> = {};
+    for (const pattern of missingPatterns) {
+      // Extract pattern from filename (e.g., "node.type.*.yml" from "node.type.test_content.yml")
+      const match = pattern.match(/^(.+?)\..+\.([^.]+)$/);
+      const normalized = match ? `${match[1]}.*.${match[2]}` : pattern;
+      patternCounts[normalized] = (patternCounts[normalized] || 0) + 1;
+    }
+    const commonMissingPatterns = Object.entries(patternCounts)
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 5)
+      .map(([pattern]) => pattern);
+
+    return {
+      totalFileCreationAttempts: totalAttempts,
+      successfulFileCreations: successfulCreations,
+      fileCreationSuccessRate: totalAttempts > 0 ? successfulCreations / totalAttempts : 0,
+      commonMissingPatterns,
+      investigationTasksCreated: invCreated,
+      investigationTasksSkipped: invSkipped,
+      commonBlockingReasons: blockingReasons,
+    };
   }
 
   completeRun(status: 'completed' | 'failed'): void {

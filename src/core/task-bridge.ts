@@ -9,14 +9,48 @@ const execAsync = promisify(exec);
 
 export class TaskMasterBridge {
   private tasksPath: string;
+  private retryCountPath: string;
   private originalFormat: 'array' | 'tasks' | 'master' = 'master';
   private taskRetryCount: Map<string, number> = new Map();
   private maxRetries: number = 3;
 
   constructor(private config: Config) {
     this.tasksPath = path.resolve(process.cwd(), config.taskMaster.tasksPath);
+    this.retryCountPath = path.resolve(process.cwd(), '.devloop/retry-counts.json');
     // Allow config override for maxRetries
     this.maxRetries = (config as any).maxRetries || 3;
+    // Load persisted retry counts
+    this.loadRetryCountsFromFile();
+  }
+
+  /**
+   * Load retry counts from persistent storage
+   */
+  private loadRetryCountsFromFile(): void {
+    try {
+      if (fs.existsSync(this.retryCountPath)) {
+        const data = JSON.parse(fs.readFileSync(this.retryCountPath, 'utf-8'));
+        this.taskRetryCount = new Map(Object.entries(data));
+        console.log(`[TaskBridge] Loaded ${this.taskRetryCount.size} retry counts from disk`);
+      }
+    } catch (err) {
+      // Start fresh if file is corrupted
+      console.warn('[TaskBridge] Could not load retry counts, starting fresh:', err);
+      this.taskRetryCount = new Map();
+    }
+  }
+
+  /**
+   * Save retry counts to persistent storage
+   */
+  private saveRetryCountsToFile(): void {
+    try {
+      const data = Object.fromEntries(this.taskRetryCount);
+      fs.ensureDirSync(path.dirname(this.retryCountPath));
+      fs.writeFileSync(this.retryCountPath, JSON.stringify(data, null, 2));
+    } catch (err) {
+      console.warn('[TaskBridge] Could not save retry counts:', err);
+    }
   }
 
   /**
@@ -35,7 +69,25 @@ export class TaskMasterBridge {
     const baseId = this.getBaseTaskId(taskId);
     const count = (this.taskRetryCount.get(baseId) || 0) + 1;
     this.taskRetryCount.set(baseId, count);
+    this.saveRetryCountsToFile();
     return count;
+  }
+
+  /**
+   * Reset retry count for a task (allows unblocking)
+   */
+  resetRetryCount(taskId: string | number): void {
+    const baseId = this.getBaseTaskId(taskId);
+    this.taskRetryCount.delete(baseId);
+    this.saveRetryCountsToFile();
+    console.log(`[TaskBridge] Reset retry count for task ${baseId}`);
+  }
+
+  /**
+   * Get all retry counts (for diagnostics)
+   */
+  getAllRetryCounts(): Record<string, number> {
+    return Object.fromEntries(this.taskRetryCount);
   }
 
   /**

@@ -979,7 +979,10 @@ export class WorkflowEngine {
         let enhancedErrorDescription = errorDescription;
         let investigationTasks: any[] = [];
 
-        if (this.debuggingStrategyAdvisor && this.investigationTaskGenerator) {
+        // Check if investigation is disabled in config
+        const skipInvestigationOnError = (this.config as any).autonomous?.skipInvestigation === true;
+
+        if (!skipInvestigationOnError && this.debuggingStrategyAdvisor && this.investigationTaskGenerator) {
           try {
             const framework = (this.config as any).framework?.type;
             const classification = this.debuggingStrategyAdvisor.classifyError(errorDescription, {

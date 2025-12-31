@@ -369,6 +369,96 @@ addLoggedTool({
 });
 
 // ============================================
+// Task Management Tools
+// ============================================
+
+addLoggedTool({
+  name: 'devloop_reset_task',
+  description: 'Reset a blocked task to pending status and clear its retry count',
+  parameters: z.object({
+    taskId: z.string().describe('Task ID to reset (e.g., "1" or "fix-1-12345")'),
+    config: z.string().optional().describe('Path to config file (optional)'),
+  }),
+  execute: async (args: { taskId: string; config?: string }) => {
+    const { loadConfig } = await import('../config/loader.js');
+    const { TaskMasterBridge } = await import('../core/task-bridge.js');
+
+    const config = await loadConfig(args.config);
+    const taskBridge = new TaskMasterBridge(config);
+
+    try {
+      // Reset retry count
+      taskBridge.resetRetryCount(args.taskId);
+
+      // Update task status to pending
+      await taskBridge.updateTaskStatus(args.taskId, 'pending');
+
+      return JSON.stringify({
+        success: true,
+        message: `Task ${args.taskId} reset to pending and retry count cleared`,
+        taskId: args.taskId,
+      });
+    } catch (error) {
+      return JSON.stringify({
+        success: false,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  },
+});
+
+addLoggedTool({
+  name: 'devloop_diagnostics',
+  description: 'Get evolution mode diagnostics including retry counts, blocked tasks, and recent failures',
+  parameters: z.object({
+    config: z.string().optional().describe('Path to config file (optional)'),
+  }),
+  execute: async (args: { config?: string }) => {
+    const { loadConfig } = await import('../config/loader.js');
+    const { TaskMasterBridge } = await import('../core/task-bridge.js');
+
+    const config = await loadConfig(args.config);
+    const taskBridge = new TaskMasterBridge(config);
+
+    try {
+      const allTasks = await taskBridge.getAllTasks();
+      const blockedTasks = allTasks.filter((t: any) => t.status === 'blocked');
+      const investigationTasks = allTasks.filter((t: any) => String(t.id).startsWith('investigation-'));
+      const retryCounts = taskBridge.getAllRetryCounts();
+      const skipInvestigation = (config as any).autonomous?.skipInvestigation;
+
+      // Read retry counts from disk for accuracy
+      const retryCountPath = path.join(process.cwd(), '.devloop/retry-counts.json');
+      let persistedRetryCounts: Record<string, number> = {};
+      try {
+        if (fs.existsSync(retryCountPath)) {
+          persistedRetryCounts = JSON.parse(fs.readFileSync(retryCountPath, 'utf-8'));
+        }
+      } catch {
+        // Ignore
+      }
+
+      return JSON.stringify({
+        blockedTasks: blockedTasks.map((t: any) => ({ id: t.id, title: t.title })),
+        blockedCount: blockedTasks.length,
+        investigationTasks: investigationTasks.map((t: any) => ({ id: t.id, status: t.status })),
+        investigationCount: investigationTasks.length,
+        skipInvestigationConfig: skipInvestigation ?? false,
+        retryCounts: persistedRetryCounts,
+        maxRetries: (config as any).autonomous?.maxTaskRetries || 3,
+        pendingCount: allTasks.filter((t: any) => t.status === 'pending').length,
+        totalTasks: allTasks.length,
+      });
+    } catch (error) {
+      return JSON.stringify({
+        success: false,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  },
+});
+
+// ============================================
 // Debugging Tools (3 essential ones)
 // ============================================
 
