@@ -25,6 +25,7 @@ import { TestExecutor } from './test-executor';
 import { FailureAnalyzer } from './failure-analyzer';
 import { AutonomousTaskGenerator } from './autonomous-task-generator';
 import { DrupalImplementationGenerator } from './drupal-implementation-generator';
+import { FrameworkLoader, FrameworkPlugin } from '../frameworks';
 
 const execAsync = promisify(exec);
 
@@ -40,6 +41,8 @@ export class WorkflowEngine {
   private taskBridge: TaskMasterBridge;
   private stateManager: StateManager;
   private templateManager: TemplateManager;
+  private frameworkLoader: FrameworkLoader;
+  private frameworkPlugin?: FrameworkPlugin;
   private intervention: InterventionSystem;
   private aiProvider: AIProvider;
   private testRunner: any;
@@ -82,6 +85,11 @@ export class WorkflowEngine {
       (config as any).framework, // Pass framework config for template selection
       this.debug
     );
+
+    // Initialize framework loader and plugin
+    this.frameworkLoader = new FrameworkLoader(process.cwd(), this.debug);
+    this.initializeFrameworkPlugin((config as any).framework?.type);
+
     this.intervention = new InterventionSystem(config);
     this.aiProvider = AIProviderFactory.createWithFallback(config);
     this.testRunner = TestRunnerFactory.create(config);
@@ -223,6 +231,33 @@ export class WorkflowEngine {
     if (lower.includes('not found') || lower.includes('cannot find')) return 'missing-reference';
     if (lower.includes('timeout')) return 'timeout';
     return 'unknown-error';
+  }
+
+  /**
+   * Initialize the framework plugin asynchronously.
+   * This is called from the constructor and runs in the background.
+   */
+  private initializeFrameworkPlugin(frameworkType?: string): void {
+    // Run async initialization without blocking constructor
+    this.frameworkLoader.loadFramework(frameworkType).then(plugin => {
+      this.frameworkPlugin = plugin;
+      this.templateManager.setFrameworkPlugin(plugin);
+
+      if (this.debug) {
+        console.log(`[WorkflowEngine] Framework plugin loaded: ${plugin.name} v${plugin.version}`);
+      }
+    }).catch(err => {
+      if (this.debug) {
+        console.warn('[WorkflowEngine] Failed to load framework plugin:', err);
+      }
+    });
+  }
+
+  /**
+   * Get the current framework plugin (may be undefined if still loading).
+   */
+  getFrameworkPlugin(): FrameworkPlugin | undefined {
+    return this.frameworkPlugin;
   }
 
   /**

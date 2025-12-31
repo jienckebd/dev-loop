@@ -1,6 +1,7 @@
 import * as fs from 'fs-extra';
 import * as path from 'path';
 import { TemplateSource, FrameworkConfig, Task } from '../types';
+import { FrameworkPlugin } from '../frameworks/interface';
 
 export type TemplateType = 'generic' | 'playwright-test' | 'drupal' | string;
 
@@ -206,6 +207,7 @@ Return JSON with code changes:
 
 export class TemplateManager {
   private frameworkConfig?: FrameworkConfig;
+  private frameworkPlugin?: FrameworkPlugin;
   private debug: boolean;
 
   constructor(
@@ -216,6 +218,17 @@ export class TemplateManager {
   ) {
     this.frameworkConfig = frameworkConfig;
     this.debug = debug;
+  }
+
+  /**
+   * Set the framework plugin to use for templates.
+   * When set, the plugin's templates take precedence over built-in templates.
+   */
+  setFrameworkPlugin(plugin: FrameworkPlugin): void {
+    this.frameworkPlugin = plugin;
+    if (this.debug) {
+      console.log(`[TemplateManager] Using framework plugin: ${plugin.name}`);
+    }
   }
 
   async getPRDTemplate(): Promise<string> {
@@ -288,16 +301,28 @@ export class TemplateManager {
       }
     }
 
-    // 2. Try framework-specific template path
+    // 2. Try framework plugin template (NEW)
+    if (!template && this.frameworkPlugin) {
+      try {
+        template = this.frameworkPlugin.getTaskTemplate();
+        templateSource = `framework-plugin (${this.frameworkPlugin.name})`;
+      } catch (err) {
+        if (this.debug) {
+          console.warn(`[TemplateManager] Failed to get template from plugin: ${err}`);
+        }
+      }
+    }
+
+    // 3. Try framework-specific template path from config
     if (!template && this.frameworkConfig?.templatePath) {
       const frameworkPath = path.resolve(process.cwd(), this.frameworkConfig.templatePath);
       if (await fs.pathExists(frameworkPath)) {
         template = await fs.readFile(frameworkPath, 'utf-8');
-        templateSource = `framework (${this.frameworkConfig.templatePath})`;
+        templateSource = `framework-config (${this.frameworkConfig.templatePath})`;
       }
     }
 
-    // 3. Try builtin templates directory
+    // 4. Try builtin templates directory
     if (!template && templateType !== 'generic') {
       const builtinPath = path.join(__dirname, '../templates/builtin', `${templateType}-task.md`);
       if (await fs.pathExists(builtinPath)) {
@@ -306,7 +331,7 @@ export class TemplateManager {
       }
     }
 
-    // 4. Fallback to embedded templates (always available)
+    // 5. Fallback to embedded templates (always available)
     if (!template) {
       template = EMBEDDED_TEMPLATES[templateType] || EMBEDDED_TEMPLATES['generic'];
       templateSource = 'embedded';
