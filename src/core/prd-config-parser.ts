@@ -55,7 +55,9 @@ export class PrdConfigParser {
    */
   private extractConfigSection(content: string): string | null {
     // Look for "## Dev-Loop Configuration" or similar section headers
-    const sectionPattern = /^##+\s+Dev-Loop\s+Configuration[^\n]*\n([\s\S]*?)(?=^##+\s|$)/m;
+    // Match until the next same-level (##) header, markdown separator (---), or end of file
+    // Note: We want to include subsection headers (###) as they're part of the config section
+    const sectionPattern = /^##\s+Dev-Loop\s+Configuration[^\n]*\n([\s\S]+?)(?=^##\s|^---\s*$|$(?![\s\S]))/m;
     const match = content.match(sectionPattern);
     
     if (!match) {
