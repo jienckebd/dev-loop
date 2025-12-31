@@ -1,11 +1,21 @@
 #!/usr/bin/env node
 
 import * as fs from 'fs';
+import * as path from 'path';
+import { config } from 'dotenv';
 import { loadConfig } from '../config/loader';
 import { registerCoreTools } from './tools/core';
 import { registerDebugTools } from './tools/debug';
 import { registerControlTools } from './tools/control';
 import { registerEvolutionTools } from './tools/evolution';
+
+// Load .env file from project root before anything else
+// This ensures API keys are available when config loads
+const projectRoot = process.cwd();
+const envPath = path.join(projectRoot, '.env');
+if (fs.existsSync(envPath)) {
+  config({ path: envPath });
+}
 
 // MCP Request/Response Logger
 const MCP_LOG_PATH = process.env.MCP_LOG_PATH || '/tmp/dev-loop-mcp.log';

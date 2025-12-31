@@ -569,6 +569,47 @@ export class WorkflowEngine {
         logger.debug(`AI summary: ${changes.summary}`);
       }
 
+      // NEW: Validate that required files from task details were actually created
+      // This catches cases where AI says "no changes needed" but the required file doesn't exist
+      if (changes.files?.length === 0) {
+        const taskDetails = (task as any).details || '';
+        const requiredFiles = this.extractRequiredFilePaths(taskDetails);
+        
+        if (requiredFiles.length > 0) {
+          const missingFiles: string[] = [];
+          for (const requiredPath of requiredFiles) {
+            const fullPath = path.resolve(process.cwd(), requiredPath);
+            if (!await fs.pathExists(fullPath)) {
+              missingFiles.push(requiredPath);
+            }
+          }
+          
+          if (missingFiles.length > 0) {
+            console.warn(`[WorkflowEngine] AI returned 0 files but required files are missing: ${missingFiles.join(', ')}`);
+            console.warn(`[WorkflowEngine] Task details explicitly require these files to be created`);
+            
+            // Create fix task that emphasizes creating the required files
+            const fixTask = await this.taskBridge.createFixTask(
+              task.id,
+              `AI returned "no changes needed" but required files do not exist:\n${missingFiles.map(f => `- ${f}`).join('\n')}\n\n**CRITICAL**: The task details explicitly require creating these files. Similar files (e.g., bd.entity_type.*.yml) do NOT fulfill requirements for node.type.*.yml files.\n\nYou MUST create the EXACT files specified in the task details:\n\n${taskDetails.substring(0, 1000)}`,
+              `Missing required files: ${missingFiles.join(', ')}`
+            );
+            
+            if (fixTask) {
+              await this.taskBridge.updateTaskStatus(task.id, 'pending');
+            }
+            
+            await this.updateState({ status: 'idle' });
+            return {
+              completed: false,
+              noTasks: false,
+              taskId: task.id,
+              error: `Required files not created: ${missingFiles.join(', ')}`,
+            };
+          }
+        }
+      }
+
       // Update state: ApplyingChanges
       await this.updateState({ status: 'applying-changes' });
 
@@ -768,6 +809,54 @@ export class WorkflowEngine {
         taskId: task.id,
         filesModified: changes.files?.map(f => f.path) || [],
       });
+
+      // NEW: Post-apply validation - verify required files from task details were created at correct paths
+      const taskDetails = (task as any).details || '';
+      const requiredFiles = this.extractRequiredFilePaths(taskDetails);
+      
+      if (requiredFiles.length > 0) {
+        const incorrectlyLocatedFiles: string[] = [];
+        for (const requiredPath of requiredFiles) {
+          const fullPath = path.resolve(process.cwd(), requiredPath);
+          const fileExists = await fs.pathExists(fullPath);
+          
+          // Check if file was created at a different location
+          if (!fileExists) {
+            // Search for file with same name in other locations
+            const fileName = path.basename(requiredPath);
+            const searchPaths = [
+              path.resolve(process.cwd(), 'docroot/modules/**/config/install', fileName),
+              path.resolve(process.cwd(), 'config/install', fileName),
+            ];
+            
+            // If file doesn't exist at required path, this is an error
+            incorrectlyLocatedFiles.push(`${requiredPath} - file not found at required location`);
+          }
+        }
+        
+        if (incorrectlyLocatedFiles.length > 0) {
+          console.warn(`[WorkflowEngine] Required files not created at correct paths: ${incorrectlyLocatedFiles.join(', ')}`);
+          
+          // Create fix task
+          const fixTask = await this.taskBridge.createFixTask(
+            task.id,
+            `Required files were not created at the correct paths:\n${incorrectlyLocatedFiles.map(f => `- ${f}`).join('\n')}\n\n**CRITICAL**: The task details require files at EXACT paths. Files in different locations (e.g., config/install/ instead of config/default/) do NOT fulfill the requirement.\n\nYou MUST create files at the EXACT paths specified in task details:\n\n${taskDetails.substring(0, 1000)}`,
+            `Files not at correct paths: ${incorrectlyLocatedFiles.join(', ')}`
+          );
+          
+          if (fixTask) {
+            await this.taskBridge.updateTaskStatus(task.id, 'pending');
+          }
+          
+          await this.updateState({ status: 'idle' });
+          return {
+            completed: false,
+            noTasks: false,
+            taskId: task.id,
+            error: `Required files not at correct paths: ${incorrectlyLocatedFiles.join(', ')}`,
+          };
+        }
+      }
 
       // Execute post-apply hooks (e.g., cache clearing for Drupal)
       if (this.config.hooks?.postApply && this.config.hooks.postApply.length > 0) {
@@ -2763,6 +2852,45 @@ export class WorkflowEngine {
     }
 
     return false;
+  }
+
+  /**
+   * Extract required file paths from task details
+   * Looks for patterns like "Create config/default/file.yml" or "File: path/to/file"
+   */
+  private extractRequiredFilePaths(taskDetails: string): string[] {
+    const filePaths: string[] = [];
+    
+    // Pattern 1: "Create config/default/path.yml" or "Create path/to/file.ext"
+    const createPattern = /Create\s+([a-zA-Z0-9_./-]+\.[a-z]+)/gi;
+    let match;
+    while ((match = createPattern.exec(taskDetails)) !== null) {
+      const filePath = match[1].trim();
+      if (filePath && !filePath.includes('...') && !filePath.includes('example')) {
+        filePaths.push(filePath);
+      }
+    }
+    
+    // Pattern 2: "File: path/to/file.ext"
+    const filePattern = /File:\s*([a-zA-Z0-9_./-]+\.[a-z]+)/gi;
+    while ((match = filePattern.exec(taskDetails)) !== null) {
+      const filePath = match[1].trim();
+      if (filePath && !filePath.includes('...') && !filePath.includes('example')) {
+        filePaths.push(filePath);
+      }
+    }
+    
+    // Pattern 3: "config/default/file.yml" in quotes or backticks
+    const configPattern = /(?:`|"|')(config\/[a-zA-Z0-9_./-]+\.[a-z]+)(?:`|"|')/gi;
+    while ((match = configPattern.exec(taskDetails)) !== null) {
+      const filePath = match[1].trim();
+      if (filePath && !filePaths.includes(filePath)) {
+        filePaths.push(filePath);
+      }
+    }
+    
+    // Remove duplicates and return
+    return [...new Set(filePaths)];
   }
 
   /**

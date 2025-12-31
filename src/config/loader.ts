@@ -1,9 +1,17 @@
 import * as fs from 'fs-extra';
 import * as path from 'path';
+import { config as dotenvConfig } from 'dotenv';
 import { validateConfig, Config } from './schema';
 import { defaultConfig } from './defaults';
 
 export async function loadConfig(configPath?: string): Promise<Config> {
+  // Ensure .env is loaded before loading config (in case MCP server didn't load it)
+  // This is a safety measure - dotenv.config() is safe to call multiple times
+  const envPath = path.join(process.cwd(), '.env');
+  if (await fs.pathExists(envPath)) {
+    dotenvConfig({ path: envPath });
+  }
+
   const configFile = configPath || path.join(process.cwd(), 'devloop.config.js');
 
   if (!(await fs.pathExists(configFile))) {

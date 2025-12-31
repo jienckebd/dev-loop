@@ -15,18 +15,71 @@ import { fileURLToPath } from 'url';
 import { config as dotenvConfig } from 'dotenv';
 
 // Load .env file from current working directory
+// IMPORTANT: Handle case where mcp.json sets env vars as literal placeholder strings (e.g., "${ANTHROPIC_API_KEY}")
+// We need to load from .env file directly and override any placeholder literals
 const envPath = path.join(process.cwd(), '.env');
-const dotenvResult = dotenvConfig({ path: envPath });
+
+// Store existing env vars to detect placeholders
+const existingEnv = { ...process.env };
+
+// Load .env file - use override: true to ensure .env values take precedence over process.env
+// This is necessary because mcp.json might set placeholders that we need to override
+let dotenvResult: { error?: Error; parsed?: Record<string, string> };
+if (fs.existsSync(envPath)) {
+  dotenvResult = dotenvConfig({ path: envPath, override: true });
+  
+  // Parse .env file manually to extract values (in case dotenv doesn't override properly)
+  const envFileContent = fs.readFileSync(envPath, 'utf-8');
+  const envLines = envFileContent.split('\n');
+  
+  for (const line of envLines) {
+    // Skip comments and empty lines
+    const trimmed = line.trim();
+    if (!trimmed || trimmed.startsWith('#')) continue;
+    
+    // Parse KEY="value" or KEY=value format
+    const match = trimmed.match(/^([A-Z_][A-Z0-9_]*)=(.+)$/);
+    if (match) {
+      const [, key, rawValue] = match;
+      
+      // Check if existing value is a placeholder literal (e.g., "${VAR_NAME}")
+      const existingValue = existingEnv[key];
+      const isPlaceholder = existingValue && existingValue.startsWith('${') && existingValue.endsWith('}');
+      
+      // Always override placeholders, or if key is one we care about
+      if (isPlaceholder || ['ANTHROPIC_API_KEY', 'PERPLEXITY_API_KEY', 'OPENAI_API_KEY'].includes(key)) {
+        let value = rawValue.trim();
+        // Remove surrounding quotes if present
+        if ((value.startsWith('"') && value.endsWith('"')) || (value.startsWith("'") && value.endsWith("'"))) {
+          value = value.slice(1, -1);
+        }
+        process.env[key] = value;
+      }
+    }
+  }
+} else {
+  dotenvResult = { error: new Error('.env file not found') };
+}
+
+// Strip quotes from values if present (dotenv sometimes preserves quotes from .env file)
+if (process.env.ANTHROPIC_API_KEY && process.env.ANTHROPIC_API_KEY.startsWith('"') && process.env.ANTHROPIC_API_KEY.endsWith('"')) {
+  process.env.ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY.slice(1, -1);
+}
 
 // Debug: Write dotenv loading result to a debug file
+const apiKey = process.env.ANTHROPIC_API_KEY;
 const debugInfo = {
   timestamp: new Date().toISOString(),
   cwd: process.cwd(),
   envPath,
   dotenvLoaded: !dotenvResult.error,
   dotenvError: dotenvResult.error?.message,
-  anthropicKeySet: !!process.env.ANTHROPIC_API_KEY,
-  anthropicKeyPrefix: process.env.ANTHROPIC_API_KEY?.substring(0, 20) || 'NOT_SET',
+  anthropicKeySet: !!apiKey,
+  anthropicKeyLength: apiKey?.length || 0,
+  anthropicKeyPrefix: apiKey?.substring(0, 20) || 'NOT_SET',
+  anthropicKeySuffix: apiKey?.length > 20 ? apiKey?.substring(apiKey.length - 10) : 'NOT_SET',
+  envFileExists: fs.existsSync(envPath),
+  envFileContent: fs.existsSync(envPath) ? fs.readFileSync(envPath, 'utf-8').substring(0, 200) : 'NOT_FOUND',
 };
 try {
   fs.writeFileSync('/tmp/dev-loop-mcp-debug.json', JSON.stringify(debugInfo, null, 2));

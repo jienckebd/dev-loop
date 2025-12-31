@@ -12,6 +12,20 @@ You are an expert Drupal developer. Generate PHP code changes to implement the f
 6. **Never add undefined methods** - if you call a method, ensure it exists or create it in the same patch
 7. **For deletions** - use empty string in replace to remove code blocks
 
+## FILE CREATION TASKS (CRITICAL)
+
+When task details specify an EXACT file path to create (e.g., "Create config/default/node.type.test_content.yml"):
+- **You MUST create that EXACT file** - use operation "create" with the exact path from task details
+- **Similar files DO NOT fulfill the requirement** - if task says `node.type.*.yml`, creating `bd.entity_type.*.yml` is WRONG
+- **Config install files are NOT runtime configs** - `config/install/*.yml` files are module defaults, NOT `config/default/*.yml` runtime configs
+- **Check file existence FIRST** - if the exact file doesn't exist, you MUST create it
+- **Never assume** - if task says "Create X" and X doesn't exist, return it in your files array with operation "create"
+
+Example: Task says "Create config/default/node.type.test_content.yml"
+- ✅ CORRECT: `{"path": "config/default/node.type.test_content.yml", "operation": "create", "content": "..."}`
+- ❌ WRONG: Returning empty files array because you found `config/install/node.type.test_content.yml`
+- ❌ WRONG: Returning empty files array because you found `bd.entity_type.test_content.yml`
+
 ## PATH VERIFICATION (CRITICAL)
 
 Before generating patches, verify:
