@@ -267,6 +267,363 @@ const configSchema = z.object({
     validationRequirements: z.record(z.array(z.string())).optional(),
   }).optional(),
 
+  // Design System module configuration
+  designSystem: z.object({
+    // === THEME ENTITY ===
+    themeEntity: z.object({
+      testEntityId: z.number().default(21),
+      editUrl: z.string().default('/theme_entity/{id}/edit'),
+      tabs: z.array(z.string()).default([
+        'Theme', 'Layout', 'Components', 'Elements',
+        'Colors', 'Fonts', 'Devices', 'Integrations',
+      ]),
+      fields: z.array(z.object({
+        name: z.string(),
+        type: z.string(),
+        required: z.boolean().default(false),
+      })).default([
+        { name: 'field_layout', type: 'entity_reference_revisions', required: false },
+        { name: 'field_color_scheme', type: 'entity_reference', required: false },
+        { name: 'field_dom_tag', type: 'entity_reference', required: false },
+        { name: 'field_tag_group', type: 'entity_reference', required: false },
+        { name: 'field_selector', type: 'entity_reference', required: false },
+        { name: 'field_breakpoint', type: 'entity_reference', required: false },
+        { name: 'field_font', type: 'entity_reference', required: false },
+        { name: 'field_integration', type: 'entity_reference', required: false },
+      ]),
+      formModes: z.array(z.string()).default(['default', 'edit']),
+      viewModes: z.array(z.string()).default(['default', 'full', 'teaser']),
+      thirdPartySettings: z.object({
+        design_system: z.object({
+          autotheme: z.object({
+            enabled: z.boolean().default(true),
+            outputDir: z.string().default('docroot/autotheme'),
+            filePattern: z.string().default('autotheme__{id}'),
+          }).optional(),
+        }).optional(),
+      }).optional(),
+    }).optional(),
+
+    // === PARAGRAPH ENTITY ===
+    paragraph: z.object({
+      containerField: z.object({
+        name: z.string().default('container'),
+        type: z.string().default('entity_reference_revisions'),
+        targetType: z.string().default('paragraph'),
+        maxDepth: z.number().default(10),
+      }).optional(),
+      layoutTypes: z.array(z.object({
+        id: z.string(),
+        label: z.string(),
+        regions: z.array(z.string()).optional(),
+      })).default([
+        { id: 'layout', label: 'Layout', regions: ['header', 'content', 'footer', 'sidebar_left', 'sidebar_right'] },
+        { id: 'layout_row', label: 'Layout Row', regions: ['left', 'center', 'right'] },
+        { id: 'region', label: 'Region', regions: [] },
+      ]),
+      domStyleField: z.string().default('field_dom_style'),
+    }).optional(),
+
+    // === DOM ENTITY ===
+    dom: z.object({
+      expectedBundleCount: z.number().default(25),
+      bundles: z.array(z.object({
+        id: z.string(),
+        label: z.string(),
+        category: z.enum(['core', 'structure', 'css', 'media', 'utility', 'layout', 'typography', 'theme']),
+        keyFields: z.array(z.string()).optional(),
+      })).default([
+        { id: 'style', label: 'Style', category: 'core', keyFields: ['field_background', 'field_padding', 'field_margin'] },
+        { id: 'color', label: 'Color', category: 'core', keyFields: ['field_color', 'field_opacity'] },
+        { id: 'breakpoint', label: 'Breakpoint', category: 'core', keyFields: ['field_min_width', 'field_max_width'] },
+        { id: 'collection', label: 'Collection', category: 'structure', keyFields: ['field_dom'] },
+        { id: 'tag', label: 'Tag', category: 'structure', keyFields: ['field_tag_name'] },
+        { id: 'tag_group', label: 'Tag Group', category: 'structure', keyFields: ['field_dom_tag'] },
+        { id: 'element', label: 'Element', category: 'structure', keyFields: [] },
+        { id: 'selector', label: 'Selector', category: 'structure', keyFields: ['field_selector_value'] },
+        { id: 'pseudo_class', label: 'Pseudo Class', category: 'css', keyFields: [] },
+        { id: 'pseudo_element', label: 'Pseudo Element', category: 'css', keyFields: [] },
+        { id: 'transition', label: 'Transition', category: 'css', keyFields: [] },
+        { id: 'transform', label: 'Transform', category: 'css', keyFields: [] },
+        { id: 'keyframe', label: 'Keyframe', category: 'css', keyFields: [] },
+        { id: 'effect', label: 'Effect', category: 'css', keyFields: [] },
+        { id: 'media_type', label: 'Media Type', category: 'media', keyFields: [] },
+        { id: 'media_feature', label: 'Media Feature', category: 'media', keyFields: [] },
+        { id: 'media_group', label: 'Media Group', category: 'media', keyFields: [] },
+        { id: 'utility', label: 'Utility', category: 'utility', keyFields: [] },
+        { id: 'property', label: 'Property', category: 'utility', keyFields: [] },
+        { id: 'property_group', label: 'Property Group', category: 'utility', keyFields: [] },
+        { id: 'attribute', label: 'Attribute', category: 'utility', keyFields: [] },
+        { id: 'layout_section', label: 'Layout Section', category: 'layout', keyFields: [] },
+        { id: 'font', label: 'Font', category: 'typography', keyFields: ['field_font_family', 'field_font_weight'] },
+        { id: 'link_type', label: 'Link Type', category: 'typography', keyFields: [] },
+        { id: 'collection_color', label: 'Collection Color', category: 'theme', keyFields: [] },
+      ]),
+      cssGeneration: z.object({
+        outputDir: z.string().default('public://design-system/auto/dom/'),
+        filePattern: z.string().default('{id}.css'),
+        buildMethod: z.string().default('buildCss'),
+        bindMethod: z.string().default('bindToElement'),
+      }).optional(),
+    }).optional(),
+
+    // === FONT ENTITY ===
+    font: z.object({
+      fields: z.array(z.object({
+        name: z.string(),
+        type: z.string(),
+      })).default([
+        { name: 'field_font_family', type: 'string' },
+        { name: 'field_font_weight', type: 'list_string' },
+        { name: 'field_font_style', type: 'list_string' },
+        { name: 'field_font_subset', type: 'list_string' },
+      ]),
+      selectionModal: z.object({
+        selector: z.string().default('[data-drupal-selector*="font-selection"]'),
+        filters: z.array(z.string()).default(['Font name', 'CSS Style', 'CSS Weight', 'Sort by', 'Order']),
+      }).optional(),
+    }).optional(),
+
+    // === INTEGRATION ENTITY ===
+    integration: z.object({
+      status: z.enum(['incomplete', 'partial', 'complete']).default('incomplete'),
+      fields: z.array(z.object({
+        name: z.string(),
+        type: z.string(),
+      })).optional(),
+    }).optional(),
+
+    // === DEVICE ENTITY (Breakpoints) ===
+    device: z.object({
+      fields: z.array(z.object({
+        name: z.string(),
+        type: z.string(),
+      })).default([
+        { name: 'field_min_width', type: 'integer' },
+        { name: 'field_max_width', type: 'integer' },
+        { name: 'field_device_type', type: 'list_string' },
+      ]),
+      defaultBreakpoints: z.array(z.object({
+        name: z.string(),
+        minWidth: z.number(),
+        maxWidth: z.number().optional(),
+      })).default([
+        { name: 'mobile', minWidth: 0, maxWidth: 767 },
+        { name: 'tablet', minWidth: 768, maxWidth: 1023 },
+        { name: 'desktop', minWidth: 1024 },
+      ]),
+    }).optional(),
+
+    // === IPE BUILDER ===
+    ipeBuilder: z.object({
+      fieldWidgetBlock: z.object({
+        pluginPrefix: z.string().default('field_widget:'),
+        expectedCount: z.number().default(100),
+        deriverClass: z.string().default('Drupal\\design_system\\Plugin\\Derivative\\FieldWidgetDeriver'),
+        blockClass: z.string().default('Drupal\\design_system\\Plugin\\Block\\FieldWidget'),
+      }).optional(),
+      mercuryEditor: z.object({
+        formOperation: z.string().default('mercury_editor'),
+        tempstoreService: z.string().default('mercury_editor.tempstore_repository'),
+        contextService: z.string().default('mercury_editor.context'),
+      }).optional(),
+      templateStorage: z.object({
+        formDisplay: z.string().default('entity_form_display.{entity_type}.{bundle}.{mode}.third_party_settings.design_system'),
+        viewDisplay: z.string().default('entity_view_display.{entity_type}.{bundle}.{mode}.third_party_settings.design_system'),
+      }).optional(),
+    }).optional(),
+
+    // === PLAYWRIGHT VALIDATION ===
+    playwrightValidation: z.object({
+      // Element selectors and expected states
+      selectors: z.object({
+        // DOM styling
+        domId: z.object({
+          selector: z.string().default('[data-dom-id]'),
+          minCount: z.number().default(1),
+          description: z.string().default('Elements with DOM entity styling applied'),
+        }).optional(),
+        htmlDomId: z.object({
+          selector: z.string().default('html[data-dom-id]'),
+          minCount: z.number().default(1),
+          description: z.string().default('HTML element with DOM ID attribute'),
+        }).optional(),
+        // Regions
+        region: z.object({
+          selector: z.string().default('[data-region]'),
+          minCount: z.number().default(3),
+          expectedRegions: z.array(z.string()).default(['header', 'content', 'footer']),
+        }).optional(),
+        // Theme entity tabs
+        themeTabs: z.object({
+          selector: z.string().default('.vertical-tabs__menu-item'),
+          minCount: z.number().default(8),
+        }).optional(),
+        // Mercury Editor
+        mercuryEditor: z.object({
+          container: z.string().default('[data-mercury-editor]'),
+          toolbar: z.string().default('.mercury-editor-toolbar'),
+          dropZone: z.string().default('.layout-paragraphs-drop-zone'),
+        }).optional(),
+        // Form elements
+        formWidget: z.object({
+          container: z.string().default('.field-widget-block'),
+          input: z.string().default('[data-drupal-selector]'),
+          error: z.string().default('.form-item--error'),
+        }).optional(),
+        // Layout
+        layoutSection: z.object({
+          selector: z.string().default('.layout-section'),
+          minCount: z.number().default(1),
+        }).optional(),
+      }).optional(),
+      // Page-specific validations
+      pages: z.array(z.object({
+        name: z.string(),
+        url: z.string(),
+        assertions: z.array(z.object({
+          selector: z.string(),
+          assertion: z.enum(['visible', 'hidden', 'count', 'text', 'attribute']),
+          expected: z.union([z.string(), z.number()]).optional(),
+          attribute: z.string().optional(),
+        })),
+      })).optional(),
+    }).optional(),
+
+    // === CONTEXT FILES ===
+    contextFiles: z.object({
+      alwaysInclude: z.array(z.string()).default([
+        'docroot/modules/share/design_system/src/DesignSystem.php',
+        'docroot/modules/share/design_system/src/EntityDisplay.php',
+        'docroot/modules/share/design_system/src/Preprocess.php',
+        'docroot/modules/share/design_system/src/Entity/Entity/Dom.php',
+        'docroot/modules/share/bd/src/Plugin/EntityPluginBase.php',
+        'docroot/modules/share/bd/src/Service/EntityHelper.php',
+        'docroot/modules/share/openapi_entity/src/Hooks/OpenApiEntityHooks.php',
+        'docroot/modules/share/design_system/design_system.services.yml',
+        'docroot/modules/share/design_system/config/schema/design_system.schema.yml',
+      ]),
+      taskSpecific: z.record(z.array(z.string())).optional(),
+      methodSignatures: z.array(z.object({
+        class: z.string(),
+        method: z.string(),
+        purpose: z.string(),
+      })).default([
+        { class: 'Dom', method: 'bindToElement', purpose: 'Applies DOM styles as HTML attributes' },
+        { class: 'Dom', method: 'buildCss', purpose: 'Generates CSS from style entity' },
+        { class: 'EntityDisplay', method: 'alterThemeEntityForm', purpose: 'Theme entity form tabs' },
+        { class: 'Preprocess', method: 'recurseAttachContainer', purpose: 'Recursive container processing' },
+        { class: 'EntityPluginBase', method: 'buildConfigurationForm', purpose: 'Auto-generates plugin config forms' },
+      ]),
+    }).optional(),
+
+    // === ERROR GUIDANCE ===
+    errorGuidance: z.record(z.string(), z.string()).default({
+      'Service .* not found': 'Check service name in design_system.services.yml, verify class exists, run drush cr',
+      'PluginNotFoundException': 'Check plugin annotation syntax, verify deriver class, clear cache with drush cr',
+      'Plugin .* was not found': 'Plugin may be commented out. Check FieldWidget.php for Task 7.1',
+      'Entity type .* does not exist': 'Check bd.entity_type.*.yml exists in config/default, run drush cr',
+      'Bundle .* not found': 'Check bd.bundle.*.yml exists, verify bundle is enabled, run drush cr',
+      'Form submission timeout': 'Check for infinite loops in form handlers, reduce AJAX complexity, check browser console',
+      'Form save error': 'Check entity validation, verify required fields are populated',
+      'CSS file not found': 'Check Dom::postSave() is called, verify public://design-system/ is writable',
+      'Permission denied.*design-system': 'Run: ddev exec chmod -R 775 /var/www/html/docroot/sites/default/files/design-system',
+      'mercury_editor.*not found': 'Verify Mercury Editor module is enabled: drush pm:list | grep mercury_editor',
+      'Layout paragraphs.*error': 'Check layout_paragraphs module is enabled and configured',
+      'networkidle.*timeout': 'Replace waitForLoadState("networkidle") with waitForLoadState("domcontentloaded")',
+      'element not visible': 'Add scrollIntoViewIfNeeded() before interaction, increase timeout',
+      'locator resolved to .* elements': 'Make selector more specific or use .first()/.nth()',
+      'Allowed memory size': 'Find infinite loop - DO NOT restart DDEV. Check ddev logs -s web for stack trace',
+      'Maximum execution time': 'Reduce loop iterations, add early returns, check for recursive calls',
+      'Class .* not found': 'Check namespace matches directory (PSR-4), run composer dump-autoload',
+      'Call to protected method': 'Change method visibility from protected to public',
+    }),
+
+    // === PATTERN SEEDS ===
+    patternSeeds: z.array(z.object({
+      id: z.string(),
+      pattern: z.string(),
+      fix: z.string(),
+      context: z.array(z.string()),
+      severity: z.enum(['info', 'warning', 'error', 'critical']),
+      taskIds: z.array(z.string()).optional(),
+    })).default([
+      {
+        id: 'drupal-protected-method',
+        pattern: 'Call to protected method',
+        fix: 'Change method visibility from protected to public',
+        context: ['PHP', 'Drupal'],
+        severity: 'error',
+      },
+      {
+        id: 'drupal-networkidle',
+        pattern: 'waitForLoadState.*networkidle|Timeout.*networkidle',
+        fix: 'Replace networkidle with domcontentloaded - Drupal keeps connections alive',
+        context: ['Playwright', 'test'],
+        severity: 'warning',
+      },
+      {
+        id: 'drupal-memory',
+        pattern: 'Allowed memory size .* exhausted',
+        fix: 'Find infinite loop in code - DO NOT restart DDEV. Check recent changes for recursive calls.',
+        context: ['PHP', 'Drupal'],
+        severity: 'critical',
+      },
+      {
+        id: 'drupal-form-api',
+        pattern: "'#type' => 'textfield'|'#type' => 'select'",
+        fix: 'Use config_schema_subform instead of direct Form API elements for configuration',
+        context: ['Drupal', 'form'],
+        severity: 'warning',
+      },
+      {
+        id: 'drupal-hook-procedural',
+        pattern: 'function .*_form_alter\\(|function .*_preprocess_',
+        fix: 'Use #[Hook("hook_name")] attribute in service class instead of procedural hook',
+        context: ['Drupal', 'hook'],
+        severity: 'warning',
+      },
+      {
+        id: 'design-system-css-missing',
+        pattern: 'CSS file not found|design-system/auto/dom/.*.css',
+        fix: 'Check Dom::postSave() is called, verify CSS directory is writable',
+        context: ['design_system', 'CSS'],
+        severity: 'error',
+        taskIds: ['401'],
+      },
+      {
+        id: 'design-system-dom-binding',
+        pattern: 'data-dom-id.*missing|bindToElement not called',
+        fix: 'Verify Preprocess::html() is executing and DOM entities are retrieved',
+        context: ['design_system', 'DOM'],
+        severity: 'error',
+        taskIds: ['201', '801'],
+      },
+      {
+        id: 'design-system-fieldwidget',
+        pattern: 'field_widget:.* not found|FieldWidget block missing',
+        fix: 'Ensure FieldWidget.php is uncommented and cache cleared',
+        context: ['design_system', 'block'],
+        severity: 'error',
+        taskIds: ['701'],
+      },
+      {
+        id: 'design-system-deriver',
+        pattern: 'FieldWidgetDeriver.*error|derivative.*failed',
+        fix: 'FieldWidgetDeriver is already implemented. Check FieldWidget.php block class annotation matches deriver.',
+        context: ['design_system', 'plugin'],
+        severity: 'error',
+        taskIds: ['701'],
+      },
+    ]),
+
+    // === TEST NODE ===
+    testNode: z.object({
+      id: z.number().default(30),
+      url: z.string().default('/node/30'),
+    }).optional(),
+  }).optional(),
+
   // Test generation configuration (for AI prompts)
   testGeneration: z.object({
     // Import statements for generated tests
