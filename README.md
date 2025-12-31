@@ -249,6 +249,142 @@ For complex issues, dev-loop provides:
 - **ComponentInteractionAnalyzer** — Map component boundaries and conflicts
 - **RootCauseAnalyzer** — Track partial fixes, identify systemic issues
 
+## Framework Plugins
+
+Dev-loop uses a plugin architecture to support different frameworks. Each plugin provides framework-specific templates, error patterns, file discovery rules, and configuration defaults.
+
+### Built-in Plugins
+
+| Plugin | Description | Auto-detects |
+|--------|-------------|--------------|
+| **drupal** | Drupal 10/11 with DDEV integration | Yes |
+| **django** | Django 5+ with Docker/DRF support | Yes |
+| **react** | React + TypeScript + Vite | Yes |
+| **composite** | Multi-framework projects (auto-created) | No |
+| **generic** | Fallback for any project | Fallback only |
+
+### Auto-Detection
+
+When `framework.type` is not specified in `devloop.config.js`, dev-loop auto-detects frameworks:
+
+1. Checks built-in plugins (Drupal, Django, React)
+2. If multiple detected → creates `CompositePlugin`
+3. If single detected → uses that plugin
+4. If none detected → uses `GenericPlugin`
+
+Example: A project with both Django backend and React frontend automatically gets a `CompositePlugin` that merges both frameworks' configurations.
+
+### Multi-Framework Projects
+
+For projects like allthriveai (Django + React + Extension), dev-loop automatically:
+- Detects all frameworks
+- Creates a `CompositePlugin` with merged configurations
+- Combines templates and error patterns
+- Merges file discovery rules (search dirs, extensions, excludes)
+
+**Example Configuration:**
+```javascript
+// devloop.config.js - optional, auto-detection works without this
+module.exports = {
+  framework: {
+    type: 'composite', // Or let auto-detection handle it
+  },
+};
+```
+
+### Creating Custom Framework Plugins
+
+#### Project-Local Plugin
+
+Create a plugin in your project at `.devloop/frameworks/{name}/plugin.json`:
+
+```json
+{
+  "name": "myframework",
+  "version": "1.0.0",
+  "description": "Custom framework plugin",
+  "fileExtensions": ["ts", "tsx"],
+  "searchDirs": ["src"],
+  "excludeDirs": ["node_modules"],
+  "templates": {
+    "task": "templates/task.md"
+  },
+  "errorPatterns": {
+    "MyError": "Helpful guidance for this error"
+  },
+  "cacheCommand": "npm run build"
+}
+```
+
+#### NPM Plugin
+
+Publish an npm package `@dev-loop/framework-{name}` that exports a `FrameworkPlugin` implementation:
+
+```typescript
+import { FrameworkPlugin } from '@dev-loop/core';
+
+export class MyFrameworkPlugin implements FrameworkPlugin {
+  readonly name = 'myframework';
+  readonly version = '1.0.0';
+  readonly description = 'My framework plugin';
+  
+  async detect(projectRoot: string): Promise<boolean> {
+    // Detection logic
+  }
+  
+  getTaskTemplate(): string {
+    // Return template string
+  }
+  
+  // ... implement other required methods
+}
+
+export default new MyFrameworkPlugin();
+```
+
+### FrameworkPlugin Interface
+
+```typescript
+interface FrameworkPlugin {
+  readonly name: string;
+  readonly version: string;
+  readonly description: string;
+  
+  // Detection
+  detect(projectRoot: string): Promise<boolean>;
+  
+  // Configuration
+  getDefaultConfig(): FrameworkDefaultConfig;
+  getSchemaExtension?(): z.ZodObject<any>;
+  
+  // Templates
+  getTaskTemplate(): string;
+  getTestTemplate?(): string | undefined;
+  getPrdTemplate?(): string;
+  
+  // File Discovery
+  getFileExtensions(): string[];
+  getSearchDirs(): string[];
+  getExcludeDirs(): string[];
+  
+  // Error Handling
+  getErrorPatterns(): Record<string, string>;
+  getIdentifierPatterns(): RegExp[];
+  getErrorPathPatterns?(): RegExp[];
+  
+  // Lifecycle Hooks
+  onBeforeApply?(changes: CodeChanges): Promise<CodeChanges>;
+  onAfterApply?(changes: CodeChanges): Promise<void>;
+  onTestFailure?(error: string): Promise<string>;
+  
+  // Commands
+  getCacheCommand?(): string | undefined;
+  getBuildCommand?(): string | undefined;
+}
+```
+
+See `src/frameworks/interface.ts` for full interface definition and examples in `src/frameworks/drupal/`, `src/frameworks/django/`, and `src/frameworks/react/`.
+
 ## Intervention Modes
 
 Control whether the inner agent requires approval:

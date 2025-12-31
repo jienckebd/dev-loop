@@ -2,11 +2,17 @@ import * as fs from 'fs-extra';
 import * as path from 'path';
 import { FrameworkPlugin, PluginManifest, FrameworkDefaultConfig } from './interface';
 import { DrupalPlugin } from './drupal';
+import { DjangoPlugin } from './django';
+import { ReactPlugin } from './react';
+import { CompositePlugin } from './composite';
 import { GenericPlugin } from './generic';
 
 // Re-export types
 export * from './interface';
 export { DrupalPlugin } from './drupal';
+export { DjangoPlugin } from './django';
+export { ReactPlugin } from './react';
+export { CompositePlugin } from './composite';
 export { GenericPlugin } from './generic';
 
 /**
@@ -15,6 +21,8 @@ export { GenericPlugin } from './generic';
  */
 const BUILTIN_FRAMEWORKS: Record<string, FrameworkPlugin> = {
   drupal: new DrupalPlugin(),
+  django: new DjangoPlugin(),
+  react: new ReactPlugin(),
   generic: new GenericPlugin(),
 };
 
@@ -23,10 +31,12 @@ const BUILTIN_FRAMEWORKS: Record<string, FrameworkPlugin> = {
  *
  * Loads and manages framework plugins for dev-loop.
  * Supports:
- * - Built-in frameworks (drupal, generic)
+ * - Built-in frameworks (drupal, django, react, generic)
+ * - Composite plugin for multi-framework projects
  * - Project-local plugins (.devloop/frameworks/{name}/)
  * - npm plugins (@dev-loop/framework-{name})
  * - Auto-detection from project structure
+ * - Automatic composite plugin creation when multiple frameworks detected
  */
 export class FrameworkLoader {
   private projectRoot: string;
@@ -46,10 +56,46 @@ export class FrameworkLoader {
   }
 
   /**
+   * Detect all frameworks present in the project.
+   * @returns Array of detected framework plugins
+   */
+  async detectAllFrameworks(): Promise<FrameworkPlugin[]> {
+    const detected: FrameworkPlugin[] = [];
+
+    // Check all built-in plugins (except generic and composite)
+    for (const [name, plugin] of Object.entries(BUILTIN_FRAMEWORKS)) {
+      if (name === 'generic' || name === 'composite') continue;
+      if (await plugin.detect(this.projectRoot)) {
+        detected.push(plugin);
+        if (this.debug) {
+          console.log(`[FrameworkLoader] Detected framework: ${name}`);
+        }
+      }
+    }
+
+    // Check custom plugins
+    if (await fs.pathExists(this.customPluginsPath)) {
+      const dirs = await fs.readdir(this.customPluginsPath);
+      for (const dir of dirs) {
+        const customPlugin = await this.loadCustomPlugin(dir);
+        if (customPlugin && await customPlugin.detect(this.projectRoot)) {
+          detected.push(customPlugin);
+          if (this.debug) {
+            console.log(`[FrameworkLoader] Detected custom framework: ${dir}`);
+          }
+        }
+      }
+    }
+
+    return detected;
+  }
+
+  /**
    * Load a framework plugin by type.
    * Falls back to auto-detection if type is not specified.
+   * If multiple frameworks are detected, returns a CompositePlugin.
    *
-   * @param type Framework type (e.g., 'drupal', 'laravel')
+   * @param type Framework type (e.g., 'drupal', 'composite')
    * @returns The loaded framework plugin
    */
   async loadFramework(type?: string): Promise<FrameworkPlugin> {
@@ -85,14 +131,23 @@ export class FrameworkLoader {
 
     // 4. Auto-detect from project structure
     if (!type) {
-      for (const [name, plugin] of this.loadedPlugins) {
-        if (name === 'generic') continue; // Skip generic for auto-detection
-        if (await plugin.detect(this.projectRoot)) {
-          if (this.debug) {
-            console.log(`[FrameworkLoader] Auto-detected framework: ${name}`);
-          }
-          return plugin;
+      const detected = await this.detectAllFrameworks();
+
+      // If multiple frameworks detected, use CompositePlugin
+      if (detected.length > 1) {
+        if (this.debug) {
+          console.log(`[FrameworkLoader] Multiple frameworks detected: ${detected.map(p => p.name).join(', ')}`);
+          console.log(`[FrameworkLoader] Using CompositePlugin`);
         }
+        return new CompositePlugin(detected);
+      }
+
+      // Single framework detected
+      if (detected.length === 1) {
+        if (this.debug) {
+          console.log(`[FrameworkLoader] Auto-detected framework: ${detected[0].name}`);
+        }
+        return detected[0];
       }
     }
 
