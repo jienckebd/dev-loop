@@ -2567,7 +2567,15 @@ export class WorkflowEngine {
     );
 
     // Phase 1: Parse PRD and generate initial tests
-    if (context.status === 'initializing') {
+    // Also handle stuck "generating-tests" state with empty tests (bug fix)
+    if (context.status === 'initializing' || 
+        (context.status === 'generating-tests' && context.tests.length === 0)) {
+      
+      // If we're resuming a stuck generating-tests state, reset to initializing
+      if (context.status === 'generating-tests') {
+        console.log('[WorkflowEngine] Resuming from stuck generating-tests state (empty tests)...');
+        context.status = 'initializing';
+      }
       console.log('[WorkflowEngine] Parsing PRD and generating initial tests...');
       context.status = 'generating-tests';
       await contextManager.save(context);
