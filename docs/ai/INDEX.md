@@ -16,6 +16,8 @@ estimated_read_time: 5
 
 Quick reference for AI agents to discover relevant documentation based on tasks, features, problems, and workflows.
 
+**Note:** This index is for AI agents creating PRDs and using dev-loop. For contributing to dev-loop code, see [`../contributing/CONTRIBUTING_INDEX.md`](../contributing/CONTRIBUTING_INDEX.md). Contribution documentation is only autoloaded when in contribution mode.
+
 ## Task → Documentation
 
 | Task | Documentation | Metadata Filter | Load Priority | When to Load |

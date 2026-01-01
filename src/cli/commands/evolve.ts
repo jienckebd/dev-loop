@@ -53,7 +53,7 @@ export async function evolveCommand(options: {
     // Display insights
     printInsights(uniqueObservations, suggestions, metricsData, options.projectType);
   } catch (error) {
-    console.error(chalk.red(`Failed to load evolution insights: ${error instanceof Error ? error.message : String(error)}`));
+    console.error(chalk.red(`Failed to load improvement insights: ${error instanceof Error ? error.message : String(error)}`));
     process.exit(1);
   }
 }
@@ -64,7 +64,7 @@ function printInsights(
   metrics: any,
   projectType?: string
 ): void {
-  console.log(chalk.cyan.bold('🔬 Evolution Insights'));
+  console.log(chalk.cyan.bold('🔬 Improvement Insights'));
   console.log(chalk.gray('='.repeat(60)));
 
   if (projectType) {

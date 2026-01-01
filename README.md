@@ -8,6 +8,8 @@ Autonomous development orchestrator that transforms PRDs into validated code thr
 
 **For AI Agents:** See [`docs/ai/README.md`](docs/ai/README.md) - AI agent onboarding guide for creating PRDs and leveraging dev-loop features.
 
+**For Contributors:** See [`docs/contributing/README.md`](docs/contributing/README.md) - Contribution guide, architecture, and development workflow.
+
 **Quick Lookup:** See [`docs/ai/INDEX.md`](docs/ai/INDEX.md) - Documentation index with task → doc mappings, feature guides, and problem solutions.
 
 **PRD Documentation:**
@@ -59,7 +61,7 @@ flowchart LR
 
 ## Two Operating Modes
 
-### Non-Evolution Mode (Default)
+### Standard Mode (Default)
 
 You implement tasks directly. Dev-loop provides task management and diagnostics.
 
@@ -71,9 +73,9 @@ flowchart TB
     TM --> Tasks[(tasks.json)]
 ```
 
-### Evolution Mode
+### Contribution Mode
 
-Two-agent architecture for autonomous development:
+Two-agent architecture for contributing to dev-loop itself:
 
 ```mermaid
 flowchart TB
@@ -83,22 +85,22 @@ flowchart TB
     subgraph inner["Inner Agent (Dev-Loop)"]
         Implement[Implement & Test]
     end
-    
+
     Orchestrate -->|"Start/monitor"| DL[Dev-Loop MCP]
     Orchestrate -->|"Create tasks"| TM[Task Master MCP]
     DL -->|"Spawn"| Implement
     Implement -->|"Edit"| Code[Project Code]
-    Orchestrate -.->|"If stuck"| DevLoopSrc[packages/dev-loop/]
-    
+    Orchestrate -.->|"If stuck"| DevLoopSrc[node_modules/dev-loop/]
+
     TM --> Tasks[(tasks.json)]
     DL --> State[(.devloop/)]
 ```
 
-| Aspect | Non-Evolution | Evolution |
-|--------|--------------|-----------|
+| Aspect | Standard | Contribution |
+|--------|----------|--------------|
 | Who implements | You | Inner agent |
 | Your role | Direct coding | Orchestration |
-| Code you edit | All files | Only `packages/dev-loop/` |
+| Code you edit | All files | Only `node_modules/dev-loop/` |
 
 ## Quick Start
 
@@ -170,6 +172,16 @@ module.exports = {
 | `task-master add-task --prompt="..."` | Add single task |
 | `task-master set-status --id=<id> --status=done` | Update status |
 
+### Contribution Mode Commands
+
+| Command | Description |
+|---------|-------------|
+| `dev-loop contribution start --prd <path>` | Start contribution mode |
+| `dev-loop contribution status` | Check contribution mode status |
+| `dev-loop contribution stop` | Stop contribution mode |
+| `dev-loop contribution validate` | Validate contribution mode boundaries |
+| `dev-loop contribution boundaries` | List active boundaries |
+
 ### Debugging Commands
 
 | Command | Description |
@@ -215,16 +227,18 @@ Create `.cursor/mcp.json`:
 - Core: `devloop_run`, `devloop_status`, `devloop_prd`, `devloop_list_tasks`
 - Debug: `devloop_diagnose`, `devloop_trace`, `devloop_logs`, `devloop_metrics`
 - Control: `devloop_pause`, `devloop_resume`, `devloop_reset`, `devloop_validate`
-- Evolution: `devloop_evolution_start`, `devloop_evolution_status`, `devloop_evolution_stop`
+- Contribution: `devloop_contribution_start`, `devloop_contribution_status`, `devloop_contribution_stop`, `devloop_contribution_validate`, `devloop_contribution_boundaries`
 
 ### Common Workflows
 
-**Start a PRD (Evolution Mode):**
+**Start a PRD (Contribution Mode):**
 ```
-1. devloop_evolution_start(prd: "path/to/prd.md")
-2. task-master: parse_prd(input: "path/to/prd.md")
-3. devloop_prd(prdPath: "path/to/prd.md", debug: true)
-4. devloop_evolution_status() — monitor until complete
+1. devloop_contribution_start(prd: "path/to/prd.md")
+2. devloop_contribution_validate() — validate boundaries
+3. task-master: parse_prd(input: "path/to/prd.md")
+4. devloop_prd(prdPath: "path/to/prd.md", debug: true)
+5. devloop_contribution_status() — monitor until complete
+6. devloop_contribution_stop() — stop when done
 ```
 
 **Debug a failure:**
@@ -364,15 +378,15 @@ export class MyFrameworkPlugin implements FrameworkPlugin {
   readonly name = 'myframework';
   readonly version = '1.0.0';
   readonly description = 'My framework plugin';
-  
+
   async detect(projectRoot: string): Promise<boolean> {
     // Detection logic
   }
-  
+
   getTaskTemplate(): string {
     // Return template string
   }
-  
+
   // ... implement other required methods
 }
 
@@ -386,34 +400,34 @@ interface FrameworkPlugin {
   readonly name: string;
   readonly version: string;
   readonly description: string;
-  
+
   // Detection
   detect(projectRoot: string): Promise<boolean>;
-  
+
   // Configuration
   getDefaultConfig(): FrameworkDefaultConfig;
   getSchemaExtension?(): z.ZodObject<any>;
-  
+
   // Templates
   getTaskTemplate(): string;
   getTestTemplate?(): string | undefined;
   getPrdTemplate?(): string;
-  
+
   // File Discovery
   getFileExtensions(): string[];
   getSearchDirs(): string[];
   getExcludeDirs(): string[];
-  
+
   // Error Handling
   getErrorPatterns(): Record<string, string>;
   getIdentifierPatterns(): RegExp[];
   getErrorPathPatterns?(): RegExp[];
-  
+
   // Lifecycle Hooks
   onBeforeApply?(changes: CodeChanges): Promise<CodeChanges>;
   onAfterApply?(changes: CodeChanges): Promise<void>;
   onTestFailure?(error: string): Promise<string>;
-  
+
   // Commands
   getCacheCommand?(): string | undefined;
   getBuildCommand?(): string | undefined;
@@ -432,15 +446,32 @@ Control whether the inner agent requires approval:
 | `review` | Human approves each change |
 | `hybrid` | Auto for safe changes, review for risky (`delete`, `schema-change`) |
 
-## Evolution Mode Details
+## Contribution Mode Details
 
-Activated by human operator: "Enter evolution mode for dev-loop"
+Contribution mode enables a two-agent architecture for contributing to dev-loop itself. See [`docs/contributing/CONTRIBUTION_MODE.md`](docs/contributing/CONTRIBUTION_MODE.md) for complete documentation.
+
+**Quick Start:**
+
+**CLI Mode:**
+```bash
+npx dev-loop contribution start --prd <path>
+npx dev-loop watch --until-complete
+npx dev-loop contribution status
+npx dev-loop contribution stop
+```
+
+**MCP Mode:**
+```typescript
+devloop_contribution_start(prd: "path/to/prd.md")
+devloop_contribution_status()
+devloop_contribution_stop()
+```
 
 **Outer agent responsibilities:**
-1. Run `devloop_evolution_start`
+1. Start contribution mode (CLI or MCP)
 2. Create/update tasks via Task Master
-3. Monitor via `devloop_evolution_status`
-4. If inner agent stuck: enhance `packages/dev-loop/` code
+3. Monitor via `devloop_contribution_status` or `dev-loop contribution status`
+4. If inner agent stuck: enhance `node_modules/dev-loop/` code
 5. Build, commit, push dev-loop changes
 6. Validate improvements via metrics
 
@@ -457,6 +488,11 @@ Activated by human operator: "Enter evolution mode for dev-loop"
 - `devloop.config.js` — Hooks, log sources
 - `.taskmaster/templates/` — PRD templates
 - Project rules (CLAUDE.md, .cursorrules) — Injected into prompts
+
+**Documentation:**
+- [`docs/contributing/CONTRIBUTION_MODE.md`](docs/contributing/CONTRIBUTION_MODE.md) - Complete contribution mode guide
+- [`docs/contributing/CONTRIBUTION_STATE_SCHEMA.md`](docs/contributing/CONTRIBUTION_STATE_SCHEMA.md) - State file reference
+- [`docs/contributing/BOUNDARY_ENFORCEMENT.md`](docs/contributing/BOUNDARY_ENFORCEMENT.md) - Boundary validation implementation
 
 ## File Structure
 
@@ -532,7 +568,8 @@ npm test             # Test
 - Framework pattern library
 - Error classification & root cause analysis
 - MCP integration (Task Master + Dev-Loop)
-- Evolution mode
+- Contribution mode with boundary enforcement
+- Unified contribution mode rules and state management
 
 ### In Progress
 - Smart scheduling with dependency resolution

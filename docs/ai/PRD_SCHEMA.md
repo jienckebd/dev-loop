@@ -131,7 +131,70 @@ phases:
     status: string            # Optional: "pending" | "complete" | "mostly_complete" | "deferred" | "optional" | "low_priority"
     deferredReason: string    # Required if status: "deferred" - explanation of why deferred
     note: string              # Optional: Additional notes or clarification
+    file: string              # Optional: Path to phase detail file (for directory-based PRDs)
 ```
+
+**Directory-Based PRDs:**
+
+For large PRDs (5000+ lines), you can split into a directory structure:
+
+```
+.taskmaster/
+├── planning/
+│   └── mcp_entity_bridge/          # PRD directory
+│       ├── README.md               # Main PRD (overview, phases, dependencies)
+│       ├── phase-1-prerequisites.md
+│       ├── phase-2-bridge-services.md
+│       └── phase-3-third-party.md
+└── docs/
+    └── openapi_wizard_v4/          # Active PRD directory
+        ├── README.md               # Main PRD
+        └── phases/
+            ├── phase-1.md
+            └── phase-2.md
+```
+
+**Main PRD File (`README.md` in directory):**
+- Contains frontmatter with phase definitions
+- References phase files via `requirements.phases[].file` property
+- Defines overall execution strategy, dependencies, testing config
+
+**Phase Files:**
+- Detailed requirements for that phase
+- Can be edited independently
+- Referenced by phase ID in main PRD
+
+**PRD Path Detection:**
+- If PRD path is a directory, look for `README.md` inside
+- If PRD path is a file, use existing single-file behavior
+- Task Master `parse-prd` command handles both formats
+
+**Example Directory-Based PRD:**
+
+```yaml
+# .taskmaster/planning/mcp_entity_bridge/README.md
+---
+prd:
+  id: mcp_entity_bridge
+  version: 6.0.0
+  status: ready
+
+requirements:
+  idPattern: "REQ-{id}"
+  phases:
+    - id: 1
+      name: "Prerequisites"
+      file: "phase-1-prerequisites.md"  # References phase detail file
+      parallel: false
+    - id: 2
+      name: "Bridge Services"
+      file: "phase-2-bridge-services.md"
+      dependsOn: [1]
+      parallel: false
+---
+```
+
+The phase detail files contain the actual requirements for that phase.
 
 **Phase Status Values:**
 
@@ -245,10 +308,10 @@ External module and PRD dependencies.
 ```yaml
 dependencies:
   externalModules: array      # Optional: Array of external module names
-  prds: array                 # Optional: Array of PRD IDs this PRD depends on
+  prds: array                 # Optional: Array of PRD IDs or PRD objects this PRD depends on
 ```
 
-**Examples:**
+**Simple PRD References (PRD IDs):**
 ```yaml
 dependencies:
   externalModules:
@@ -260,9 +323,20 @@ dependencies:
     - secret_prd
 ```
 
+**Detailed PRD References (with paths):**
+```yaml
+dependencies:
+  prds:
+    - id: mcp_entity_bridge_phase1
+      path: .taskmaster/planning/mcp_entity_bridge/phase-1.md
+      waitFor: true  # Block until this PRD completes
+```
+
 **How it works:**
 - `externalModules`: Validated before PRD execution (module must be installed/enabled)
 - `prds`: Combined with `execution.waitForPrds: true` to block until dependencies complete
+- PRD references can be simple IDs (string) or detailed objects with `id`, `path`, and `waitFor` properties
+- When using directory-based PRDs, reference the main `README.md` file or specific phase files
 
 ---
 

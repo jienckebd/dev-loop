@@ -14,4 +14,4 @@ export interface ToolContext {
 export { registerCoreTools } from './core';
 export { registerDebugTools } from './debug';
 export { registerControlTools } from './control';
-export { registerEvolutionTools } from './evolution';
+export { registerContributionTools } from './contribution';

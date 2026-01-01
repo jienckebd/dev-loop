@@ -190,6 +190,8 @@ See [`PRD_TEMPLATE.md`](PRD_TEMPLATE.md) for a complete template with all option
 
 This documentation system is designed for efficient autoloading by AI agents. Use these strategies to discover and load the right docs at the right time.
 
+**Important:** This documentation (`docs/ai/`) is for AI agents creating PRDs and using dev-loop. For contributing to dev-loop code, see [`../contributing/README.md`](../contributing/README.md). Contribution documentation (`docs/contributing/`) is only autoloaded when explicitly in contribution mode.
+
 ### Discovery Methods
 
 **1. Index-Based Discovery (Recommended)**
@@ -246,6 +248,13 @@ Follow recommended workflows from [`INDEX.md`](INDEX.md):
 | Feature configuration | `PRD_FEATURES.md` (relevant section) | Medium |
 | Understanding features | `PRD_FEATURES.md` (full doc) | Low |
 | Getting started | `README.md`, `PRD_TEMPLATE.md` | High |
+| Contributing to dev-loop | `../contributing/README.md` (only in contribution mode) | High |
+
+**Contribution Documentation:** Only autoload documentation with `contribution_mode: true` when:
+- `.devloop/contribution-mode.json` exists and `active: true`
+- Or explicitly in contribution mode context
+
+Do not load contribution docs when creating PRDs or using dev-loop.
 
 ### Autoloading Workflow
 
@@ -293,11 +302,12 @@ All documentation files include YAML frontmatter. See [`METADATA.md`](METADATA.m
 
 **Quick Reference:**
 - `type`: reference | guide | tutorial | template | index
-- `category`: prd | cli | architecture | features
+- `category`: prd | cli | architecture | features | contributing
 - `audience`: ai | user | both
 - `keywords`: Array of searchable terms
 - `prerequisites`: Array of prerequisite doc paths
 - `estimated_read_time`: Minutes to read
+- `contribution_mode`: boolean (only autoload when in contribution mode)
 
 ## See Also
 

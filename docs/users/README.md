@@ -23,7 +23,7 @@ Complete user guide for dev-loop - the autonomous development orchestrator that 
 - [MCP Integration](#mcp-integration)
 - [Architecture](#architecture)
 - [Framework Plugins](#framework-plugins)
-- [Evolution Mode](#evolution-mode)
+- [Contribution Mode](#contribution-mode)
 - [Best Practices](#best-practices)
 - [Troubleshooting](#troubleshooting)
 
@@ -164,16 +164,16 @@ Create `.cursor/mcp.json`:
 - Core: `devloop_run`, `devloop_status`, `devloop_prd`, `devloop_list_tasks`
 - Debug: `devloop_diagnose`, `devloop_trace`, `devloop_logs`, `devloop_metrics`
 - Control: `devloop_pause`, `devloop_resume`, `devloop_reset`, `devloop_validate`
-- Evolution: `devloop_evolution_start`, `devloop_evolution_status`, `devloop_evolution_stop`
+- Contribution: `devloop_contribution_start`, `devloop_contribution_status`, `devloop_contribution_stop`
 
 ### Common Workflows
 
-**Start a PRD (Evolution Mode):**
+**Start a PRD (Contribution Mode):**
 ```
-1. devloop_evolution_start(prd: "path/to/prd.md")
+1. devloop_contribution_start(prd: "path/to/prd.md")
 2. task-master: parse_prd(input: "path/to/prd.md")
 3. devloop_prd(prdPath: "path/to/prd.md", debug: true)
-4. devloop_evolution_status() — monitor until complete
+4. devloop_contribution_status() — monitor until complete
 ```
 
 **Debug a failure:**
@@ -308,15 +308,15 @@ Publish an npm package `@dev-loop/framework-{name}` that exports a `FrameworkPlu
 
 See `src/frameworks/interface.ts` for full interface definition.
 
-## Evolution Mode
+## Contribution Mode
 
-Activated by human operator: "Enter evolution mode for dev-loop"
+Activated by human operator: "Enter contribution mode for dev-loop"
 
 **Outer agent responsibilities:**
-1. Run `devloop_evolution_start`
+1. Run `devloop_contribution_start`
 2. Create/update tasks via Task Master
-3. Monitor via `devloop_evolution_status`
-4. If inner agent stuck: enhance `packages/dev-loop/` code
+3. Monitor via `devloop_contribution_status`
+4. If inner agent stuck: enhance `node_modules/dev-loop/` code
 5. Build, commit, push dev-loop changes
 6. Validate improvements via metrics
 

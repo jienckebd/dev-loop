@@ -62,6 +62,7 @@ estimated_read_time: 15
 | `related_docs` | array | Related documentation paths | `[]` |
 | `prerequisites` | array | Prerequisite doc paths | `[]` |
 | `estimated_read_time` | integer | Minutes to read | None |
+| `contribution_mode` | boolean | Only autoload when in contribution mode | `false` |
 
 ## Type Definitions
 
@@ -221,6 +222,40 @@ audience: both
 audience: user
 # or
 audience: both
+```
+
+### 5. Contribution Mode Filtering
+
+The `contribution_mode` field controls when contribution documentation is autoloaded:
+
+```yaml
+contribution_mode: true
+```
+
+**Behavior:**
+- Only autoload docs with `contribution_mode: true` when explicitly in contribution mode
+- Contribution mode is active when `.devloop/contribution-mode.json` exists and `active: true`
+- Use this field for all documentation in `docs/contributing/`
+- Do not load contribution docs when creating PRDs or using dev-loop
+
+**When to use:**
+- All documentation in `docs/contributing/` directory
+- Any documentation specifically for contributing to dev-loop code
+
+**When NOT to use:**
+- PRD creation documentation (`docs/ai/`)
+- User documentation (`docs/users/`)
+- General dev-loop usage documentation
+
+**Example:**
+```yaml
+---
+title: "Contributing to Dev-Loop"
+type: "guide"
+category: "contributing"
+audience: "both"
+contribution_mode: true  # Only autoload in contribution mode
+---
 ```
 
 ## Prerequisite Loading

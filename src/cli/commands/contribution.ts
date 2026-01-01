@@ -5,33 +5,53 @@ import * as path from 'path';
 import { PrdTracker } from '../../core/prd-tracker';
 import { loadConfig } from '../../config/loader';
 
-const EVOLUTION_MODE_FILE = path.join(process.cwd(), '.devloop', 'evolution-mode.json');
+const CONTRIBUTION_MODE_FILE = path.join(process.cwd(), '.devloop', 'contribution-mode.json');
+const OLD_EVOLUTION_MODE_FILE = path.join(process.cwd(), '.devloop', 'evolution-mode.json');
 
 /**
- * Evolution Mode State (Simplified)
+ * Contribution Mode State (Simplified)
  *
  * Boundaries are now defined in .cursorrules or project-specific rules files.
- * This state only tracks whether evolution mode is active and the PRD path.
+ * This state only tracks whether contribution mode is active and the PRD path.
  */
-export interface EvolutionModeState {
+export interface ContributionModeState {
   active: boolean;
   activatedAt: string | null;
   prdPath: string | null;
 }
 
-async function loadEvolutionModeState(): Promise<EvolutionModeState | null> {
-  if (await fs.pathExists(EVOLUTION_MODE_FILE)) {
-    return await fs.readJson(EVOLUTION_MODE_FILE);
+async function loadContributionModeState(): Promise<ContributionModeState | null> {
+  // Check for new file first
+  if (await fs.pathExists(CONTRIBUTION_MODE_FILE)) {
+    return await fs.readJson(CONTRIBUTION_MODE_FILE);
   }
+  
+  // Migration: Check for old evolution-mode.json and migrate
+  if (await fs.pathExists(OLD_EVOLUTION_MODE_FILE)) {
+    const oldState = await fs.readJson(OLD_EVOLUTION_MODE_FILE);
+    const migratedState: ContributionModeState = {
+      active: oldState.active,
+      activatedAt: oldState.activatedAt,
+      prdPath: oldState.prdPath,
+    };
+    // Save to new location
+    await fs.ensureDir(path.dirname(CONTRIBUTION_MODE_FILE));
+    await fs.writeJson(CONTRIBUTION_MODE_FILE, migratedState, { spaces: 2 });
+    // Remove old file
+    await fs.remove(OLD_EVOLUTION_MODE_FILE);
+    console.log(chalk.yellow('Migrated evolution-mode.json to contribution-mode.json'));
+    return migratedState;
+  }
+  
   return null;
 }
 
-async function saveEvolutionModeState(state: EvolutionModeState): Promise<void> {
-  await fs.ensureDir(path.dirname(EVOLUTION_MODE_FILE));
-  await fs.writeJson(EVOLUTION_MODE_FILE, state, { spaces: 2 });
+async function saveContributionModeState(state: ContributionModeState): Promise<void> {
+  await fs.ensureDir(path.dirname(CONTRIBUTION_MODE_FILE));
+  await fs.writeJson(CONTRIBUTION_MODE_FILE, state, { spaces: 2 });
 }
 
-export async function evolutionCommand(options: {
+export async function contributionCommand(options: {
   action: 'start' | 'status' | 'stop';
   prd?: string;
   config?: string;
@@ -42,7 +62,7 @@ export async function evolutionCommand(options: {
     if (options.action === 'start') {
       if (!options.prd) {
         spinner.fail('PRD path required for start action');
-        console.error(chalk.red('Usage: npx dev-loop evolution start --prd <path>'));
+        console.error(chalk.red('Usage: npx dev-loop contribution start --prd <path>'));
         process.exit(1);
       }
 
@@ -52,17 +72,17 @@ export async function evolutionCommand(options: {
         process.exit(1);
       }
 
-      const state: EvolutionModeState = {
+      const state: ContributionModeState = {
         active: true,
         activatedAt: new Date().toISOString(),
         prdPath: path.relative(process.cwd(), prdPath),
       };
 
-      await saveEvolutionModeState(state);
-      spinner.succeed('Evolution mode activated');
+      await saveContributionModeState(state);
+      spinner.succeed('Contribution mode activated');
 
       console.log(chalk.cyan('\n╔════════════════════════════════════════════════════════════╗'));
-      console.log(chalk.cyan('║                    EVOLUTION MODE ACTIVE                    ║'));
+      console.log(chalk.cyan('║                  CONTRIBUTION MODE ACTIVE                  ║'));
       console.log(chalk.cyan('╚════════════════════════════════════════════════════════════╝\n'));
 
       console.log(chalk.yellow('Two-agent architecture is now active:\n'));
@@ -79,7 +99,7 @@ export async function evolutionCommand(options: {
       console.log('  - Fixes errors\n');
 
       console.log(chalk.yellow('Boundaries are defined in your project\'s .cursorrules file.'));
-      console.log(chalk.yellow('See the "Evolution Mode" section for specific file restrictions.\n'));
+      console.log(chalk.yellow('See the "Contribution Mode" section for specific file restrictions.\n'));
 
       console.log(chalk.bold('WORKFLOW:\n'));
       console.log('1. Run: npx dev-loop watch --until-complete');
@@ -88,20 +108,20 @@ export async function evolutionCommand(options: {
       console.log('4. If PRD needs more tasks: update .taskmaster/tasks/tasks.json');
       console.log('5. Let dev-loop run again - it implements the PRD code');
       console.log('6. When all tasks pass: validate in browser');
-      console.log('7. Exit evolution mode when PRD is 100% validated\n');
+      console.log('7. Exit contribution mode when PRD is 100% validated\n');
 
       console.log(chalk.cyan(`PRD: ${state.prdPath}\n`));
     } else if (options.action === 'status') {
-      const state = await loadEvolutionModeState();
+      const state = await loadContributionModeState();
       if (!state || !state.active) {
-        spinner.info('Evolution mode is not active');
-        console.log(chalk.yellow('Run "npx dev-loop evolution start --prd <path>" to activate'));
+        spinner.info('Contribution mode is not active');
+        console.log(chalk.yellow('Run "npx dev-loop contribution start --prd <path>" to activate'));
         return;
       }
 
-      spinner.succeed('Evolution mode is active');
+      spinner.succeed('Contribution mode is active');
 
-      console.log(chalk.cyan('\nEvolution Mode Status:'));
+      console.log(chalk.cyan('\nContribution Mode Status:'));
       console.log(`  PRD: ${state.prdPath || 'N/A'}`);
       console.log(`  Activated: ${state.activatedAt || 'N/A'}`);
 
@@ -127,23 +147,23 @@ export async function evolutionCommand(options: {
         console.log(chalk.yellow('\nCould not load completion status:'), error instanceof Error ? error.message : String(error));
       }
     } else if (options.action === 'stop') {
-      const state = await loadEvolutionModeState();
+      const state = await loadContributionModeState();
       if (!state || !state.active) {
-        spinner.info('Evolution mode is not active');
+        spinner.info('Contribution mode is not active');
         return;
       }
 
-      const stoppedState: EvolutionModeState = {
+      const stoppedState: ContributionModeState = {
         ...state,
         active: false,
       };
 
-      await saveEvolutionModeState(stoppedState);
-      spinner.succeed('Evolution mode deactivated');
-      console.log(chalk.green('Evolution mode is now inactive'));
+      await saveContributionModeState(stoppedState);
+      spinner.succeed('Contribution mode deactivated');
+      console.log(chalk.green('Contribution mode is now inactive'));
     }
   } catch (error) {
-    spinner.fail('Evolution command failed');
+    spinner.fail('Contribution command failed');
     console.error(chalk.red(error instanceof Error ? error.message : String(error)));
     process.exit(1);
   }

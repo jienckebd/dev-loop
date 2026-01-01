@@ -291,6 +291,83 @@ autonomous: {
 }
 ```
 
+### Test Generation Strategy
+
+Dev-loop supports a **combined approach** to test generation that balances upfront planning with iterative refinement:
+
+#### Strategy Options
+
+```yaml
+config:
+  testGeneration:
+    strategy: "combined"  # Options: "upfront" | "iterative" | "combined" (default: "combined")
+    generateOnParse: true  # Generate test skeletons during PRD parsing (default: true)
+    enhanceOnImplementation: true  # Update tests when tasks complete (default: true)
+    evolutionInterval: 5  # Review tests every N iterations (default: 5)
+```
+
+**Strategy Modes:**
+
+1. **`upfront`**: Generate all test skeletons during PRD parsing
+   - Best for: Small PRDs, well-defined requirements
+   - Creates complete test structure from day one
+   - Tests initially marked as "pending" or "skip" until implementation
+
+2. **`iterative`**: Generate tests only as tasks are implemented
+   - Best for: Exploratory development, evolving requirements
+   - Tests created when corresponding task is worked on
+   - Allows tests to reflect actual implementation insights
+
+3. **`combined`** (Recommended): Generate skeletons upfront, enhance iteratively
+   - Best for: Large PRDs, complex features
+   - Creates test structure during PRD parsing
+   - Enhances tests as implementation progresses
+   - Uses `evolutionInterval` to periodically review and improve tests
+
+#### Combined Approach Workflow
+
+1. **Initial PRD Parse**: Generate baseline test skeletons
+   - Creates test file structure for all requirements
+   - Tests use template with placeholders
+   - Initially marked as "pending" or use `test.skip()`
+
+2. **Task Implementation**: Activate and enhance tests
+   - When task is implemented, corresponding test is activated
+   - Test assertions refined based on actual implementation
+   - New insights from implementation inform test updates
+
+3. **Test Evolution**: Periodic review and improvement
+   - Every `evolutionInterval` iterations, review test quality
+   - Add edge cases discovered during implementation
+   - Refine selectors and assertions based on actual behavior
+   - Remove redundant or obsolete tests
+
+4. **Failure-Driven Learning**: Test failures trigger refinement
+   - Test failures reveal gaps in both code and tests
+   - Both code fixes and test improvements are made
+   - Patterns learned from failures improve future test generation
+
+#### Benefits of Combined Approach
+
+- **Upfront planning**: Test structure exists from day one, ensuring coverage
+- **Iterative refinement**: Tests improve as understanding deepens
+- **Failure-driven learning**: Test failures reveal gaps in both code and tests
+- **Reduced rework**: Early test structure prevents major test rewrites later
+- **Better coverage**: Periodic evolution ensures tests stay current with implementation
+
+#### Phase-Based Generation
+
+For very large PRDs (5000+ lines), consider generating tests per phase:
+
+```yaml
+config:
+  testGeneration:
+    strategy: "combined"
+    generatePerPhase: true  # Generate tests when phase starts (default: false)
+```
+
+This prevents overwhelming the system with thousands of test files upfront.
+
 ### How Test Generation Works
 
 1. AI agent analyzes PRD requirement
@@ -300,6 +377,7 @@ autonomous: {
 5. Avoids anti-patterns
 6. Generates test code matching helper method signatures
 7. Saves to `testDir`
+8. (If `strategy: combined`): Enhances tests as implementation progresses
 
 ### Real Example (openapi_wizard PRD)
 

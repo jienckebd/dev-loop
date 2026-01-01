@@ -4,9 +4,10 @@ import * as path from 'path';
 import { PrdTracker } from '../../core/prd-tracker';
 import { ConfigLoader, FastMCPType } from './index';
 
-const EVOLUTION_MODE_FILE = path.join(process.cwd(), '.devloop', 'evolution-mode.json');
+const CONTRIBUTION_MODE_FILE = path.join(process.cwd(), '.devloop', 'contribution-mode.json');
+const OLD_EVOLUTION_MODE_FILE = path.join(process.cwd(), '.devloop', 'evolution-mode.json');
 
-interface EvolutionModeState {
+interface ContributionModeState {
   active: boolean;
   activatedAt: string | null;
   prdPath: string | null;
@@ -19,23 +20,64 @@ interface EvolutionModeState {
   };
 }
 
-async function loadEvolutionModeState(): Promise<EvolutionModeState | null> {
-  if (await fs.pathExists(EVOLUTION_MODE_FILE)) {
-    return await fs.readJson(EVOLUTION_MODE_FILE);
+async function loadContributionModeState(): Promise<ContributionModeState | null> {
+  // Check for new file first
+  if (await fs.pathExists(CONTRIBUTION_MODE_FILE)) {
+    return await fs.readJson(CONTRIBUTION_MODE_FILE);
   }
+  
+  // Migration: Check for old evolution-mode.json and migrate
+  if (await fs.pathExists(OLD_EVOLUTION_MODE_FILE)) {
+    const oldState = await fs.readJson(OLD_EVOLUTION_MODE_FILE);
+    const migratedState: ContributionModeState = {
+      active: oldState.active,
+      activatedAt: oldState.activatedAt,
+      prdPath: oldState.prdPath,
+      outerAgentBoundaries: oldState.outerAgentBoundaries || {
+        allowed: [
+          'packages/dev-loop/**',
+          '.taskmaster/tasks/tasks.json',
+          '.taskmaster/docs/**',
+          '.devloop/**',
+          'devloop.config.js',
+        ],
+        forbidden: [
+          'docroot/**',
+          'tests/**',
+          'config/**',
+          'script/**',
+        ],
+      },
+      innerAgentScope: oldState.innerAgentScope || {
+        allowed: [
+          'docroot/**',
+          'tests/**',
+          'config/**',
+          'script/**',
+        ],
+      },
+    };
+    // Save to new location
+    await fs.ensureDir(path.dirname(CONTRIBUTION_MODE_FILE));
+    await fs.writeJson(CONTRIBUTION_MODE_FILE, migratedState, { spaces: 2 });
+    // Remove old file
+    await fs.remove(OLD_EVOLUTION_MODE_FILE);
+    return migratedState;
+  }
+  
   return null;
 }
 
-async function saveEvolutionModeState(state: EvolutionModeState): Promise<void> {
-  await fs.ensureDir(path.dirname(EVOLUTION_MODE_FILE));
-  await fs.writeJson(EVOLUTION_MODE_FILE, state, { spaces: 2 });
+async function saveContributionModeState(state: ContributionModeState): Promise<void> {
+  await fs.ensureDir(path.dirname(CONTRIBUTION_MODE_FILE));
+  await fs.writeJson(CONTRIBUTION_MODE_FILE, state, { spaces: 2 });
 }
 
-export function registerEvolutionTools(mcp: FastMCPType, getConfig: ConfigLoader): void {
-  // devloop_evolution_start - Activate evolution mode with PRD
+export function registerContributionTools(mcp: FastMCPType, getConfig: ConfigLoader): void {
+  // devloop_contribution_start - Activate contribution mode with PRD
   mcp.addTool({
-    name: 'devloop_evolution_start',
-    description: 'Activate evolution mode',
+    name: 'devloop_contribution_start',
+    description: 'Activate contribution mode',
     parameters: z.object({
       prd: z.string().describe('Path to PRD file'),
       config: z.string().optional().describe('Path to config file (optional)'),
@@ -50,7 +92,7 @@ export function registerEvolutionTools(mcp: FastMCPType, getConfig: ConfigLoader
           });
         }
 
-        const state: EvolutionModeState = {
+        const state: ContributionModeState = {
           active: true,
           activatedAt: new Date().toISOString(),
           prdPath: path.relative(process.cwd(), prdPath),
@@ -79,10 +121,10 @@ export function registerEvolutionTools(mcp: FastMCPType, getConfig: ConfigLoader
           },
         };
 
-        await saveEvolutionModeState(state);
+        await saveContributionModeState(state);
         return JSON.stringify({
           success: true,
-          message: 'Evolution mode activated',
+          message: 'Contribution mode activated',
           prdPath: state.prdPath,
           boundaries: state.outerAgentBoundaries,
         });
@@ -95,20 +137,20 @@ export function registerEvolutionTools(mcp: FastMCPType, getConfig: ConfigLoader
     },
   });
 
-  // devloop_evolution_status - Check evolution mode state
+  // devloop_contribution_status - Check contribution mode state
   mcp.addTool({
-    name: 'devloop_evolution_status',
-    description: 'Check evolution mode state',
+    name: 'devloop_contribution_status',
+    description: 'Check contribution mode state',
     parameters: z.object({
       config: z.string().optional().describe('Path to config file (optional)'),
     }),
     execute: async (args: { config?: string }, context: any) => {
       try {
-        const state = await loadEvolutionModeState();
+        const state = await loadContributionModeState();
         if (!state || !state.active) {
           return JSON.stringify({
             active: false,
-            message: 'Evolution mode is not active',
+            message: 'Contribution mode is not active',
           });
         }
 
@@ -148,30 +190,30 @@ export function registerEvolutionTools(mcp: FastMCPType, getConfig: ConfigLoader
     },
   });
 
-  // devloop_evolution_stop - Deactivate evolution mode
+  // devloop_contribution_stop - Deactivate contribution mode
   mcp.addTool({
-    name: 'devloop_evolution_stop',
-    description: 'Deactivate evolution mode',
+    name: 'devloop_contribution_stop',
+    description: 'Deactivate contribution mode',
     parameters: z.object({}),
     execute: async (args: {}, context: any) => {
       try {
-        const state = await loadEvolutionModeState();
+        const state = await loadContributionModeState();
         if (!state || !state.active) {
           return JSON.stringify({
             success: false,
-            message: 'Evolution mode is not active',
+            message: 'Contribution mode is not active',
           });
         }
 
-        const stoppedState: EvolutionModeState = {
+        const stoppedState: ContributionModeState = {
           ...state,
           active: false,
         };
 
-        await saveEvolutionModeState(stoppedState);
+        await saveContributionModeState(stoppedState);
         return JSON.stringify({
           success: true,
-          message: 'Evolution mode deactivated',
+          message: 'Contribution mode deactivated',
         });
       } catch (error) {
         return JSON.stringify({
