@@ -8,10 +8,35 @@ Autonomous development orchestrator that transforms PRDs into validated code thr
 
 **For AI Agents:** See [`docs/ai/README.md`](docs/ai/README.md) - AI agent onboarding guide for creating PRDs and leveraging dev-loop features.
 
+**Quick Lookup:** See [`docs/ai/INDEX.md`](docs/ai/INDEX.md) - Documentation index with task → doc mappings, feature guides, and problem solutions.
+
 **PRD Documentation:**
 - [`docs/ai/PRD_SCHEMA.md`](docs/ai/PRD_SCHEMA.md) - Complete schema reference with validation rules
 - [`docs/ai/PRD_FEATURES.md`](docs/ai/PRD_FEATURES.md) - Comprehensive guide to all 17 dev-loop features
 - [`docs/ai/PRD_TEMPLATE.md`](docs/ai/PRD_TEMPLATE.md) - Copy-paste PRD template with all optional sections
+
+### Documentation Discovery
+
+All documentation files include YAML frontmatter metadata for discoverability. AI agents can:
+
+1. **Index-Based Discovery**: Use [`docs/ai/INDEX.md`](docs/ai/INDEX.md) to find docs by task, feature, or problem
+2. **Metadata Filtering**: Filter by `type` (reference, guide, template), `category` (prd, features), or `audience` (ai, user, both)
+3. **Keyword Matching**: Match task keywords to document keywords for relevant content
+4. **Workflow Guidance**: Follow recommended documentation sequences for common workflows
+
+**Metadata Fields:**
+- `type` - reference | guide | tutorial | template | index
+- `category` - prd | cli | architecture | features
+- `audience` - ai | user | both
+- `keywords` - Searchable keywords array
+- `related_docs` - Links to related documentation
+- `prerequisites` - Prerequisite docs to load first
+- `estimated_read_time` - Minutes to read
+
+**Discovery Examples:**
+- **Creating PRD**: Start with `PRD_TEMPLATE.md` (template), validate with `PRD_SCHEMA.md` (reference)
+- **Configuring features**: Load `PRD_FEATURES.md` (guide, category: features)
+- **Validation errors**: Check `PRD_SCHEMA.md` (reference, keywords: validation)
 
 ## Core Concept
 

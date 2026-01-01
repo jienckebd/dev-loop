@@ -1,3 +1,14 @@
+---
+title: "Dev-Loop User Documentation"
+type: "guide"
+category: "user"
+audience: "user"
+keywords: ["user", "guide", "cli", "mcp", "configuration", "workflow", "framework", "plugins"]
+related_docs:
+  - "../ai/README.md"
+prerequisites: []
+estimated_read_time: 30
+---
 # Dev-Loop User Documentation
 
 Complete user guide for dev-loop - the autonomous development orchestrator that transforms PRDs into validated code.

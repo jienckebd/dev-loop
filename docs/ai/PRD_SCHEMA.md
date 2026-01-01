@@ -1,3 +1,15 @@
+---
+title: "Dev-Loop PRD Frontmatter Schema v1.0"
+type: "reference"
+category: "prd"
+audience: "both"
+keywords: ["schema", "frontmatter", "validation", "yaml", "reference", "phase", "dependency"]
+related_docs:
+  - "PRD_TEMPLATE.md"
+  - "PRD_FEATURES.md"
+prerequisites: []
+estimated_read_time: 30
+---
 # Dev-Loop PRD Frontmatter Schema v1.0
 
 ## Overview

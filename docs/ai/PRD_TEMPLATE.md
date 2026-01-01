@@ -1,3 +1,16 @@
+---
+title: "Dev-Loop PRD Template"
+type: "template"
+category: "prd"
+audience: "both"
+keywords: ["template", "prd", "frontmatter", "example", "copy-paste"]
+related_docs:
+  - "PRD_SCHEMA.md"
+  - "PRD_FEATURES.md"
+prerequisites:
+  - "PRD_SCHEMA.md"
+estimated_read_time: 20
+---
 # Dev-Loop PRD Template
 
 This is a complete template for creating dev-loop PRDs. Copy this file and fill in the placeholders.

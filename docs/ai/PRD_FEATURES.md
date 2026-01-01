@@ -1,3 +1,16 @@
+---
+title: "Dev-Loop PRD Feature Leverage Guide"
+type: "guide"
+category: "features"
+audience: "both"
+keywords: ["features", "error-guidance", "test-generation", "log-analysis", "context-files", "config", "hooks", "validation"]
+related_docs:
+  - "PRD_SCHEMA.md"
+  - "PRD_TEMPLATE.md"
+prerequisites:
+  - "PRD_SCHEMA.md"
+estimated_read_time: 45
+---
 # Dev-Loop PRD Feature Leverage Guide
 
 ## Overview
