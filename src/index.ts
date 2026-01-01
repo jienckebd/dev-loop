@@ -24,6 +24,7 @@ import { validateCommand } from './cli/commands/validate';
 import { evolutionCommand } from './cli/commands/evolution';
 import { evolveCommand } from './cli/commands/evolve';
 import { prdCommand } from './cli/commands/prd';
+import { validatePrdCommand } from './cli/commands/validate-prd';
 
 const program = new Command();
 
@@ -293,6 +294,19 @@ program
       config: options.config,
       debug: options.debug,
       resume: options.resume,
+    });
+  });
+
+program
+  .command('validate-prd <prdPath>')
+  .description('Validate PRD frontmatter against schema')
+  .option('--schema <path>', 'Path to custom schema file')
+  .option('-v, --verbose', 'Show detailed validation information')
+  .action(async (prdPath, options) => {
+    await validatePrdCommand({
+      prd: prdPath,
+      schema: options.schema,
+      verbose: options.verbose,
     });
   });
 

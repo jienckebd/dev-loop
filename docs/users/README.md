@@ -1,19 +1,22 @@
-# dev-loop
+# Dev-Loop User Documentation
 
-Autonomous development orchestrator that transforms PRDs into validated code through a continuous loop of AI code generation, test execution, and log analysis.
+Complete user guide for dev-loop - the autonomous development orchestrator that transforms PRDs into validated code.
 
-## Documentation
+## Table of Contents
 
-**For Users:** See [`docs/users/README.md`](docs/users/README.md) - Complete user documentation, CLI reference, and configuration guide.
+- [Overview](#overview)
+- [Installation](#installation)
+- [Quick Start](#quick-start)
+- [Configuration](#configuration)
+- [CLI Reference](#cli-reference)
+- [MCP Integration](#mcp-integration)
+- [Architecture](#architecture)
+- [Framework Plugins](#framework-plugins)
+- [Evolution Mode](#evolution-mode)
+- [Best Practices](#best-practices)
+- [Troubleshooting](#troubleshooting)
 
-**For AI Agents:** See [`docs/ai/README.md`](docs/ai/README.md) - AI agent onboarding guide for creating PRDs and leveraging dev-loop features.
-
-**PRD Documentation:**
-- [`docs/ai/PRD_SCHEMA.md`](docs/ai/PRD_SCHEMA.md) - Complete schema reference with validation rules
-- [`docs/ai/PRD_FEATURES.md`](docs/ai/PRD_FEATURES.md) - Comprehensive guide to all 17 dev-loop features
-- [`docs/ai/PRD_TEMPLATE.md`](docs/ai/PRD_TEMPLATE.md) - Copy-paste PRD template with all optional sections
-
-## Core Concept
+## Overview
 
 Dev-loop implements a **test-driven development loop**:
 
@@ -32,57 +35,17 @@ flowchart LR
 
 **Key principle**: Every task bundles feature code + test code. The loop continues until all tests pass.
 
-## Two Operating Modes
+## Installation
 
-### Non-Evolution Mode (Default)
+**Prerequisites:** Node.js 20+, AI API key (Anthropic, OpenAI, or Gemini)
 
-You implement tasks directly. Dev-loop provides task management and diagnostics.
-
-```mermaid
-flowchart TB
-    You[Cursor Agent] -->|"Query tasks"| TM[Task Master MCP]
-    You -->|"Edit code"| Code[Project Codebase]
-    You -->|"Update status"| TM
-    TM --> Tasks[(tasks.json)]
+```bash
+npm install -g dev-loop
 ```
-
-### Evolution Mode
-
-Two-agent architecture for autonomous development:
-
-```mermaid
-flowchart TB
-    subgraph outer["Outer Agent (You)"]
-        Orchestrate[Orchestrate & Enhance]
-    end
-    subgraph inner["Inner Agent (Dev-Loop)"]
-        Implement[Implement & Test]
-    end
-    
-    Orchestrate -->|"Start/monitor"| DL[Dev-Loop MCP]
-    Orchestrate -->|"Create tasks"| TM[Task Master MCP]
-    DL -->|"Spawn"| Implement
-    Implement -->|"Edit"| Code[Project Code]
-    Orchestrate -.->|"If stuck"| DevLoopSrc[packages/dev-loop/]
-    
-    TM --> Tasks[(tasks.json)]
-    DL --> State[(.devloop/)]
-```
-
-| Aspect | Non-Evolution | Evolution |
-|--------|--------------|-----------|
-| Who implements | You | Inner agent |
-| Your role | Direct coding | Orchestration |
-| Code you edit | All files | Only `packages/dev-loop/` |
 
 ## Quick Start
 
 ```bash
-# Prerequisites: Node.js 20+, AI API key
-
-# Install
-npm install -g dev-loop
-
 # Setup
 echo "ANTHROPIC_API_KEY=your_key" > .env
 dev-loop init
@@ -154,7 +117,7 @@ module.exports = {
 | `dev-loop logs [--follow]` | View logs |
 | `dev-loop metrics [--summary]` | Debug metrics |
 | `dev-loop validate` | Check config/environment |
-| `dev-loop validate-prd <prd-path>` | Validate PRD frontmatter against schema |
+| `dev-loop validate-prd <prd-path>` | Validate PRD frontmatter |
 
 ## MCP Integration
 
@@ -330,84 +293,11 @@ Create a plugin in your project at `.devloop/frameworks/{name}/plugin.json`:
 
 #### NPM Plugin
 
-Publish an npm package `@dev-loop/framework-{name}` that exports a `FrameworkPlugin` implementation:
+Publish an npm package `@dev-loop/framework-{name}` that exports a `FrameworkPlugin` implementation.
 
-```typescript
-import { FrameworkPlugin } from '@dev-loop/core';
+See `src/frameworks/interface.ts` for full interface definition.
 
-export class MyFrameworkPlugin implements FrameworkPlugin {
-  readonly name = 'myframework';
-  readonly version = '1.0.0';
-  readonly description = 'My framework plugin';
-  
-  async detect(projectRoot: string): Promise<boolean> {
-    // Detection logic
-  }
-  
-  getTaskTemplate(): string {
-    // Return template string
-  }
-  
-  // ... implement other required methods
-}
-
-export default new MyFrameworkPlugin();
-```
-
-### FrameworkPlugin Interface
-
-```typescript
-interface FrameworkPlugin {
-  readonly name: string;
-  readonly version: string;
-  readonly description: string;
-  
-  // Detection
-  detect(projectRoot: string): Promise<boolean>;
-  
-  // Configuration
-  getDefaultConfig(): FrameworkDefaultConfig;
-  getSchemaExtension?(): z.ZodObject<any>;
-  
-  // Templates
-  getTaskTemplate(): string;
-  getTestTemplate?(): string | undefined;
-  getPrdTemplate?(): string;
-  
-  // File Discovery
-  getFileExtensions(): string[];
-  getSearchDirs(): string[];
-  getExcludeDirs(): string[];
-  
-  // Error Handling
-  getErrorPatterns(): Record<string, string>;
-  getIdentifierPatterns(): RegExp[];
-  getErrorPathPatterns?(): RegExp[];
-  
-  // Lifecycle Hooks
-  onBeforeApply?(changes: CodeChanges): Promise<CodeChanges>;
-  onAfterApply?(changes: CodeChanges): Promise<void>;
-  onTestFailure?(error: string): Promise<string>;
-  
-  // Commands
-  getCacheCommand?(): string | undefined;
-  getBuildCommand?(): string | undefined;
-}
-```
-
-See `src/frameworks/interface.ts` for full interface definition and examples in `src/frameworks/drupal/`, `src/frameworks/django/`, and `src/frameworks/react/`.
-
-## Intervention Modes
-
-Control whether the inner agent requires approval:
-
-| Mode | Behavior |
-|------|----------|
-| `autonomous` | Fully automated |
-| `review` | Human approves each change |
-| `hybrid` | Auto for safe changes, review for risky (`delete`, `schema-change`) |
-
-## Evolution Mode Details
+## Evolution Mode
 
 Activated by human operator: "Enter evolution mode for dev-loop"
 
@@ -449,21 +339,6 @@ project/
 └── test-results/               # Artifacts, screenshots
 ```
 
-## CI Output
-
-- `devloop-results.json` — Structured results
-- `devloop-results.xml` — JUnit XML
-- `devloop-summary.md` — Human-readable summary
-
-## Troubleshooting
-
-| Issue | Fix |
-|-------|-----|
-| Test timeout | Fix wait strategy, increase timeout |
-| AI not implementing | Check API key and config |
-| Form not advancing | Wait for button text/URL change |
-| Flaky tests | Add explicit waits, retry logic |
-
 ## Best Practices
 
 1. Bundle features with tests
@@ -473,58 +348,23 @@ project/
 5. Create atomic fix tasks
 6. Commit working states
 7. Verify AI changes with `git diff`
+8. Use `dev-loop validate-prd` before activating PRDs
 
-## Development
+## Troubleshooting
 
-```bash
-npm install          # Install dependencies
-npm run build        # Build
-npm run dev          # Watch mode
-npm test             # Test
-```
-
-**Requirements:** Node.js >= 20.0.0
-
-## Dependencies
-
-| Package | Purpose |
-|---------|---------|
-| `task-master-ai` | Task management |
-| `commander` | CLI framework |
-| `zod` | Config validation |
-| `@anthropic-ai/sdk` | Claude API |
-| `openai` | GPT API |
-| `@google/generative-ai` | Gemini API |
-
-## Roadmap
-
-### Complete
-- Workflow engine with state machine
-- Multi-provider AI support
-- Playwright/Cypress test runners
-- Pattern learning system
-- Pre-apply validation
-- Framework pattern library
-- Error classification & root cause analysis
-- MCP integration (Task Master + Dev-Loop)
-- Evolution mode
-
-### In Progress
-- Smart scheduling with dependency resolution
-- Proactive pattern application
-- Context gap detection
-
-### Planned
-- Parallel task execution
-- Git workflow integration
-- Rich HTML reports
-- Shell completion scripts
+| Issue | Fix |
+|-------|-----|
+| Test timeout | Fix wait strategy, increase timeout |
+| AI not implementing | Check API key and config |
+| Form not advancing | Wait for button text/URL change |
+| Flaky tests | Add explicit waits, retry logic |
+| PRD validation errors | Check frontmatter against schema |
 
 ## See Also
 
-- [HANDOFF.md](./HANDOFF.md) — Implementation handoff
-- [AI Dev Tasks](https://github.com/snarktank/ai-dev-tasks) — Prompt templates
-- [Task Master AI](https://www.npmjs.com/package/task-master-ai) — Task management
+- [AI Agent Guide](../ai/README.md) - For AI agents creating PRDs
+- [HANDOFF.md](../../HANDOFF.md) - Implementation handoff
+- [Task Master AI](https://www.npmjs.com/package/task-master-ai) - Task management
 
 ## License
 
