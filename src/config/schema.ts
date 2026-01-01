@@ -191,6 +191,53 @@ const configSchema = z.object({
       enabled: z.boolean().default(false),
       outputPath: z.string().default('.devloop/prd-status.json'),
     }).optional(),
+    // NEW: PRD metadata support
+    metadata: z.object({
+      id: z.string(),
+      version: z.string(),
+      status: z.enum(['planning', 'ready', 'active', 'blocked', 'complete']),
+    }).optional(),
+    // NEW: Execution strategy configuration
+    execution: z.object({
+      strategy: z.enum(['sequential', 'parallel', 'phased']).default('sequential'),
+      parallelism: z.object({
+        testGeneration: z.number().default(1),     // Batch size for AI calls
+        testExecution: z.number().default(1),       // Playwright workers
+        requirementGroups: z.boolean().default(false),
+      }).optional(),
+      maxIterations: z.number().default(100),
+      timeoutMinutes: z.number().default(60),
+      waitForPrds: z.boolean().default(false),      // Block until dependent PRDs complete
+    }).optional(),
+    // NEW: Requirements structure and phases
+    requirements: z.object({
+      idPattern: z.string().default('REQ-{id}'),
+      phases: z.array(z.object({
+        id: z.number(),
+        name: z.string(),
+        range: z.string().optional(),              // "REQ-401 to REQ-402"
+        pattern: z.string().optional(),            // "REQ-4{number}"
+        parallel: z.boolean().default(false),
+        dependsOn: z.array(z.number()).optional(), // Phase IDs
+      })).optional(),
+      dependencies: z.record(z.array(z.string())).optional(), // Explicit requirement dependencies
+    }).optional(),
+    // NEW: Testing configuration
+    testing: z.object({
+      directory: z.string(),
+      framework: z.enum(['playwright', 'cypress', 'jest']).default('playwright'),
+      parallel: z.boolean().default(true),
+      workers: z.number().default(4),
+      bundledTests: z.boolean().default(false),    // Tests embedded in requirements vs separate files
+      cleanupArtifacts: z.boolean().default(true),
+    }).optional(),
+    // NEW: PRD-level dependencies on external modules or other PRDs
+    prdDependencies: z.object({
+      externalModules: z.array(z.string()).optional(),  // Drupal modules
+      prds: z.array(z.string()).optional(),             // Other PRDs that must complete first
+    }).optional(),
+    // NEW: Config overlay from PRD (merged at runtime)
+    configOverlay: z.record(z.any()).optional(),
   }).optional(),
 
   // Drupal-specific implementation configuration

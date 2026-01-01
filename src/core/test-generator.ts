@@ -21,16 +21,24 @@ export class TestGenerator {
 
   /**
    * Generate or evolve tests from requirements
+   * Supports parallel generation with batching to respect API rate limits
    */
   async generateTests(
     requirements: Requirement[],
     context: PrdContext,
     existingTestPaths?: string[]
   ): Promise<TestState[]> {
-    const tests: TestState[] = [];
+    // Get batch size from config (prd.execution.parallelism.testGeneration)
+    const prdConfig = (this.config as any).prd || {};
+    const executionConfig = prdConfig.execution || {};
+    const parallelismConfig = executionConfig.parallelism || {};
+    const batchSize = parallelismConfig.testGeneration || 1;
 
+    const tests: TestState[] = [];
+    const requirementsToGenerate: Requirement[] = [];
+
+    // Filter out passing tests
     for (const req of requirements) {
-      // Check if test already exists
       const existingTest = context.tests.find(t => t.requirementId === req.id);
 
       if (existingTest && existingTest.status === 'passing') {
@@ -42,12 +50,62 @@ export class TestGenerator {
         continue;
       }
 
-      // Generate or enhance test based on accumulated knowledge
-      const test = await this.generateTestForRequirement(req, context, existingTest);
-      tests.push(test);
+      requirementsToGenerate.push(req);
     }
 
-    return tests;
+    // Generate tests in batches for parallel processing
+    if (batchSize > 1 && requirementsToGenerate.length > 1) {
+      if (this.debug) {
+        console.log(`[TestGenerator] Generating ${requirementsToGenerate.length} tests in batches of ${batchSize}`);
+      }
+      return await this.generateTestsBatch(requirementsToGenerate, context, batchSize, tests);
+    } else {
+      // Sequential generation (original behavior)
+      for (const req of requirementsToGenerate) {
+        const existingTest = context.tests.find(t => t.requirementId === req.id);
+        const test = await this.generateTestForRequirement(req, context, existingTest);
+        tests.push(test);
+      }
+      return tests;
+    }
+  }
+
+  /**
+   * Generate tests in parallel batches
+   */
+  private async generateTestsBatch(
+    requirements: Requirement[],
+    context: PrdContext,
+    batchSize: number,
+    existingTests: TestState[]
+  ): Promise<TestState[]> {
+    const allTests = [...existingTests];
+    
+    // Split requirements into batches
+    const batches: Requirement[][] = [];
+    for (let i = 0; i < requirements.length; i += batchSize) {
+      batches.push(requirements.slice(i, i + batchSize));
+    }
+
+    // Process each batch in parallel
+    for (let batchIndex = 0; batchIndex < batches.length; batchIndex++) {
+      const batch = batches[batchIndex];
+      
+      if (this.debug) {
+        console.log(`[TestGenerator] Processing batch ${batchIndex + 1}/${batches.length} (${batch.length} requirements)`);
+      }
+
+      // Generate all tests in this batch in parallel
+      const batchPromises = batch.map(async (req) => {
+        const existingTest = context.tests.find(t => t.requirementId === req.id);
+        return await this.generateTestForRequirement(req, context, existingTest);
+      });
+
+      const batchTests = await Promise.all(batchPromises);
+      allTests.push(...batchTests);
+    }
+
+    return allTests;
   }
 
   /**

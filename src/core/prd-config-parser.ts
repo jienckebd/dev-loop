@@ -1,5 +1,6 @@
 import * as fs from 'fs-extra';
 import * as path from 'path';
+import { parse as yamlParse } from 'yaml';
 import { Config, validateConfig } from '../config/schema';
 import { defaultConfig } from '../config/defaults';
 import { logger } from './logger';
@@ -8,9 +9,55 @@ import { logger } from './logger';
  * PRD Config Parser
  * 
  * Extracts and parses configuration sections from PRD markdown files.
- * PRDs can contain a "Dev-Loop Configuration" section with JavaScript
- * code blocks that define config overlays to merge with base config.
+ * Supports three formats:
+ * 1. YAML frontmatter (recommended)
+ * 2. HTML comment metadata (legacy)
+ * 3. JavaScript code blocks in "Dev-Loop Configuration" section
  */
+export interface PrdMetadata {
+  prd?: {
+    id: string;
+    version: string;
+    status: 'planning' | 'ready' | 'active' | 'blocked' | 'complete';
+  };
+  execution?: {
+    strategy?: 'sequential' | 'parallel' | 'phased';
+    parallelism?: {
+      testGeneration?: number;
+      testExecution?: number;
+      requirementGroups?: boolean;
+    };
+    maxIterations?: number;
+    timeoutMinutes?: number;
+    waitForPrds?: boolean;
+  };
+  requirements?: {
+    idPattern?: string;
+    phases?: Array<{
+      id: number;
+      name: string;
+      range?: string;
+      pattern?: string;
+      parallel?: boolean;
+      dependsOn?: number[];
+    }>;
+    dependencies?: Record<string, string[]>;
+  };
+  testing?: {
+    directory: string;
+    framework?: 'playwright' | 'cypress' | 'jest';
+    parallel?: boolean;
+    workers?: number;
+    bundledTests?: boolean;
+    cleanupArtifacts?: boolean;
+  };
+  dependencies?: {
+    externalModules?: string[];
+    prds?: string[];
+  };
+  config?: Partial<Config>;
+}
+
 export class PrdConfigParser {
   private debug: boolean;
 
@@ -19,31 +66,44 @@ export class PrdConfigParser {
   }
 
   /**
-   * Extract configuration overlay from PRD file
+   * Extract configuration overlay and metadata from PRD file
+   * Tries YAML frontmatter first, then HTML comments, then JS blocks
    */
   async parsePrdConfig(prdPath: string): Promise<Partial<Config> | null> {
     try {
       const content = await fs.readFile(prdPath, 'utf-8');
-      const configSection = this.extractConfigSection(content);
       
-      if (!configSection) {
+      // Try YAML frontmatter first (recommended format)
+      const frontmatter = this.parseFrontmatter(content);
+      if (frontmatter && frontmatter.config) {
         if (this.debug) {
-          logger.debug('[PrdConfigParser] No config section found in PRD');
+          logger.debug('[PrdConfigParser] Found YAML frontmatter config');
         }
-        return null;
+        return frontmatter.config;
       }
 
-      if (this.debug) {
-        logger.debug('[PrdConfigParser] Found config section in PRD');
+      // Try HTML comment metadata (legacy format)
+      const htmlMetadata = this.parseHtmlCommentMetadata(content);
+      if (htmlMetadata && htmlMetadata.config) {
+        if (this.debug) {
+          logger.debug('[PrdConfigParser] Found HTML comment metadata');
+        }
+        return htmlMetadata.config;
       }
 
-      const configOverlay = this.parseConfigObject(configSection);
+      // Try JS config blocks (current format)
+      const configSection = this.extractConfigSection(content);
+      if (configSection) {
+        if (this.debug) {
+          logger.debug('[PrdConfigParser] Found JS config block');
+        }
+        return this.parseConfigObject(configSection);
+      }
       
       if (this.debug) {
-        logger.debug(`[PrdConfigParser] Parsed config overlay with keys: ${Object.keys(configOverlay).join(', ')}`);
+        logger.debug('[PrdConfigParser] No config section found in PRD');
       }
-
-      return configOverlay;
+      return null;
     } catch (error) {
       logger.warn(`[PrdConfigParser] Failed to parse PRD config: ${error instanceof Error ? error.message : String(error)}`);
       return null;
@@ -51,28 +111,161 @@ export class PrdConfigParser {
   }
 
   /**
-   * Extract JavaScript code block from "Dev-Loop Configuration" section
+   * Parse PRD metadata (YAML frontmatter or HTML comments)
    */
-  private extractConfigSection(content: string): string | null {
-    // Look for "## Dev-Loop Configuration" or similar section headers
-    // Match until the next same-level (##) header, markdown separator (---), or end of file
-    // Note: We want to include subsection headers (###) as they're part of the config section
-    const sectionPattern = /^##\s+Dev-Loop\s+Configuration[^\n]*\n([\s\S]+?)(?=^##\s|^---\s*$|$(?![\s\S]))/m;
-    const match = content.match(sectionPattern);
+  async parsePrdMetadata(prdPath: string): Promise<PrdMetadata | null> {
+    try {
+      const content = await fs.readFile(prdPath, 'utf-8');
+      
+      // Try YAML frontmatter first
+      const frontmatter = this.parseFrontmatter(content);
+      if (frontmatter) {
+        return frontmatter;
+      }
+
+      // Try HTML comments as fallback
+      return this.parseHtmlCommentMetadata(content);
+    } catch (error) {
+      logger.warn(`[PrdConfigParser] Failed to parse PRD metadata: ${error instanceof Error ? error.message : String(error)}`);
+      return null;
+    }
+  }
+
+  /**
+   * Parse YAML frontmatter from PRD
+   * Frontmatter format: ---\n...yaml...\n---
+   */
+  private parseFrontmatter(content: string): PrdMetadata | null {
+    const frontmatterPattern = /^---\s*\n([\s\S]*?)\n---\s*\n/m;
+    const match = content.match(frontmatterPattern);
     
     if (!match) {
       return null;
     }
 
-    const sectionContent = match[1];
+    try {
+      const parsed = yamlParse(match[1]);
+      
+      // Extract config overlay if present
+      let configOverlay: Partial<Config> | undefined;
+      if (parsed.config) {
+        configOverlay = parsed.config;
+        delete parsed.config; // Remove from metadata
+      }
+
+      // Convert metadata to expected format
+      const metadata: PrdMetadata = {
+        ...parsed,
+      };
+
+      if (configOverlay) {
+        metadata.config = configOverlay;
+      }
+
+      return metadata;
+    } catch (error) {
+      if (this.debug) {
+        logger.debug(`[PrdConfigParser] Failed to parse YAML frontmatter: ${error instanceof Error ? error.message : String(error)}`);
+      }
+      return null;
+    }
+  }
+
+  /**
+   * Parse HTML comment metadata (legacy format)
+   * Format: <!-- DEV-LOOP METADATA -->\n<!--\nkey: value\n-->
+   */
+  private parseHtmlCommentMetadata(content: string): PrdMetadata | null {
+    const commentPattern = /<!--\s*DEV-LOOP\s+METADATA\s*-->[\s\S]*?<!--\s*([\s\S]*?)\s*-->/;
+    const match = content.match(commentPattern);
     
-    // Extract JavaScript code blocks
-    const jsBlockPattern = /```(?:javascript|js)\n([\s\S]*?)\n```/g;
+    if (!match) {
+      return null;
+    }
+
+    try {
+      const metadataText = match[1];
+      const lines = metadataText.split('\n');
+      const metadata: any = {};
+
+      for (const line of lines) {
+        const colonIndex = line.indexOf(':');
+        if (colonIndex > 0) {
+          const key = line.substring(0, colonIndex).trim();
+          let value: any = line.substring(colonIndex + 1).trim();
+          
+          // Handle arrays (e.g., depends_on: [item1, item2])
+          if (value.startsWith('[') && value.endsWith(']')) {
+            value = value.slice(1, -1).split(',').map((v: string) => v.trim().replace(/^["']|["']$/g, ''));
+          } else if (value === 'true' || value === 'false') {
+            value = value === 'true';
+          } else if (!isNaN(Number(value))) {
+            value = Number(value);
+          }
+
+          // Map legacy keys to new structure
+          if (key === 'prd_id') {
+            metadata.prd = { ...metadata.prd, id: value } as any;
+          } else if (key === 'version') {
+            metadata.prd = { ...metadata.prd, version: value } as any;
+          } else if (key === 'status') {
+            metadata.prd = { ...metadata.prd, status: value } as any;
+          } else if (key === 'test_directory') {
+            metadata.testing = { ...metadata.testing, directory: value } as any;
+          } else if (key === 'depends_on') {
+            metadata.dependencies = { ...metadata.dependencies, prds: value } as any;
+          } else {
+            metadata[key] = value;
+          }
+        }
+      }
+
+      return Object.keys(metadata).length > 0 ? metadata : null;
+    } catch (error) {
+      if (this.debug) {
+        logger.debug(`[PrdConfigParser] Failed to parse HTML comment metadata: ${error instanceof Error ? error.message : String(error)}`);
+      }
+      return null;
+    }
+  }
+
+  /**
+   * Extract JavaScript code block from "Dev-Loop Configuration" section
+   * Fixed regex to correctly capture content until next same-level header
+   */
+  private extractConfigSection(content: string): string | null {
+    // Look for "## Dev-Loop Configuration" or similar section headers
+    // Match until the next same-level (##) header, markdown separator (---), or end of file
+    // Fixed: Use non-greedy match and ensure we capture until next ## header or end of file
+    const sectionPattern = /^##\s+Dev-Loop\s+Configuration[^\n]*\n([\s\S]+?)(?=^##\s|^---\s*$|$(?![\s\S]))/m;
+    const match = content.match(sectionPattern);
+    
+    if (!match || !match[1]) {
+      return null;
+    }
+
+    const sectionContent = match[1].trim();
+    
+    // Extract JavaScript code blocks - handle both ```javascript and ```js
+    // Also handle multiline code blocks properly
+    const jsBlockPattern = /```(?:javascript|js)\s*\n([\s\S]*?)```/g;
     const codeBlocks: string[] = [];
     let blockMatch;
     
     while ((blockMatch = jsBlockPattern.exec(sectionContent)) !== null) {
-      codeBlocks.push(blockMatch[1]);
+      if (blockMatch[1]) {
+        codeBlocks.push(blockMatch[1].trim());
+      }
+    }
+
+    if (codeBlocks.length === 0) {
+      // Also try without language tag (plain ```)
+      const plainBlockPattern = /```\s*\n([\s\S]*?)```/g;
+      while ((blockMatch = plainBlockPattern.exec(sectionContent)) !== null) {
+        if (blockMatch[1]) {
+          codeBlocks.push(blockMatch[1].trim());
+        }
+      }
     }
 
     if (codeBlocks.length === 0) {

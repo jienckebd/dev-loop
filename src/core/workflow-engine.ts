@@ -2559,7 +2559,8 @@ export class WorkflowEngine {
     const testGenerator = new TestGenerator(this.aiProvider, effectiveConfig, this.debug);
     const testExecutor = new TestExecutor(
       effectiveConfig.testing.artifactsDir,
-      this.debug
+      this.debug,
+      effectiveConfig
     );
     const failureAnalyzer = new FailureAnalyzer(this.aiProvider, this.debug);
     const taskGenerator = new AutonomousTaskGenerator(

@@ -39,26 +39,63 @@ export interface FailedNetworkRequest {
 export class TestExecutor {
   private artifactsDir: string;
   private debug: boolean;
+  private config: any; // Config type for accessing prd.execution settings
 
-  constructor(artifactsDir: string = 'test-results', debug: boolean = false) {
+  constructor(artifactsDir: string = 'test-results', debug: boolean = false, config?: any) {
     this.artifactsDir = artifactsDir;
     this.debug = debug;
+    this.config = config || {};
   }
 
   /**
    * Execute all tests and return results
+   * Supports parallel execution via Playwright workers
    */
   async executeTests(tests: TestState[]): Promise<TestExecutionResult> {
     // Clean up any stray test entity configurations before running tests
     await this.cleanupTestEntities();
 
+    // Filter out skipped tests
+    const testsToRun = tests.filter(t => t.status !== 'skipped');
+    
+    if (testsToRun.length === 0) {
+      return {
+        total: 0,
+        passed: 0,
+        failed: 0,
+        results: [],
+      };
+    }
+
+    // Get parallel execution config from prd.execution.parallelism.testExecution
+    const prdConfig = this.config.prd || {};
+    const executionConfig = prdConfig.execution || {};
+    const parallelismConfig = executionConfig.parallelism || {};
+    const workers = parallelismConfig.testExecution || 1;
+    const parallel = prdConfig.testing?.parallel !== false; // Default to true
+
+    // If parallel execution is enabled and we have multiple tests, run them all together
+    if (parallel && workers > 1 && testsToRun.length > 1) {
+      if (this.debug) {
+        console.log(`[TestExecutor] Running ${testsToRun.length} tests in parallel with ${workers} workers`);
+      }
+      return await this.executeTestsParallel(testsToRun, workers);
+    } else {
+      // Sequential execution (original behavior)
+      if (this.debug && testsToRun.length > 1) {
+        console.log(`[TestExecutor] Running ${testsToRun.length} tests sequentially`);
+      }
+      return await this.executeTestsSequential(testsToRun);
+    }
+  }
+
+  /**
+   * Execute tests sequentially (one at a time)
+   */
+  private async executeTestsSequential(tests: TestState[]): Promise<TestExecutionResult> {
     const results: ExtendedTestResult[] = [];
 
     for (const test of tests) {
-      if (test.status === 'skipped') {
-        continue;
-      }
-
       if (this.debug) {
         console.log(`[TestExecutor] Running test: ${test.id} (${test.testPath})`);
       }
@@ -78,6 +115,138 @@ export class TestExecutor {
       failed: results.filter(r => !r.success).length,
       results,
     };
+  }
+
+  /**
+   * Execute tests in parallel using Playwright workers
+   */
+  private async executeTestsParallel(tests: TestState[], workers: number): Promise<TestExecutionResult> {
+    // Get common test directory from all tests
+    const testPaths = tests.map(t => path.resolve(process.cwd(), t.testPath));
+    const testDir = path.dirname(testPaths[0]);
+    
+    // Verify all tests are in the same directory (required for parallel execution)
+    const allInSameDir = testPaths.every(p => path.dirname(p) === testDir);
+    
+    if (!allInSameDir) {
+      if (this.debug) {
+        console.log('[TestExecutor] Tests are in different directories, falling back to sequential execution');
+      }
+      return await this.executeTestsSequential(tests);
+    }
+
+    // Run all tests in one Playwright invocation with workers
+    const testFiles = tests.map(t => t.testPath).join(' ');
+    const command = `npx playwright test ${testFiles} --workers=${workers} --reporter=json --reporter=list`;
+
+    if (this.debug) {
+      console.log(`[TestExecutor] Running parallel test command: ${command}`);
+    }
+
+    try {
+      const { stdout, stderr } = await execAsync(command, {
+        timeout: 600000, // 10 minutes for parallel execution
+        env: {
+          ...process.env,
+          CI: 'true',
+        },
+        cwd: process.cwd(),
+      });
+
+      const output = stdout + stderr;
+
+      // Parse Playwright JSON output
+      let jsonResult: any = null;
+      try {
+        const jsonMatch = stdout.match(/\{[\s\S]*\}/);
+        if (jsonMatch) {
+          jsonResult = JSON.parse(jsonMatch[0]);
+        }
+      } catch {
+        // Fall back to parsing individual test results
+      }
+
+      // Map results back to test states
+      const results: ExtendedTestResult[] = [];
+      
+      for (const test of tests) {
+        const testFileName = path.basename(test.testPath);
+        let testResult: ExtendedTestResult;
+
+        // Try to find this test in Playwright's JSON output
+        if (jsonResult && Array.isArray(jsonResult.suites)) {
+          const testMatch = this.findTestInJsonResult(jsonResult, testFileName);
+          if (testMatch) {
+            testResult = {
+              testId: test.id,
+              success: testMatch.status === 'passed',
+              duration: testMatch.duration || 0,
+              output: testMatch.output || output,
+              artifacts: await this.getArtifacts(test),
+              failureDetails: testMatch.status !== 'passed' ? {
+                message: testMatch.error?.message,
+                stack: testMatch.error?.stack,
+              } : undefined,
+            };
+          } else {
+            // Fallback: create result from overall output
+            testResult = await this.runTest(test);
+          }
+        } else {
+          // Fallback: run test individually to get result
+          testResult = await this.runTest(test);
+        }
+
+        results.push(testResult);
+
+        // Update test state
+        test.lastResult = testResult;
+        test.status = testResult.success ? 'passing' : 'failing';
+        test.attempts++;
+      }
+
+      return {
+        total: results.length,
+        passed: results.filter(r => r.success).length,
+        failed: results.filter(r => !r.success).length,
+        results,
+      };
+    } catch (error: any) {
+      // If parallel execution fails, fall back to sequential
+      if (this.debug) {
+        console.log(`[TestExecutor] Parallel execution failed, falling back to sequential: ${error.message}`);
+      }
+      return await this.executeTestsSequential(tests);
+    }
+  }
+
+  /**
+   * Find test result in Playwright JSON output
+   */
+  private findTestInJsonResult(jsonResult: any, testFileName: string): any {
+    const findInSuites = (suites: any[]): any => {
+      for (const suite of suites) {
+        if (suite.specs) {
+          for (const spec of suite.specs) {
+            if (spec.file && spec.file.includes(testFileName)) {
+              if (spec.tests && spec.tests.length > 0) {
+                return spec.tests[0];
+              }
+            }
+          }
+        }
+        if (suite.suites) {
+          const found = findInSuites(suite.suites);
+          if (found) return found;
+        }
+      }
+      return null;
+    };
+
+    if (jsonResult.suites) {
+      return findInSuites(jsonResult.suites);
+    }
+    return null;
   }
 
   /**
