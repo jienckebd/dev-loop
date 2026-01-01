@@ -55,6 +55,130 @@ export interface PrdMetadata {
     externalModules?: string[];
     prds?: string[];
   };
+  product?: {
+    id: string;
+    version: string;
+    status: 'planning' | 'ready' | 'active' | 'blocked' | 'complete' | 'deprecated';
+    schemaOrg?: {
+      type: string;
+      additionalTypes?: string[];
+      properties?: Record<string, string>;
+    };
+    metadata?: {
+      author?: string;
+      created?: string;
+      modified?: string;
+      license?: string;
+      tags?: string[];
+      category?: string;
+    };
+  };
+  openapi?: {
+    specUrl?: string;
+    specPath?: string;
+    components?: {
+      schemas?: Record<string, any>;
+    };
+    schemasToImport?: string[];
+    fieldTypeMapping?: Record<string, string>;
+  };
+  entityGeneration?: {
+    entityType?: {
+      id: string;
+      label: string;
+      type: 'config' | 'content';
+      base?: string;
+      schemaOrg?: {
+        type: string;
+        subtype?: string;
+      };
+    };
+    bundles?: Array<{
+      schemaName: string;
+      bundleId: string;
+      label: string;
+      schemaOrg?: {
+        type: string;
+        properties?: Record<string, string>;
+      };
+    }>;
+    fieldMappings?: Record<string, any>;
+  };
+  schemaOrg?: {
+    namespace?: string;
+    primaryType?: string;
+    strategy?: 'manual' | 'ai_assisted' | 'auto';
+    aiProvider?: string;
+    typeMappings?: Record<string, any>;
+    propertyMappings?: Record<string, string>;
+    customVocabulary?: {
+      prefix: string;
+      namespace: string;
+      terms?: Array<{
+        id: string;
+        label: string;
+        subClassOf?: string;
+      }>;
+    };
+  };
+  validation?: {
+    criteriaFormat?: 'gherkin' | 'assertions' | 'custom';
+    globalRules?: Array<{
+      rule: string;
+      description: string;
+      test: string;
+    }>;
+    requirementTests?: Record<string, any>;
+    fieldValidation?: Record<string, any[]>;
+    integrationTests?: Array<{
+      name: string;
+      requirements: string[];
+      testSuite: string;
+    }>;
+  };
+  sync?: {
+    feeds?: Array<{
+      feedTypeId: string;
+      label: string;
+      importUrl: string;
+      schedule?: string;
+      fieldMappings?: Record<string, string>;
+    }>;
+    webhooks?: Array<{
+      id: string;
+      path: string;
+      events: Array<'create' | 'update' | 'delete'>;
+      targetEntity: string;
+      authentication?: {
+        type: string;
+        header?: string;
+      };
+    }>;
+    conflictResolution?: {
+      strategy?: 'last_write_wins' | 'server_wins' | 'client_wins' | 'manual';
+      notifyOnConflict?: boolean;
+    };
+  };
+  relationships?: {
+    dependsOn?: Array<{
+      prd: string;
+      reason: string;
+      waitForCompletion?: boolean;
+    }>;
+    dependedOnBy?: Array<{
+      prd: string;
+      features?: string[];
+    }>;
+    relatedTo?: Array<{
+      prd: string;
+      relationship: string;
+    }>;
+    entityRelationships?: Record<string, Array<{
+      targetType: string;
+      relationship: string;
+      cardinality: 'one_to_one' | 'one_to_many' | 'many_to_one' | 'many_to_many';
+    }>>;
+  };
   config?: Partial<Config>;
 }
 

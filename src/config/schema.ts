@@ -238,6 +238,169 @@ const configSchema = z.object({
     }).optional(),
     // NEW: Config overlay from PRD (merged at runtime)
     configOverlay: z.record(z.any()).optional(),
+    
+    // NEW: Product identity and Schema.org mapping
+    product: z.object({
+      id: z.string(),
+      version: z.string(),
+      status: z.enum(['planning', 'ready', 'active', 'blocked', 'complete', 'deprecated']),
+      schemaOrg: z.object({
+        type: z.string(),
+        additionalTypes: z.array(z.string()).optional(),
+        properties: z.record(z.string()).optional(),
+      }).optional(),
+      metadata: z.object({
+        author: z.string().optional(),
+        created: z.string().optional(),
+        modified: z.string().optional(),
+        license: z.string().optional(),
+        tags: z.array(z.string()).optional(),
+        category: z.string().optional(),
+      }).optional(),
+    }).optional(),
+    
+    // NEW: OpenAPI schema definition
+    openapi: z.object({
+      specUrl: z.string().url().optional(),
+      specPath: z.string().optional(),
+      components: z.object({
+        schemas: z.record(z.any()).optional(),
+      }).optional(),
+      schemasToImport: z.array(z.string()).optional(),
+      fieldTypeMapping: z.record(z.string(), z.string()).optional(),
+    }).optional(),
+    
+    // NEW: Entity generation templates
+    entityGeneration: z.object({
+      entityType: z.object({
+        id: z.string(),
+        label: z.string(),
+        type: z.enum(['config', 'content']),
+        base: z.string().optional(),
+        schemaOrg: z.object({
+          type: z.string(),
+          subtype: z.string().optional(),
+        }).optional(),
+      }).optional(),
+      bundles: z.array(z.object({
+        schemaName: z.string(),
+        bundleId: z.string(),
+        label: z.string(),
+        schemaOrg: z.object({
+          type: z.string(),
+          properties: z.record(z.string()).optional(),
+        }).optional(),
+      })).optional(),
+      fieldMappings: z.object({
+        global: z.record(z.object({
+          fieldName: z.string(),
+          fieldType: z.string(),
+          required: z.boolean().optional(),
+        })).optional(),
+      }).passthrough().optional(), // Allows bundle-specific mappings
+    }).optional(),
+    
+    // NEW: Schema.org mapping configuration
+    schemaOrg: z.object({
+      namespace: z.string().url().default('https://schema.org/'),
+      primaryType: z.string().optional(),
+      strategy: z.enum(['manual', 'ai_assisted', 'auto']).default('manual'),
+      aiProvider: z.string().optional(),
+      typeMappings: z.record(z.object({
+        type: z.string(),
+        subTypes: z.array(z.string()).optional(),
+        properties: z.record(z.string()).optional(),
+      })).optional(),
+      propertyMappings: z.record(z.string()).optional(),
+      customVocabulary: z.object({
+        prefix: z.string(),
+        namespace: z.string().url(),
+        terms: z.array(z.object({
+          id: z.string(),
+          label: z.string(),
+          subClassOf: z.string().optional(),
+        })).optional(),
+      }).optional(),
+    }).optional(),
+    
+    // NEW: Validation and acceptance criteria
+    validation: z.object({
+      criteriaFormat: z.enum(['gherkin', 'assertions', 'custom']).default('gherkin'),
+      globalRules: z.array(z.object({
+        rule: z.string(),
+        description: z.string(),
+        test: z.string(),
+      })).optional(),
+      requirementTests: z.record(z.object({
+        description: z.string(),
+        acceptance: z.array(z.object({
+          given: z.string().optional(),
+          when: z.string().optional(),
+          then: z.string().optional(),
+          and: z.string().optional(),
+        })).optional(),
+        assertions: z.array(z.any()).optional(),
+        testFile: z.string().optional(),
+      })).optional(),
+      fieldValidation: z.record(z.array(z.object({
+        constraint: z.string(),
+        when: z.string().optional(),
+        message: z.string().optional(),
+        pattern: z.string().optional(),
+      }))).optional(),
+      integrationTests: z.array(z.object({
+        name: z.string(),
+        requirements: z.array(z.string()),
+        testSuite: z.string(),
+      })).optional(),
+    }).optional(),
+    
+    // NEW: Sync and feed configuration
+    sync: z.object({
+      feeds: z.array(z.object({
+        feedTypeId: z.string(),
+        label: z.string(),
+        importUrl: z.string(),
+        schedule: z.string().optional(),
+        fieldMappings: z.record(z.string()).optional(),
+      })).optional(),
+      webhooks: z.array(z.object({
+        id: z.string(),
+        path: z.string(),
+        events: z.array(z.enum(['create', 'update', 'delete'])),
+        targetEntity: z.string(),
+        authentication: z.object({
+          type: z.string(),
+          header: z.string().optional(),
+        }).optional(),
+      })).optional(),
+      conflictResolution: z.object({
+        strategy: z.enum(['last_write_wins', 'server_wins', 'client_wins', 'manual']).default('last_write_wins'),
+        notifyOnConflict: z.boolean().default(false),
+      }).optional(),
+    }).optional(),
+    
+    // NEW: PRD relationships
+    relationships: z.object({
+      dependsOn: z.array(z.object({
+        prd: z.string(),
+        reason: z.string(),
+        waitForCompletion: z.boolean().default(false),
+      })).optional(),
+      dependedOnBy: z.array(z.object({
+        prd: z.string(),
+        features: z.array(z.string()).optional(),
+      })).optional(),
+      relatedTo: z.array(z.object({
+        prd: z.string(),
+        relationship: z.string(),
+      })).optional(),
+      entityRelationships: z.record(z.array(z.object({
+        targetType: z.string(),
+        relationship: z.string(),
+        cardinality: z.enum(['one_to_one', 'one_to_many', 'many_to_one', 'many_to_many']),
+      }))).optional(),
+    }).optional(),
   }).optional(),
 
   // Drupal-specific implementation configuration
