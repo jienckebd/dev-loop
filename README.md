@@ -2,6 +2,24 @@
 
 Autonomous development orchestrator that transforms PRDs into validated code through a continuous loop of AI code generation, test execution, and log analysis.
 
+## Table of Contents
+
+- [Documentation](#documentation)
+- [Core Concept](#core-concept)
+- [Operating Modes](#operating-modes)
+- [Quick Start](#quick-start)
+- [Configuration](#configuration)
+- [CLI Reference](#cli-reference)
+- [MCP Integration](#mcp-integration)
+- [Architecture](#architecture)
+- [Framework Plugins](#framework-plugins)
+- [AI-Enhanced Pattern Detection](#ai-enhanced-pattern-detection)
+- [Code Quality Scanning](#code-quality-scanning)
+- [File Structure](#file-structure)
+- [Troubleshooting](#troubleshooting)
+- [Development](#development)
+- [Roadmap](#roadmap)
+
 ## Documentation
 
 **For Users:** See [`docs/users/README.md`](docs/users/README.md) - Complete user documentation, CLI reference, and configuration guide.
@@ -59,7 +77,7 @@ flowchart LR
 
 **Key principle**: Every task bundles feature code + test code. The loop continues until all tests pass.
 
-## Two Operating Modes
+## Operating Modes
 
 ### Standard Mode (Default)
 
@@ -75,7 +93,7 @@ flowchart TB
 
 ### Contribution Mode
 
-Two-agent architecture for contributing to dev-loop itself:
+Two-agent architecture for contributing to dev-loop itself.
 
 ```mermaid
 flowchart TB
@@ -101,6 +119,48 @@ flowchart TB
 | Who implements | You | Inner agent |
 | Your role | Direct coding | Orchestration |
 | Code you edit | All files | Only `node_modules/dev-loop/` |
+
+#### Intervention Modes
+
+Control whether the inner agent requires approval:
+
+| Mode | Behavior |
+|------|----------|
+| `autonomous` | Fully automated |
+| `review` | Human approves each change |
+| `hybrid` | Auto for safe changes, review for risky (`delete`, `schema-change`) |
+
+#### CLI Commands
+
+| Command | Description |
+|---------|-------------|
+| `dev-loop contribution start --prd <path>` | Start contribution mode |
+| `dev-loop contribution status` | Check contribution mode status |
+| `dev-loop contribution stop` | Stop contribution mode |
+| `dev-loop contribution validate` | Validate contribution mode boundaries |
+| `dev-loop contribution boundaries` | List active boundaries |
+
+#### Workflow
+
+1. Start contribution mode (CLI or MCP)
+2. Create/update tasks via Task Master
+3. Monitor via `devloop_contribution_status` or `dev-loop contribution status`
+4. If inner agent stuck: enhance `node_modules/dev-loop/` code
+5. Build, commit, push dev-loop changes
+6. Validate improvements via metrics
+
+#### When to Enhance Dev-Loop vs Create Task
+
+| Scenario | Action |
+|----------|--------|
+| One-off bug fix | Create task |
+| Repeated pattern | Add to PatternLearningSystem |
+| Missing context | Enhance CodeContextProvider |
+| Better prompts | Update templates |
+
+**Keep dev-loop framework-agnostic.** Project-specific behavior goes in `devloop.config.js`, `.taskmaster/templates/`, or project rules.
+
+**Documentation:** See [`docs/contributing/`](docs/contributing/README.md) for complete contribution mode guide, state schema, and boundary enforcement.
 
 ## Quick Start
 
@@ -149,6 +209,11 @@ module.exports = {
 };
 ```
 
+**Advanced configuration:**
+- [AI Pattern Detection](#ai-enhanced-pattern-detection) — `aiPatterns` config for embeddings and LLM analysis
+- [Code Quality Scanning](#code-quality-scanning) — `scan` config for static analysis and tech debt
+- [Framework Plugins](#framework-plugins) — `framework` config for framework-specific behavior
+
 ## CLI Reference
 
 ### Core Commands
@@ -171,16 +236,6 @@ module.exports = {
 | `task-master parse-prd --input=<file>` | Create tasks from PRD |
 | `task-master add-task --prompt="..."` | Add single task |
 | `task-master set-status --id=<id> --status=done` | Update status |
-
-### Contribution Mode Commands
-
-| Command | Description |
-|---------|-------------|
-| `dev-loop contribution start --prd <path>` | Start contribution mode |
-| `dev-loop contribution status` | Check contribution mode status |
-| `dev-loop contribution stop` | Stop contribution mode |
-| `dev-loop contribution validate` | Validate contribution mode boundaries |
-| `dev-loop contribution boundaries` | List active boundaries |
 
 ### Debugging Commands
 
@@ -327,7 +382,7 @@ Dev-loop uses a plugin architecture to support different frameworks. Each plugin
 
 When `framework.type` is not specified in `devloop.config.js`, dev-loop auto-detects frameworks:
 
-1. Checks built-in plugins (Drupal, Django, React)
+1. Checks built-in plugins (Drupal, Django, React, Browser Extension)
 2. If multiple detected → creates `CompositePlugin`
 3. If single detected → uses that plugin
 4. If none detected → uses `GenericPlugin`
@@ -643,64 +698,6 @@ Each framework plugin provides its own code quality tools:
 | **React** | ESLint, TypeScript | npm audit | jscpd |
 | **Browser Extension** | ESLint, TypeScript | CSP validation | jscpd |
 
-## Intervention Modes
-
-Control whether the inner agent requires approval:
-
-| Mode | Behavior |
-|------|----------|
-| `autonomous` | Fully automated |
-| `review` | Human approves each change |
-| `hybrid` | Auto for safe changes, review for risky (`delete`, `schema-change`) |
-
-## Contribution Mode Details
-
-Contribution mode enables a two-agent architecture for contributing to dev-loop itself. See [`docs/contributing/CONTRIBUTION_MODE.md`](docs/contributing/CONTRIBUTION_MODE.md) for complete documentation.
-
-**Quick Start:**
-
-**CLI Mode:**
-```bash
-npx dev-loop contribution start --prd <path>
-npx dev-loop watch --until-complete
-npx dev-loop contribution status
-npx dev-loop contribution stop
-```
-
-**MCP Mode:**
-```typescript
-devloop_contribution_start(prd: "path/to/prd.md")
-devloop_contribution_status()
-devloop_contribution_stop()
-```
-
-**Outer agent responsibilities:**
-1. Start contribution mode (CLI or MCP)
-2. Create/update tasks via Task Master
-3. Monitor via `devloop_contribution_status` or `dev-loop contribution status`
-4. If inner agent stuck: enhance `node_modules/dev-loop/` code
-5. Build, commit, push dev-loop changes
-6. Validate improvements via metrics
-
-**What to add to dev-loop vs create as task:**
-
-| Scenario | Action |
-|----------|--------|
-| One-off bug fix | Create task |
-| Repeated pattern | Add to PatternLearningSystem |
-| Missing context | Enhance CodeContextProvider |
-| Better prompts | Update templates |
-
-**Keep dev-loop framework-agnostic.** Project-specific behavior goes in:
-- `devloop.config.js` — Hooks, log sources
-- `.taskmaster/templates/` — PRD templates
-- Project rules (CLAUDE.md, .cursorrules) — Injected into prompts
-
-**Documentation:**
-- [`docs/contributing/CONTRIBUTION_MODE.md`](docs/contributing/CONTRIBUTION_MODE.md) - Complete contribution mode guide
-- [`docs/contributing/CONTRIBUTION_STATE_SCHEMA.md`](docs/contributing/CONTRIBUTION_STATE_SCHEMA.md) - State file reference
-- [`docs/contributing/BOUNDARY_ENFORCEMENT.md`](docs/contributing/BOUNDARY_ENFORCEMENT.md) - Boundary validation implementation
-
 ## File Structure
 
 ```
@@ -712,7 +709,10 @@ project/
 │   └── docs/                   # PRDs
 ├── .devloop/
 │   ├── metrics.json            # Execution metrics
-│   └── patterns.json           # Learned patterns
+│   ├── patterns.json           # Learned patterns
+│   ├── embeddings.json         # Cached code embeddings (AI)
+│   ├── ai-feedback.json        # User feedback on recommendations
+│   └── scan-results/           # Code quality scan output
 ├── tests/playwright/           # Test specs
 └── test-results/               # Artifacts, screenshots
 ```
