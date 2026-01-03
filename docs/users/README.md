@@ -130,6 +130,24 @@ module.exports = {
 | `dev-loop validate` | Check config/environment |
 | `dev-loop validate-prd <prd-path>` | Validate PRD frontmatter |
 
+### Code Quality & AI Commands
+
+| Command | Description |
+|---------|-------------|
+| `dev-loop scan [--type TYPE]` | Run code quality scans |
+| `dev-loop recommend [--ai]` | Generate abstraction recommendations |
+| `dev-loop feedback <id> [--accept\|--reject]` | Provide feedback on AI recommendations |
+
+### Contribution Mode Commands
+
+| Command | Description |
+|---------|-------------|
+| `dev-loop contribution start --prd <path>` | Start contribution mode |
+| `dev-loop contribution status` | Check contribution mode status |
+| `dev-loop contribution stop` | Stop contribution mode |
+| `dev-loop contribution validate` | Validate contribution mode boundaries |
+| `dev-loop contribution boundaries` | List active boundaries |
+
 ## MCP Integration
 
 Both Task Master and Dev-Loop run as MCP servers for direct AI assistant integration.
@@ -164,7 +182,7 @@ Create `.cursor/mcp.json`:
 - Core: `devloop_run`, `devloop_status`, `devloop_prd`, `devloop_list_tasks`
 - Debug: `devloop_diagnose`, `devloop_trace`, `devloop_logs`, `devloop_metrics`
 - Control: `devloop_pause`, `devloop_resume`, `devloop_reset`, `devloop_validate`
-- Contribution: `devloop_contribution_start`, `devloop_contribution_status`, `devloop_contribution_stop`
+- Contribution: `devloop_contribution_start`, `devloop_contribution_status`, `devloop_contribution_stop`, `devloop_contribution_validate`, `devloop_contribution_boundaries`
 
 ### Common Workflows
 
@@ -246,6 +264,7 @@ Dev-loop uses a plugin architecture to support different frameworks. Each plugin
 | **drupal** | Drupal 10/11 with DDEV integration | Yes |
 | **django** | Django 5+ with Docker/DRF support | Yes |
 | **react** | React + TypeScript + Vite | Yes |
+| **browser-extension** | Chrome/Firefox extensions with manifest V3 | Yes |
 | **composite** | Multi-framework projects (auto-created) | No |
 | **generic** | Fallback for any project | Fallback only |
 

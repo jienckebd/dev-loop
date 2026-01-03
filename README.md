@@ -319,6 +319,7 @@ Dev-loop uses a plugin architecture to support different frameworks. Each plugin
 | **drupal** | Drupal 10/11 with DDEV integration | Yes |
 | **django** | Django 5+ with Docker/DRF support | Yes |
 | **react** | React + TypeScript + Vite | Yes |
+| **browser-extension** | Chrome/Firefox extensions with manifest V3 | Yes |
 | **composite** | Multi-framework projects (auto-created) | No |
 | **generic** | Fallback for any project | Fallback only |
 
@@ -439,6 +440,52 @@ interface FrameworkPlugin {
   // Commands
   getCacheCommand?(): string | undefined;
   getBuildCommand?(): string | undefined;
+
+  // Code Quality (optional)
+  getCodeQualityTools?(): CodeQualityTool[];
+  getTechDebtIndicators?(): TechDebtIndicator[];
+  getRecommendationPatterns?(): RecommendationPattern[];
+}
+```
+
+### Supporting Types
+
+```typescript
+/** Framework-specific code quality tool */
+interface CodeQualityTool {
+  name: string;                    // e.g., 'phpstan', 'eslint', 'mypy'
+  purpose: 'static-analysis' | 'duplicate-detection' | 'security' |
+           'complexity' | 'tech-debt' | 'dependency-audit';
+  command: string;                 // Command to run the tool
+  outputFormat: 'json' | 'xml' | 'text' | 'sarif';
+  installCommand?: string;         // How to install the tool
+  configPath?: string;             // Path to tool config file
+  description: string;
+}
+
+/** Tech debt pattern for regex-based detection */
+interface TechDebtIndicator {
+  pattern: string;                 // Regex pattern to match
+  severity: 'low' | 'medium' | 'high';
+  category: 'deprecated-api' | 'todo' | 'fixme' | 'hack' |
+            'obsolete-pattern' | 'missing-test' | 'security' | 'tech-debt';
+  description: string;
+  remediation?: string;            // Suggested fix
+}
+
+/** Abstraction pattern detected in codebase */
+interface AbstractionPattern {
+  id: string;
+  type: 'code-block' | 'config-structure' | 'class-pattern' |
+        'function-pattern' | 'plugin-pattern';
+  signature: string;
+  files: string[];
+  similarity: number;              // 0-1 score
+  occurrences: number;
+  suggestedAbstraction: 'plugin' | 'config-schema' | 'base-class' |
+                        'service' | 'utility' | 'entity-type' | 'field';
+  suggestedName?: string;
+  evidence: string[];
 }
 ```
 
@@ -458,10 +505,19 @@ Dev-loop includes AI-powered pattern detection for identifying abstraction oppor
 
 ### Configuration
 
+> **Note:** Pattern detection uses `aiPatterns` config (separate from code generation `ai` config).
+
 ```javascript
 // devloop.config.js
 module.exports = {
+  // AI for code generation (separate from pattern detection)
   ai: {
+    provider: 'anthropic',
+    model: 'claude-sonnet-4-20250514',
+  },
+
+  // AI for pattern detection and abstraction recommendations
+  aiPatterns: {
     enabled: true,
     provider: 'auto',  // 'anthropic' | 'openai' | 'ollama' | 'auto'
     providers: {
@@ -476,6 +532,7 @@ module.exports = {
     },
     costs: {
       maxTokensPerScan: 100000,
+      maxRequestsPerScan: 50,
       enableCaching: true,
       batchSize: 10,
     },
@@ -522,6 +579,69 @@ dev-loop feedback rec-456 --reject --notes "Pattern is intentional"
 - **Caching**: Embeddings cached in `.devloop/embeddings.json`
 - **Batching**: Efficient API calls with configurable batch sizes
 - **Incremental scans**: Only analyze changed files
+
+## Code Quality Scanning
+
+Dev-loop includes framework-aware code quality scanning for static analysis, security, and tech debt detection.
+
+### Configuration
+
+```javascript
+// devloop.config.js
+module.exports = {
+  scan: {
+    enabled: true,
+    schedule: 'manual',           // 'manual' | 'pre-commit' | 'nightly'
+    tools: {
+      staticAnalysis: true,
+      duplicateDetection: true,
+      security: true,
+      complexity: false,
+      techDebt: true,
+    },
+    thresholds: {
+      maxDuplicateLines: 10,
+      maxComplexity: 15,
+      failOnSecurityVulnerability: true,
+    },
+    output: {
+      path: '.devloop/scan-results',
+      formats: ['json', 'markdown'],  // Also supports 'sarif'
+    },
+    taskCreation: {
+      enabled: false,             // Auto-create tasks from findings
+      minSeverity: 'warning',     // 'info' | 'warning' | 'error'
+      groupBy: 'rule',            // 'file' | 'rule' | 'severity'
+    },
+  },
+};
+```
+
+### Usage
+
+```bash
+# Run all enabled scans
+dev-loop scan
+
+# Run specific scan type
+dev-loop scan --type static-analysis
+dev-loop scan --type security
+dev-loop scan --type tech-debt
+
+# Output to specific format
+dev-loop scan --format sarif
+```
+
+### Framework-Specific Tools
+
+Each framework plugin provides its own code quality tools:
+
+| Framework | Static Analysis | Security | Duplicate Detection |
+|-----------|-----------------|----------|---------------------|
+| **Drupal** | PHPStan, PHPCS | Security Advisories | PHPCPD |
+| **Django** | mypy, pylint | Bandit, Safety | - |
+| **React** | ESLint, TypeScript | npm audit | jscpd |
+| **Browser Extension** | ESLint, TypeScript | CSP validation | jscpd |
 
 ## Intervention Modes
 
