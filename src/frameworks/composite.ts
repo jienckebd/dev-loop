@@ -1,4 +1,4 @@
-import { FrameworkPlugin, FrameworkDefaultConfig, CodeChanges } from './interface';
+import { FrameworkPlugin, FrameworkDefaultConfig, CodeChanges, CodeQualityTool, TechDebtIndicator } from './interface';
 import { DrupalPlugin } from './drupal';
 import { DjangoPlugin } from './django';
 import { ReactPlugin } from './react';
@@ -286,5 +286,39 @@ ${sections}
    */
   hasFramework(name: string): boolean {
     return this.childPlugins.some(p => p.name === name);
+  }
+
+  getCodeQualityTools(): CodeQualityTool[] {
+    // Merge all code quality tools from child plugins
+    const tools: CodeQualityTool[] = [];
+    const toolNames = new Set<string>();
+
+    for (const plugin of this.childPlugins) {
+      if (plugin.getCodeQualityTools) {
+        const pluginTools = plugin.getCodeQualityTools();
+        for (const tool of pluginTools) {
+          // Avoid duplicates by name
+          if (!toolNames.has(tool.name)) {
+            tools.push(tool);
+            toolNames.add(tool.name);
+          }
+        }
+      }
+    }
+
+    return tools;
+  }
+
+  getTechDebtIndicators(): TechDebtIndicator[] {
+    // Merge all tech debt indicators from child plugins
+    const indicators: TechDebtIndicator[] = [];
+
+    for (const plugin of this.childPlugins) {
+      if (plugin.getTechDebtIndicators) {
+        indicators.push(...plugin.getTechDebtIndicators());
+      }
+    }
+
+    return indicators;
   }
 }

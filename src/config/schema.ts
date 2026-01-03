@@ -858,6 +858,71 @@ const configSchema = z.object({
     // Test template with placeholders
     template: z.string().optional(),
   }).optional(),
+
+  // Code quality scanning configuration
+  scan: z.object({
+    enabled: z.boolean().default(true),
+    schedule: z.enum(['manual', 'pre-commit', 'nightly']).default('manual'),
+    tools: z.object({
+      staticAnalysis: z.boolean().default(true),
+      duplicateDetection: z.boolean().default(true),
+      security: z.boolean().default(true),
+      complexity: z.boolean().default(false),
+      techDebt: z.boolean().default(true),
+    }).optional(),
+    thresholds: z.object({
+      maxDuplicateLines: z.number().default(10),
+      maxComplexity: z.number().default(15),
+      failOnSecurityVulnerability: z.boolean().default(true),
+    }).optional(),
+    output: z.object({
+      path: z.string().default('.devloop/scan-results'),
+      formats: z.array(z.enum(['json', 'markdown', 'sarif'])).default(['json', 'markdown']),
+    }).optional(),
+    taskCreation: z.object({
+      enabled: z.boolean().default(false),
+      minSeverity: z.enum(['info', 'warning', 'error']).default('warning'),
+      groupBy: z.enum(['file', 'rule', 'severity']).default('rule'),
+    }).optional(),
+  }).optional(),
+
+  // AI pattern detection configuration
+  aiPatterns: z.object({
+    enabled: z.boolean().default(false),
+    provider: z.enum(['anthropic', 'openai', 'ollama', 'auto']).default('auto'),
+    providers: z.object({
+      anthropic: z.object({
+        apiKey: z.string().optional(),
+        model: z.string().default('claude-3-haiku-20240307'),
+        embeddingModel: z.string().default('voyage-3'),
+      }).optional(),
+      openai: z.object({
+        apiKey: z.string().optional(),
+        model: z.string().default('gpt-4o-mini'),
+        embeddingModel: z.string().default('text-embedding-3-small'),
+      }).optional(),
+      ollama: z.object({
+        baseUrl: z.string().default('http://localhost:11434'),
+        model: z.string().default('codellama'),
+        embeddingModel: z.string().default('nomic-embed-text'),
+      }).optional(),
+    }).optional(),
+    analysis: z.object({
+      mode: z.enum(['embeddings-only', 'llm-only', 'hybrid']).default('hybrid'),
+      similarityThreshold: z.number().min(0).max(1).default(0.85),
+      minOccurrences: z.number().int().min(2).default(3),
+    }).optional(),
+    costs: z.object({
+      maxTokensPerScan: z.number().int().default(100000),
+      maxRequestsPerScan: z.number().int().default(50),
+      enableCaching: z.boolean().default(true),
+      batchSize: z.number().int().default(10),
+    }).optional(),
+    learning: z.object({
+      enabled: z.boolean().default(false),
+      feedbackFile: z.string().default('.devloop/ai-feedback.json'),
+    }).optional(),
+  }).optional(),
 });
 
 export type Config = z.infer<typeof configSchema>;

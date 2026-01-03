@@ -193,6 +193,14 @@ module.exports = {
 | `dev-loop validate` | Check config/environment |
 | `dev-loop validate-prd <prd-path>` | Validate PRD frontmatter against schema |
 
+### Code Quality & AI Commands
+
+| Command | Description |
+|---------|-------------|
+| `dev-loop scan [--type TYPE]` | Run code quality scans |
+| `dev-loop recommend [--ai]` | Generate abstraction recommendations |
+| `dev-loop feedback <id> [--accept\|--reject]` | Provide feedback on AI recommendations |
+
 ## MCP Integration
 
 Both Task Master and Dev-Loop run as MCP servers for direct AI assistant integration.
@@ -434,7 +442,86 @@ interface FrameworkPlugin {
 }
 ```
 
-See `src/frameworks/interface.ts` for full interface definition and examples in `src/frameworks/drupal/`, `src/frameworks/django/`, and `src/frameworks/react/`.
+See `src/frameworks/interface.ts` for full interface definition and examples in `src/frameworks/drupal/`, `src/frameworks/django/`, `src/frameworks/react/`, and `src/frameworks/browser-extension/`.
+
+## AI-Enhanced Pattern Detection
+
+Dev-loop includes AI-powered pattern detection for identifying abstraction opportunities and code quality improvements.
+
+### Features
+
+- **Semantic Code Analysis**: Uses embeddings to find functionally similar code blocks
+- **Pattern Clustering**: Groups similar patterns across files for abstraction recommendations
+- **LLM Analysis**: Deep analysis of patterns for implementation suggestions
+- **Feedback Learning**: Learns from user feedback to improve future recommendations
+- **Framework-Specific**: Tailored recommendations for Drupal, Django, React, and Browser Extensions
+
+### Configuration
+
+```javascript
+// devloop.config.js
+module.exports = {
+  ai: {
+    enabled: true,
+    provider: 'auto',  // 'anthropic' | 'openai' | 'ollama' | 'auto'
+    providers: {
+      anthropic: { apiKey: process.env.ANTHROPIC_API_KEY },
+      openai: { apiKey: process.env.OPENAI_API_KEY },
+      ollama: { baseUrl: 'http://localhost:11434' },
+    },
+    analysis: {
+      mode: 'hybrid',           // 'embeddings-only' | 'llm-only' | 'hybrid'
+      similarityThreshold: 0.85,
+      minOccurrences: 3,
+    },
+    costs: {
+      maxTokensPerScan: 100000,
+      enableCaching: true,
+      batchSize: 10,
+    },
+    learning: {
+      enabled: true,
+      feedbackFile: '.devloop/ai-feedback.json',
+    },
+  },
+};
+```
+
+### Usage
+
+```bash
+# Run AI-enhanced pattern detection
+dev-loop recommend --ai
+
+# Use embeddings only (cheaper, faster)
+dev-loop recommend --ai --ai-mode embeddings-only
+
+# Full LLM analysis (more accurate, higher cost)
+dev-loop recommend --ai --ai-mode llm-only
+
+# Incremental scan (only changed files)
+dev-loop recommend --ai --incremental
+
+# Provide feedback on a recommendation
+dev-loop feedback rec-123 --accept
+dev-loop feedback rec-456 --reject --notes "Pattern is intentional"
+```
+
+### Abstraction Types
+
+| Framework | Recommended Abstractions |
+|-----------|-------------------------|
+| **Drupal** | Plugins, config schemas, entity types, fields, services |
+| **Django** | Base serializers, viewsets, abstract models, services |
+| **React** | Custom hooks, HOCs, context providers, utility functions |
+| **Browser Extension** | Message handlers, content script utilities, background services |
+
+### Cost Controls
+
+- **Token limits**: Set maximum tokens per scan
+- **Caching**: Embeddings cached in `.devloop/embeddings.json`
+- **Batching**: Efficient API calls with configurable batch sizes
+- **Incremental scans**: Only analyze changed files
 
 ## Intervention Modes
 
@@ -570,6 +657,9 @@ npm test             # Test
 - MCP integration (Task Master + Dev-Loop)
 - Contribution mode with boundary enforcement
 - Unified contribution mode rules and state management
+- **AI-enhanced pattern detection** (embeddings, LLM analysis, feedback learning)
+- **Code quality scanning** (static analysis, duplicate detection, security, tech debt)
+- **Abstraction recommendations** (framework-specific suggestions for DRY improvements)
 
 ### In Progress
 - Smart scheduling with dependency resolution

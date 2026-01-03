@@ -14,6 +14,124 @@ export interface CodeChanges {
 }
 
 /**
+ * Code quality tool definition for framework-specific scanning
+ */
+export interface CodeQualityTool {
+  /** Tool name (e.g., 'phpstan', 'eslint', 'mypy') */
+  name: string;
+  /** Purpose of the tool */
+  purpose: 'static-analysis' | 'duplicate-detection' | 'security' |
+           'complexity' | 'tech-debt' | 'dependency-audit';
+  /** Command to run the tool */
+  command: string;
+  /** Output format expected from the tool */
+  outputFormat: 'json' | 'xml' | 'text' | 'sarif';
+  /** Command to install the tool (optional) */
+  installCommand?: string;
+  /** Path to tool configuration file (optional) */
+  configPath?: string;
+  /** Human-readable description of the tool */
+  description: string;
+}
+
+/**
+ * Tech debt indicator pattern for regex-based detection
+ */
+export interface TechDebtIndicator {
+  /** Regex pattern to match in code */
+  pattern: string;
+  /** Severity level */
+  severity: 'low' | 'medium' | 'high';
+  /** Category of tech debt */
+  category: 'deprecated-api' | 'todo' | 'fixme' | 'hack' |
+            'obsolete-pattern' | 'missing-test' | 'security' | 'tech-debt';
+  /** Description of the issue */
+  description: string;
+  /** Suggested remediation (optional) */
+  remediation?: string;
+}
+
+/**
+ * Abstraction pattern detected in codebase
+ */
+export interface AbstractionPattern {
+  /** Unique identifier for this pattern */
+  id: string;
+  /** Type of pattern */
+  type: 'code-block' | 'config-structure' | 'class-pattern' | 'function-pattern' | 'plugin-pattern';
+  /** Signature/identifier of the pattern */
+  signature: string;
+  /** Files containing this pattern */
+  files: string[];
+  /** Specific locations in files */
+  locations: Array<{ file: string; startLine: number; endLine: number }>;
+  /** Similarity score (0-1) */
+  similarity: number;
+  /** Number of occurrences */
+  occurrences: number;
+  /** Suggested abstraction type */
+  suggestedAbstraction: 'plugin' | 'config-schema' | 'base-class' | 'service' | 'utility' | 'entity-type' | 'field';
+  /** Suggested name for the abstraction */
+  suggestedName?: string;
+  /** Evidence supporting this pattern */
+  evidence: string[];
+}
+
+/**
+ * Plugin recommendation for new patterns/config schemas
+ */
+export interface PluginRecommendation {
+  /** Type of recommendation */
+  type: 'error-pattern' | 'config-schema' | 'new-plugin' | 'abstraction-pattern';
+  /** What triggered this recommendation */
+  trigger: string;
+  /** Suggested improvement */
+  suggestion: string;
+  /** Evidence supporting the recommendation */
+  evidence: string[];
+  /** Priority level */
+  priority: 'low' | 'medium' | 'high';
+}
+
+/**
+ * Abstraction recommendation extending PluginRecommendation
+ */
+export interface AbstractionRecommendation extends PluginRecommendation {
+  type: 'abstraction-pattern';
+  /** The detected pattern */
+  pattern: AbstractionPattern;
+  /** Implementation details */
+  implementation: {
+    type: 'plugin' | 'config-schema' | 'base-class' | 'service' | 'utility' | 'entity-type' | 'field';
+    name: string;
+    description: string;
+    example?: string;
+  };
+  /** Impact assessment */
+  impact: {
+    codeReduction: number;
+    filesAffected: number;
+    maintenanceBenefit: 'low' | 'medium' | 'high';
+  };
+}
+
+/**
+ * Pattern for generating recommendations
+ */
+export interface RecommendationPattern {
+  /** Pattern identifier */
+  id: string;
+  /** Regex pattern to match */
+  pattern: string;
+  /** Type of recommendation this pattern generates */
+  recommendationType: 'error-pattern' | 'config-schema' | 'new-plugin';
+  /** Description of what this pattern detects */
+  description: string;
+  /** Priority when matched */
+  priority: 'low' | 'medium' | 'high';
+}
+
+/**
  * Framework Plugin Interface
  *
  * Defines the contract for framework-specific functionality in dev-loop.
@@ -153,6 +271,29 @@ export interface FrameworkPlugin {
    * @example 'npm run build' for Next.js
    */
   getBuildCommand?(): string | undefined;
+
+  // ===== Code Quality Scanning (Optional) =====
+
+  /**
+   * Get framework-specific code quality tools.
+   * Returns array of tools that can be run for static analysis, security scanning, etc.
+   * @returns Array of code quality tool definitions
+   */
+  getCodeQualityTools?(): CodeQualityTool[];
+
+  /**
+   * Get tech debt indicators for regex-based pattern matching.
+   * These patterns are scanned across the codebase to detect deprecated APIs, TODOs, etc.
+   * @returns Array of tech debt indicator patterns
+   */
+  getTechDebtIndicators?(): TechDebtIndicator[];
+
+  /**
+   * Get recommendation patterns for suggesting new plugins/config schemas.
+   * These patterns analyze codebase to suggest improvements.
+   * @returns Array of recommendation patterns
+   */
+  getRecommendationPatterns?(): RecommendationPattern[];
 }
 
 /**

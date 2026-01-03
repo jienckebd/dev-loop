@@ -1,7 +1,7 @@
 import * as fs from 'fs-extra';
 import * as path from 'path';
 import { z } from 'zod';
-import { FrameworkPlugin, FrameworkDefaultConfig, CodeChanges } from '../interface';
+import { FrameworkPlugin, FrameworkDefaultConfig, CodeChanges, CodeQualityTool, TechDebtIndicator } from '../interface';
 
 /**
  * React/Vite Framework Plugin
@@ -396,5 +396,133 @@ For LARGE TypeScript/React files (over 100 lines), use SEARCH/REPLACE patches:
     return guidance.length > 0
       ? '\n\n**React-Specific Guidance:**\n' + guidance.map(g => `- ${g}`).join('\n')
       : '';
+  }
+
+  getCodeQualityTools(): CodeQualityTool[] {
+    return [
+      // Static Analysis
+      {
+        name: 'eslint',
+        purpose: 'static-analysis',
+        command: 'npx eslint src --format json --max-warnings 0',
+        outputFormat: 'json',
+        description: 'ESLint with TypeScript and React plugins',
+      },
+      {
+        name: 'typescript',
+        purpose: 'static-analysis',
+        command: 'npx tsc --noEmit --pretty false 2>&1',
+        outputFormat: 'text',
+        description: 'TypeScript strict type checking',
+      },
+      // Duplicate Detection
+      {
+        name: 'jscpd',
+        purpose: 'duplicate-detection',
+        command: 'npx jscpd src --reporters json --output .jscpd --min-lines 10 --min-tokens 50',
+        outputFormat: 'json',
+        installCommand: 'npm install -D jscpd',
+        description: 'JavaScript/TypeScript copy-paste detector',
+      },
+      // Security
+      {
+        name: 'npm-audit',
+        purpose: 'security',
+        command: 'npm audit --json',
+        outputFormat: 'json',
+        description: 'npm dependency vulnerability audit',
+      },
+      // Complexity
+      {
+        name: 'complexity-report',
+        purpose: 'complexity',
+        command: 'npx cr src --format json --maxcyc 15',
+        outputFormat: 'json',
+        installCommand: 'npm install -D complexity-report',
+        description: 'JavaScript/TypeScript complexity analysis',
+      },
+      // Bundle Analysis (React-specific)
+      {
+        name: 'bundle-analyzer',
+        purpose: 'tech-debt',
+        command: 'npm run build && npx source-map-explorer dist/assets/*.js --json',
+        outputFormat: 'json',
+        installCommand: 'npm install -D source-map-explorer',
+        description: 'Bundle size and dependency analysis',
+      },
+    ];
+  }
+
+  getTechDebtIndicators(): TechDebtIndicator[] {
+    return [
+      // React 19 patterns
+      {
+        pattern: 'useEffect\\(\\(\\)\\s*=>\\s*\\{[^}]*fetch',
+        severity: 'medium',
+        category: 'obsolete-pattern',
+        description: 'Data fetching in useEffect - consider React Query or RSC',
+        remediation: 'Use @tanstack/react-query for data fetching',
+      },
+      {
+        pattern: 'forwardRef',
+        severity: 'low',
+        category: 'obsolete-pattern',
+        description: 'forwardRef deprecated in React 19',
+        remediation: 'Pass ref as a prop directly in React 19+',
+      },
+      // State management
+      {
+        pattern: 'useState.*useState.*useState.*useState',
+        severity: 'medium',
+        category: 'obsolete-pattern',
+        description: 'Multiple useState calls - consider useReducer or Zustand',
+        remediation: 'Consolidate related state with useReducer or Zustand store',
+      },
+      {
+        pattern: 'useContext.*useContext.*useContext',
+        severity: 'low',
+        category: 'obsolete-pattern',
+        description: 'Multiple useContext calls - consider Zustand',
+        remediation: 'Use Zustand store for complex state',
+      },
+      // Performance
+      {
+        pattern: 'React\\.memo\\(.*\\)',
+        severity: 'low',
+        category: 'obsolete-pattern',
+        description: 'React.memo may be unnecessary with React Compiler',
+        remediation: 'React 19 compiler auto-memoizes - test without memo',
+      },
+      // Zustand patterns
+      {
+        pattern: 'create\\(\\(set\\)\\s*=>.*set\\({.*}\\)',
+        severity: 'low',
+        category: 'obsolete-pattern',
+        description: 'Zustand without immer - mutations require spread',
+        remediation: 'Consider using immer middleware for complex state',
+      },
+      // TanStack Query patterns
+      {
+        pattern: 'useQuery\\([\'"][^\'"]+[\'"]',
+        severity: 'medium',
+        category: 'obsolete-pattern',
+        description: 'String query key - use array keys',
+        remediation: 'Use array query keys: useQuery({ queryKey: ["users", id] })',
+      },
+      // General
+      {
+        pattern: 'any(?!thing|where|one)',
+        severity: 'medium',
+        category: 'tech-debt',
+        description: 'TypeScript any type usage',
+        remediation: 'Replace with proper types or unknown',
+      },
+      {
+        pattern: '// TODO|// FIXME|// HACK',
+        severity: 'low',
+        category: 'todo',
+        description: 'TODO/FIXME/HACK comment',
+      },
+    ];
   }
 }

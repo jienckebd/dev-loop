@@ -25,6 +25,9 @@ import { contributionCommand } from './cli/commands/contribution';
 import { evolveCommand } from './cli/commands/evolve';
 import { prdCommand } from './cli/commands/prd';
 import { validatePrdCommand } from './cli/commands/validate-prd';
+import { scanCommand } from './cli/commands/scan';
+import { recommendCommand } from './cli/commands/recommend';
+import { feedbackCommand } from './cli/commands/feedback';
 
 const program = new Command();
 
@@ -307,6 +310,72 @@ program
       prd: prdPath,
       schema: options.schema,
       verbose: options.verbose,
+    });
+  });
+
+program
+  .command('scan')
+  .description('Run code quality scans')
+  .option('-c, --config <path>', 'Path to config file', 'devloop.config.js')
+  .option('--type <type>', 'Scan type: all, static-analysis, duplicate-detection, security, complexity, tech-debt', 'all')
+  .option('--output <format>', 'Output format: console, json, markdown', 'console')
+  .option('--create-tasks', 'Create fix tasks from issues')
+  .option('--min-severity <level>', 'Minimum severity: info, warning, error', 'info')
+  .action(async (options) => {
+    await scanCommand({
+      type: options.type,
+      output: options.output,
+      createTasks: options.createTasks,
+      minSeverity: options.minSeverity,
+      config: options.config,
+    });
+  });
+
+program
+  .command('recommend')
+  .description('Generate plugin/config recommendations')
+  .option('-c, --config <path>', 'Path to config file', 'devloop.config.js')
+  .option('--source <source>', 'Source: errors, codebase, both', 'both')
+  .option('--output <format>', 'Output format: console, json', 'console')
+  .option('--apply', 'Auto-apply recommendations to config')
+  .option('--ai', 'Enable AI-enhanced pattern detection')
+  .option('--ai-mode <mode>', 'AI mode: embeddings-only, llm-only, hybrid', 'hybrid')
+  .option('--similarity <threshold>', 'Similarity threshold for clustering (0-1)', (v) => parseFloat(v))
+  .option('--incremental', 'Only analyze files changed since last scan')
+  .option('--full-scan', 'Force full scan ignoring cache')
+  .option('--max-tokens <limit>', 'Maximum tokens to use for this scan', (v) => parseInt(v, 10))
+  .option('--include-abstraction', 'Include abstraction pattern recommendations')
+  .action(async (options) => {
+    await recommendCommand({
+      source: options.source,
+      output: options.output,
+      applyToConfig: options.apply,
+      config: options.config,
+      ai: options.ai,
+      aiMode: options.aiMode,
+      similarity: options.similarity,
+      incremental: options.incremental,
+      fullScan: options.fullScan,
+      maxTokens: options.maxTokens,
+      includeAbstraction: options.includeAbstraction,
+    });
+  });
+
+program
+  .command('feedback <recommendation-id>')
+  .description('Provide feedback on AI recommendations')
+  .option('-c, --config <path>', 'Path to config file', 'devloop.config.js')
+  .option('--accept', 'Mark recommendation as accepted')
+  .option('--reject', 'Mark recommendation as rejected')
+  .option('--notes <notes>', 'Add notes about the recommendation')
+  .option('--implementation <code>', 'Provide actual implementation (marks as modified)')
+  .action(async (recommendationId, options) => {
+    await feedbackCommand(recommendationId, {
+      accept: options.accept,
+      reject: options.reject,
+      notes: options.notes,
+      implementation: options.implementation,
+      config: options.config,
     });
   });
 

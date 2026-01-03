@@ -1,7 +1,7 @@
 import * as fs from 'fs-extra';
 import * as path from 'path';
 import { z } from 'zod';
-import { FrameworkPlugin, FrameworkDefaultConfig, CodeChanges } from '../interface';
+import { FrameworkPlugin, FrameworkDefaultConfig, CodeChanges, CodeQualityTool, TechDebtIndicator } from '../interface';
 
 /**
  * Drupal Framework Plugin
@@ -342,5 +342,73 @@ When task details specify an EXACT file path to create (e.g., "Create config/def
     return guidance.length > 0
       ? '\n\n**Drupal-Specific Guidance:**\n' + guidance.map(g => `- ${g}`).join('\n')
       : '';
+  }
+
+  getCodeQualityTools(): CodeQualityTool[] {
+    return [
+      {
+        name: 'phpstan',
+        purpose: 'static-analysis',
+        command: 'vendor/bin/phpstan analyse docroot/modules/share --level 6 --error-format=json',
+        outputFormat: 'json',
+        installCommand: 'composer require --dev phpstan/phpstan phpstan/phpstan-drupal',
+        description: 'PHP Static Analysis Tool with Drupal support',
+      },
+      {
+        name: 'phpcpd',
+        purpose: 'duplicate-detection',
+        command: 'vendor/bin/phpcpd docroot/modules/share --min-lines 5',
+        outputFormat: 'text',
+        installCommand: 'composer require --dev sebastian/phpcpd',
+        description: 'PHP Copy/Paste Detector',
+      },
+      {
+        name: 'drupal-check',
+        purpose: 'tech-debt',
+        command: 'vendor/bin/drupal-check -d docroot/modules/share',
+        outputFormat: 'text',
+        installCommand: 'composer require --dev mglaman/drupal-check',
+        description: 'Drupal deprecation and upgrade checker',
+      },
+      {
+        name: 'composer-audit',
+        purpose: 'security',
+        command: 'composer audit --format=json',
+        outputFormat: 'json',
+        description: 'Composer dependency security audit',
+      },
+    ];
+  }
+
+  getTechDebtIndicators(): TechDebtIndicator[] {
+    return [
+      {
+        pattern: 'drupal_set_message',
+        severity: 'high',
+        category: 'deprecated-api',
+        description: 'drupal_set_message() deprecated in D9+',
+        remediation: 'Use \\Drupal::messenger()->addMessage()',
+      },
+      {
+        pattern: 'db_query|db_select',
+        severity: 'high',
+        category: 'deprecated-api',
+        description: 'db_query() and db_select() deprecated in D9+',
+        remediation: 'Use \\Drupal::database()',
+      },
+      {
+        pattern: '\\Drupal::[a-zA-Z]+\\(\\)',
+        severity: 'low',
+        category: 'obsolete-pattern',
+        description: 'Static service call - consider dependency injection',
+        remediation: 'Inject service via constructor instead of static call',
+      },
+      {
+        pattern: '@TODO|@FIXME|# TODO|# FIXME',
+        severity: 'low',
+        category: 'todo',
+        description: 'TODO/FIXME comment',
+      },
+    ];
   }
 }

@@ -4,6 +4,7 @@ import { FrameworkPlugin, PluginManifest, FrameworkDefaultConfig } from './inter
 import { DrupalPlugin } from './drupal';
 import { DjangoPlugin } from './django';
 import { ReactPlugin } from './react';
+import { BrowserExtensionPlugin } from './browser-extension';
 import { CompositePlugin } from './composite';
 import { GenericPlugin } from './generic';
 
@@ -12,6 +13,7 @@ export * from './interface';
 export { DrupalPlugin } from './drupal';
 export { DjangoPlugin } from './django';
 export { ReactPlugin } from './react';
+export { BrowserExtensionPlugin } from './browser-extension';
 export { CompositePlugin } from './composite';
 export { GenericPlugin } from './generic';
 
@@ -23,6 +25,7 @@ const BUILTIN_FRAMEWORKS: Record<string, FrameworkPlugin> = {
   drupal: new DrupalPlugin(),
   django: new DjangoPlugin(),
   react: new ReactPlugin(),
+  'browser-extension': new BrowserExtensionPlugin(),
   generic: new GenericPlugin(),
 };
 

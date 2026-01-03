@@ -1,7 +1,7 @@
 import * as fs from 'fs-extra';
 import * as path from 'path';
 import { z } from 'zod';
-import { FrameworkPlugin, FrameworkDefaultConfig, CodeChanges } from '../interface';
+import { FrameworkPlugin, FrameworkDefaultConfig, CodeChanges, CodeQualityTool, TechDebtIndicator } from '../interface';
 
 /**
  * Django Framework Plugin
@@ -432,5 +432,136 @@ For LARGE Python files (over 100 lines), use SEARCH/REPLACE patches:
     return guidance.length > 0
       ? '\n\n**Django-Specific Guidance:**\n' + guidance.map(g => `- ${g}`).join('\n')
       : '';
+  }
+
+  getCodeQualityTools(): CodeQualityTool[] {
+    return [
+      // Static Analysis
+      {
+        name: 'mypy',
+        purpose: 'static-analysis',
+        command: 'mypy core services --config-file pyproject.toml',
+        outputFormat: 'text',
+        installCommand: 'pip install mypy django-stubs djangorestframework-stubs',
+        description: 'Python type checker with Django/DRF stubs',
+      },
+      {
+        name: 'ruff',
+        purpose: 'static-analysis',
+        command: 'ruff check . --output-format=json',
+        outputFormat: 'json',
+        installCommand: 'pip install ruff',
+        description: 'Fast Python linter (replaces flake8, isort, pylint)',
+      },
+      // Duplicate Detection
+      {
+        name: 'pylint-duplicate',
+        purpose: 'duplicate-detection',
+        command: 'pylint --disable=all --enable=duplicate-code core services --output-format=json',
+        outputFormat: 'json',
+        description: 'Pylint duplicate code detection',
+      },
+      // Security
+      {
+        name: 'bandit',
+        purpose: 'security',
+        command: 'bandit -r core services -f json',
+        outputFormat: 'json',
+        installCommand: 'pip install bandit',
+        description: 'Python security vulnerability scanner',
+      },
+      {
+        name: 'pip-audit',
+        purpose: 'dependency-audit',
+        command: 'pip-audit --format=json',
+        outputFormat: 'json',
+        installCommand: 'pip install pip-audit',
+        description: 'Python dependency vulnerability audit',
+      },
+      // Complexity
+      {
+        name: 'radon',
+        purpose: 'complexity',
+        command: 'radon cc core services -j -a',
+        outputFormat: 'json',
+        installCommand: 'pip install radon',
+        description: 'Python cyclomatic complexity analyzer',
+      },
+      // Tech Debt
+      {
+        name: 'django-upgrade',
+        purpose: 'tech-debt',
+        command: 'django-upgrade --target-version 5.0 --check $(find . -name "*.py" -not -path "./.venv/*")',
+        outputFormat: 'text',
+        installCommand: 'pip install django-upgrade',
+        description: 'Django deprecation checker and upgrader',
+      },
+    ];
+  }
+
+  getTechDebtIndicators(): TechDebtIndicator[] {
+    return [
+      // Django deprecations
+      {
+        pattern: 'from django.utils.encoding import force_text',
+        severity: 'high',
+        category: 'deprecated-api',
+        description: 'force_text deprecated in Django 4+',
+        remediation: 'Use force_str instead',
+      },
+      {
+        pattern: 'django.conf.urls.url\\(',
+        severity: 'high',
+        category: 'deprecated-api',
+        description: 'url() deprecated in Django 4+',
+        remediation: 'Use path() or re_path()',
+      },
+      // DRF patterns
+      {
+        pattern: '@api_view.*\\n.*permission_classes\\s*=\\s*\\[\\]',
+        severity: 'medium',
+        category: 'obsolete-pattern',
+        description: 'Empty permission_classes - should use AllowAny explicitly',
+        remediation: 'Use permission_classes=[AllowAny] for clarity',
+      },
+      // Celery patterns
+      {
+        pattern: '@shared_task.*\\n[^@]*(?!bind=True)',
+        severity: 'low',
+        category: 'obsolete-pattern',
+        description: 'Celery task without bind=True',
+        remediation: 'Consider using bind=True for self.retry() access',
+      },
+      // Django Channels
+      {
+        pattern: 'group_name.*:',
+        severity: 'high',
+        category: 'obsolete-pattern',
+        description: 'Channels group name with colon - not allowed',
+        remediation: 'Use dots/periods as separators in group names',
+      },
+      // LangChain patterns
+      {
+        pattern: 'from langchain\\.llms',
+        severity: 'medium',
+        category: 'deprecated-api',
+        description: 'langchain.llms deprecated',
+        remediation: 'Use langchain_openai, langchain_anthropic, etc.',
+      },
+      {
+        pattern: 'LLMChain|ConversationChain',
+        severity: 'medium',
+        category: 'deprecated-api',
+        description: 'LangChain legacy chains deprecated',
+        remediation: 'Use LCEL (LangChain Expression Language) or LangGraph',
+      },
+      // General
+      {
+        pattern: '@TODO|@FIXME|# TODO|# FIXME',
+        severity: 'low',
+        category: 'todo',
+        description: 'TODO/FIXME comment',
+      },
+    ];
   }
 }
