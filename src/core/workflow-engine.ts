@@ -979,6 +979,17 @@ export class WorkflowEngine {
       }
 
       // Check if tests passed and no critical errors in logs or smoke tests
+      if (this.debug) {
+        console.log(`[DEBUG] Test result: success=${testResult.success}, output length=${testResult.output?.length || 0}`);
+        if (logAnalysis) {
+          console.log(`[DEBUG] Log analysis: ${logAnalysis.errors.length} error(s), ${logAnalysis.warnings?.length || 0} warning(s)`);
+          if (logAnalysis.errors.length > 0) {
+            logAnalysis.errors.slice(0, 3).forEach((err: string, i: number) => {
+              console.log(`[DEBUG]   Error ${i + 1}: ${err.substring(0, 150)}`);
+            });
+          }
+        }
+      }
       const hasErrors = !testResult.success ||
         (logAnalysis && logAnalysis.errors.length > 0) ||
         (smokeTestResult && !smokeTestResult.success);
