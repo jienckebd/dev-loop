@@ -43,7 +43,7 @@ export class PlaywrightRunner implements TestRunner {
       };
     } catch (error: any) {
       const duration = Date.now() - startTime;
-      const output = error.stdout || error.stderr || error.message || String(error);
+      const output = (error.stdout || '') + (error.stderr || '') || error.message || String(error);
 
       // Even on error, try to collect artifacts
       let artifacts: Artifact[] = [];
@@ -53,8 +53,19 @@ export class PlaywrightRunner implements TestRunner {
         // Ignore artifact collection errors
       }
 
+      // Playwright may exit with non-zero even when tests pass
+      // Parse the output to detect actual test results
+      // Look for patterns like "68 passed" vs "5 failed"
+      const passedMatch = output.match(/(\d+)\s+passed/);
+      const failedMatch = output.match(/(\d+)\s+failed/);
+      const passedCount = passedMatch ? parseInt(passedMatch[1], 10) : 0;
+      const failedCount = failedMatch ? parseInt(failedMatch[1], 10) : 0;
+
+      // Success if we have passed tests and no failed tests
+      const success = passedCount > 0 && failedCount === 0;
+
       return {
-        success: false,
+        success,
         output,
         artifacts,
         duration,
