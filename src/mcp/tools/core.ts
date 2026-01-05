@@ -190,4 +190,130 @@ export function registerCoreTools(mcp: FastMCPType, getConfig: ConfigLoader): vo
       }
     },
   });
+
+  // devloop_prd_set_execute - Execute PRD set
+  mcp.addTool({
+    name: 'devloop_prd_set_execute',
+    description: 'Execute entire PRD set (discovers index.md.yml automatically)',
+    parameters: z.object({
+      path: z.string().describe('Path to PRD set directory or index.md.yml file'),
+      config: z.string().optional().describe('Path to config file (optional)'),
+      debug: z.boolean().optional().describe('Enable debug mode'),
+      parallel: z.boolean().optional().describe('Enable parallel execution of independent PRDs'),
+      maxConcurrent: z.number().optional().describe('Maximum concurrent PRD executions'),
+    }),
+    execute: async (args: { path: string; config?: string; debug?: boolean; parallel?: boolean; maxConcurrent?: number }, context: any) => {
+      const { prdSetExecuteCommand } = await import('../../cli/commands/prd-set');
+
+      try {
+        await prdSetExecuteCommand({
+          path: args.path,
+          config: args.config,
+          debug: args.debug,
+          parallel: args.parallel,
+          maxConcurrent: args.maxConcurrent,
+        });
+
+        return JSON.stringify({
+          success: true,
+          message: 'PRD set execution completed',
+        });
+      } catch (error) {
+        return JSON.stringify({
+          success: false,
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
+    },
+  });
+
+  // devloop_prd_set_status - Get PRD set status
+  mcp.addTool({
+    name: 'devloop_prd_set_status',
+    description: 'Get current PRD set execution status',
+    parameters: z.object({
+      path: z.string().describe('Path to PRD set directory or index.md.yml file'),
+      debug: z.boolean().optional().describe('Enable debug mode'),
+    }),
+    execute: async (args: { path: string; debug?: boolean }, context: any) => {
+      const { prdSetStatusCommand } = await import('../../cli/commands/prd-set');
+
+      try {
+        await prdSetStatusCommand({
+          path: args.path,
+          debug: args.debug,
+        });
+
+        return JSON.stringify({
+          success: true,
+          message: 'Status retrieved',
+        });
+      } catch (error) {
+        return JSON.stringify({
+          success: false,
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
+    },
+  });
+
+  // devloop_prd_set_list - List all discovered PRD sets
+  mcp.addTool({
+    name: 'devloop_prd_set_list',
+    description: 'List all discovered PRD sets',
+    parameters: z.object({
+      planningDir: z.string().optional().describe('Planning directory to scan'),
+      debug: z.boolean().optional().describe('Enable debug mode'),
+    }),
+    execute: async (args: { planningDir?: string; debug?: boolean }, context: any) => {
+      const { prdSetListCommand } = await import('../../cli/commands/prd-set');
+
+      try {
+        await prdSetListCommand({
+          planningDir: args.planningDir,
+          debug: args.debug,
+        });
+
+        return JSON.stringify({
+          success: true,
+          message: 'PRD sets listed',
+        });
+      } catch (error) {
+        return JSON.stringify({
+          success: false,
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
+    },
+  });
+
+  // devloop_prd_set_validate - Validate PRD set without executing
+  mcp.addTool({
+    name: 'devloop_prd_set_validate',
+    description: 'Validate PRD set without executing',
+    parameters: z.object({
+      path: z.string().describe('Path to PRD set directory or index.md.yml file'),
+      debug: z.boolean().optional().describe('Enable debug mode'),
+    }),
+    execute: async (args: { path: string; debug?: boolean }, context: any) => {
+      const { prdSetValidateCommand } = await import('../../cli/commands/prd-set');
+
+      try {
+        await prdSetValidateCommand({
+          path: args.path,
+          debug: args.debug,
+        });
+
+        return JSON.stringify({
+          success: true,
+          message: 'PRD set validation passed',
+        });
+      } catch (error) {
+        return JSON.stringify({
+          success: false,
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
+    },
+  });
 }

@@ -2337,6 +2337,425 @@ tag:
 
 **Consolidation**: Replaces EntityTypeTagProcessor, EntityTypeTagDerivationProcessor (2 specialized processors → 1 generic processor)
 
+##### 1.11.8 Transform Processor Schema
+
+A generic processor for data transformation operations that can replace many specialized processors:
+
+```yaml
+plugin.plugin_configuration.schema_processor.transform:
+  type: mapping
+  label: 'Transform processor configuration'
+  description: 'Generic processor for data transformation operations (extract, map, filter, wrap, format, evaluate)'
+  mapping:
+    # ... standard execution/input/output config ...
+    transform_config:
+      type: mapping
+      label: 'Transform configuration'
+      mapping:
+        source_path:
+          type: string
+          label: 'Source path in input config'
+          description: 'Path in input config to read data from (e.g., context_mapping, fields, form_title)'
+        target_path:
+          type: string
+          label: 'Target path in output'
+          description: 'Path in output where transformed data will be written (e.g., context, #title, component.settings)'
+        transformations:
+          type: sequence
+          label: 'Transformation operations'
+          description: 'Sequence of transformations to apply in order'
+          sequence:
+            type: mapping
+            mapping:
+              type:
+                type: option
+                label: 'Transformation type'
+                option:
+                  plugin_id: static
+                  plugin_config:
+                    options:
+                      extract:
+                        label: 'Extract data from entity/context'
+                      map:
+                        label: 'Map data from source to target structure'
+                      filter:
+                        label: 'Filter data based on conditions'
+                      wrap:
+                        label: 'Wrap value in TranslatableMarkup or PluralTranslation'
+                      format:
+                        label: 'Format data (JSON, plain text, rendered)'
+                      evaluate:
+                        label: 'Evaluate expression or function'
+              config:
+                type: mapping
+                label: 'Transformation-specific configuration'
+                description: 'Configuration for the specific transformation type'
+```
+
+**Example: Context Mapping (replaces ContextMappingProcessor)**:
+```yaml
+transform:
+  plugin_id: transform
+  execution:
+    hooks: [entity_operation_definition]
+  input:
+    auto_infer: true
+    schema_keys: [context_mapping]
+  transform_config:
+    source_path: context_mapping
+    target_path: context
+    transformations:
+      - type: map
+        config:
+          route_parameters: context.route_parameters
+          entity_type: context.entity_type
+          bundle: context.bundle
+```
+
+**Example: Entity Data Extraction (replaces EntityDataExtractorProcessor)**:
+```yaml
+transform:
+  plugin_id: transform
+  execution:
+    hooks: [entity_context_build]
+  input:
+    auto_infer: true
+    schema_keys: [fields]
+  transform_config:
+    source_path: fields
+    target_path: context.fields
+    transformations:
+      - type: extract
+        config:
+          entity: context.entity
+          field_names: fields
+```
+
+**Example: Form Title (replaces FormTitleProcessor)**:
+```yaml
+transform:
+  plugin_id: transform
+  execution:
+    hooks: [form_alter]
+  input:
+    auto_infer: true
+    schema_keys: [form_title]
+  transform_config:
+    source_path: form_title
+    target_path: '#title'
+    transformations:
+      - type: wrap
+        config:
+          wrap_type: translatable
+```
+
+**Consolidation**: Replaces ContextMappingProcessor, EntityDataExtractorProcessor, FormTitleProcessor, FormDescriptionProcessor, FormHelpTextProcessor, WidgetSettingsProcessor, FormatterSettingsProcessor (7 specialized processors → 1 generic processor)
+
+##### 1.11.9 Conditional Processor Schema
+
+A generic processor for conditional evaluation (access control, visibility, conditional processing):
+
+```yaml
+plugin.plugin_configuration.schema_processor.conditional:
+  type: mapping
+  label: 'Conditional processor configuration'
+  description: 'Generic processor for conditional evaluation with AND/OR/XOR logic'
+  mapping:
+    # ... standard execution/input/output config ...
+    conditional_config:
+      type: mapping
+      label: 'Conditional configuration'
+      mapping:
+        condition_logic:
+          type: option
+          label: 'Condition logic'
+          default_value: AND
+          option:
+            plugin_id: static
+            plugin_config:
+              options:
+                AND:
+                  label: 'AND - All conditions must be met'
+                OR:
+                  label: 'OR - At least one condition must be met'
+                XOR:
+                  label: 'XOR - Exactly one condition must be met'
+        conditions:
+          type: sequence
+          label: 'Conditions to evaluate'
+          description: 'Sequence of condition configurations'
+          sequence:
+            type: mapping
+            mapping:
+              path:
+                type: string
+                label: 'Path to check in config'
+              value:
+                type: any
+                label: 'Required value'
+              operator:
+                type: option
+                label: 'Comparison operator'
+                option:
+                  plugin_id: static
+                  plugin_config:
+                    options:
+                      equals:
+                        label: 'Equals'
+                      not_equals:
+                        label: 'Not equals'
+                      contains:
+                        label: 'Contains'
+                      exists:
+                        label: 'Property exists'
+                      not_exists:
+                        label: 'Property does not exist'
+        evaluation_context:
+          type: mapping
+          label: 'Evaluation context mapping'
+          description: 'Map context values for condition evaluation'
+          mapping:
+            [context_key]:
+              type: string
+              label: 'Context value path'
+        result_path:
+          type: string
+          label: 'Result path'
+          description: 'Path where evaluation result will be stored (e.g., access_result)'
+```
+
+**Example: Access Control (replaces AccessControlProcessor)**:
+```yaml
+conditional:
+  plugin_id: conditional
+  execution:
+    hooks: [entity_operation_route_alter, entity_field_access]
+  input:
+    auto_infer: true
+    schema_keys: [access_control]
+  conditional_config:
+    condition_logic: AND
+    conditions:
+      - path: access_control.items
+        type: sequence
+    evaluation_context:
+      route: context.route
+      account: context.account
+      operation: context.operation
+    result_path: access_result
+```
+
+**Consolidation**: Replaces AccessControlProcessor, ConditionalFieldVisibilityProcessor, ConditionalProcessingProcessor (3 specialized processors → 1 generic processor)
+
+##### 1.11.10 Sequence Processor Schema
+
+A generic processor for processing sequences of items, plugin chains, and nested sequences:
+
+```yaml
+plugin.plugin_configuration.schema_processor.sequence:
+  type: mapping
+  label: 'Sequence processor configuration'
+  description: 'Generic processor for processing sequences of items, plugin chains, and nested sequences'
+  mapping:
+    # ... standard execution/input/output config ...
+    sequence_config:
+      type: mapping
+      label: 'Sequence configuration'
+      mapping:
+        source_path:
+          type: string
+          label: 'Source path to sequence'
+          description: 'Path in input config containing sequence (e.g., processing.pre_processors, menu.items)'
+        item_processor:
+          type: mapping
+          label: 'Item processor configuration'
+          description: 'Processor configuration to apply to each sequence item'
+          mapping:
+            plugin_id:
+              type: string
+              label: 'Processor plugin ID'
+            transform_config:
+              type: mapping
+              label: 'Transform config (if using transform processor)'
+        nested_sequences:
+          type: boolean
+          label: 'Process nested sequences'
+          default_value: false
+          description: 'If true, recursively process sequences within sequence items'
+        plugin_chain:
+          type: boolean
+          label: 'Process as plugin chain'
+          default_value: false
+          description: 'If true, treat sequence items as plugin instances to execute in chain'
+```
+
+**Example: Pre-Processor Chain (replaces PreProcessorChainProcessor)**:
+```yaml
+sequence:
+  plugin_id: sequence
+  execution:
+    hooks: [entity_context_preprocess]
+  input:
+    auto_infer: true
+    schema_keys: [processing.pre_processors]
+  sequence_config:
+    source_path: processing.pre_processors
+    plugin_chain: true
+    item_processor:
+      plugin_id: transform
+      transform_config:
+        source_path: item
+        target_path: context.processed
+```
+
+**Consolidation**: Replaces PreProcessorChainProcessor, NestedSequenceProcessor, PluginChainProcessor (3 specialized processors → 1 generic processor)
+
+##### 1.11.11 Generator Processor Schema
+
+A generic processor for generating structured outputs (routes, menu items, form elements, entity operations):
+
+```yaml
+plugin.plugin_configuration.schema_processor.generator:
+  type: mapping
+  label: 'Generator processor configuration'
+  description: 'Generic processor for generating structured outputs (routes, menu items, form elements)'
+  mapping:
+    # ... standard execution/input/output config ...
+    generator_config:
+      type: mapping
+      label: 'Generator configuration'
+      mapping:
+        output_type:
+          type: option
+          label: 'Output type'
+          option:
+            plugin_id: static
+            plugin_config:
+              options:
+                route:
+                  label: 'Generate route'
+                menu_item:
+                  label: 'Generate menu item (task, action, link)'
+                form_element:
+                  label: 'Generate form element'
+                entity_operation:
+                  label: 'Generate entity operation'
+        template_path:
+          type: string
+          label: 'Template path in config'
+          description: 'Path in input config containing template data (e.g., url, menu.items)'
+        context_mapping:
+          type: mapping
+          label: 'Context mapping'
+          description: 'Map context values for generation'
+          mapping:
+            [context_key]:
+              type: string
+              label: 'Context value path'
+        output_path:
+          type: string
+          label: 'Output path'
+          description: 'Path where generated output will be stored (e.g., routes, menu_items)'
+```
+
+**Example: Route Generation (replaces RouteGenerationProcessor)**:
+```yaml
+generator:
+  plugin_id: generator
+  execution:
+    hooks: [entity_operation_route_alter]
+  input:
+    auto_infer: true
+    schema_keys: [url]
+  generator_config:
+    output_type: route
+    template_path: url
+    context_mapping:
+      entity_type: context.entity_type
+      bundle: context.bundle
+    output_path: routes
+```
+
+**Example: Menu Building (replaces MenuBuilderProcessor)**:
+```yaml
+generator:
+  plugin_id: generator
+  execution:
+    hooks: [entity_operation_definition]
+  input:
+    auto_infer: true
+    schema_keys: [menu.items]
+  generator_config:
+    output_type: menu_item
+    template_path: menu.items
+    context_mapping:
+      route_name: context.route_name
+      entity_type: context.entity_type
+    output_path: menu_items
+```
+
+**Consolidation**: Replaces RouteGenerationProcessor, MenuBuilderProcessor, FormElementGeneratorProcessor (3 specialized processors → 1 generic processor)
+
+##### 1.11.12 Options Processor Schema
+
+A generic processor for processing options providers, value providers, and similar plugin-based options:
+
+```yaml
+plugin.plugin_configuration.schema_processor.options:
+  type: mapping
+  label: 'Options processor configuration'
+  description: 'Generic processor for processing options providers, value providers, and similar plugin-based options'
+  mapping:
+    # ... standard execution/input/output config ...
+    options_config:
+      type: mapping
+      label: 'Options configuration'
+      mapping:
+        provider_path:
+          type: string
+          label: 'Path to provider plugin instance'
+          description: 'Path in input config containing plugin_instance format (e.g., options_provider, value_provider)'
+        provider_type:
+          type: option
+          label: 'Provider type'
+          option:
+            plugin_id: static
+            plugin_config:
+              options:
+                options_provider:
+                  label: 'Options provider plugin'
+                value_provider:
+                  label: 'Value provider plugin'
+        context_keys:
+          type: sequence
+          label: 'Context keys'
+          description: 'Context keys to pass to provider'
+          sequence:
+            type: string
+        result_path:
+          type: string
+          label: 'Result path'
+          description: 'Path where provider result will be stored (e.g., field_definition.options)'
+```
+
+**Example: Options Provider (replaces OptionsProviderProcessor)**:
+```yaml
+options:
+  plugin_id: options
+  execution:
+    hooks: [entity_form_display_alter]
+  input:
+    auto_infer: true
+    schema_keys: [options_provider]
+  options_config:
+    provider_path: options_provider
+    provider_type: options_provider
+    context_keys: [field_definition, entity]
+    result_path: field_definition.options
+```
+
+**Consolidation**: Replaces OptionsProviderProcessor, ValueProviderProcessor (2 specialized processors → 1 generic processor)
+
 #### 1.12 Schema-Attached Processors Schema
 
 Enables declaring processors directly in config schema files, making features fully declarative with structure, form rendering, and behavior co-located:
@@ -2618,6 +3037,544 @@ entity_display.third_party_settings.design_system.general.form_display:
 ```
 
 **Explanation**: Schema-attached processors enable fully declarative feature definitions where structure, form rendering, and behavior are all co-located in schema files. Processors declared in schemas are automatically discovered by `SchemaProcessorManager` and execute alongside plugin-based processors. Auto-inference reduces boilerplate by automatically inferring input paths from schema property locations, weights from schema property weights, and context from schema property context arrays. This pattern eliminates the need for separate processor plugin files for simple, configuration-driven behavior, while complex processors with custom logic should remain as plugin classes.
+
+#### 1.13 Schema-Specific Processor Declarations
+
+Based on code analysis of actual processing logic in `EntityHelper`, `EntityFieldHelper`, `EntityDisplayBuilder`, and related services, each config schema type requires specific processor declarations. These processors are declared directly in schema files using the `processors` property on schema properties.
+
+##### 1.13.1 bd.entity_type.* Schema Processors
+
+**Processing Steps from EntityHelper::normalizeDefinitions()** (see `docroot/modules/share/bd/src/Entity/EntityHelper.php:1020-1083`):
+
+1. Template separation (templates vs entity types) - handled by framework
+2. Base entity type merging (recursive merge from base) - `merge` processor
+3. Handler merging (from settings.handlers to handlers) - `merge` processor
+4. Label wrapping (TranslatableMarkup for labels) - `property_setter` processor
+5. Entity keys cleanup (remove empty values, set defaults) - `cleanup` processor
+6. Handlers cleanup (remove empty strings/null values) - `cleanup` processor
+7. Link template mapping (route.link_templates_* → links) - `transform` processor
+8. Config export key attachment - handled by framework
+
+**Processor Declarations**:
+
+```yaml
+# In bd.entity_type.* schema
+bd.entity_type.*:
+  type: config_schema_set
+  mapping:
+    base:
+      type: string
+      processors:
+        - plugin_id: merge
+          execution:
+            service_methods:
+              - service: entity.helper
+                method: normalizeDefinitions
+          input:
+            auto_infer: true
+            schema_keys: [base]
+          merge_config:
+            source_path: base
+            merge_strategy: recursive
+            source_type: template
+          processing_order:
+            weight: -100
+            priority: critical
+
+    handlers:
+      type: mapping
+      processors:
+        - plugin_id: merge
+          execution:
+            service_methods:
+              - service: entity.helper
+                method: normalizeDefinitions
+          input:
+            auto_infer: true
+            schema_keys: [settings.handlers]
+          merge_config:
+            source_path: settings.handlers
+            target_path: handlers
+            merge_strategy: merge_into
+          processing_order:
+            weight: -90
+        - plugin_id: cleanup
+          execution:
+            service_methods:
+              - service: entity.helper
+                method: normalizeDefinitions
+          input:
+            auto_infer: true
+            schema_keys: [handlers]
+          cleanup_config:
+            target_path: handlers
+            operations: [remove_empty]
+          processing_order:
+            weight: -80
+
+    label:
+      type: string
+      processors:
+        - plugin_id: property_setter
+          execution:
+            service_methods:
+              - service: entity.helper
+                method: normalizeDefinitions
+          input:
+            auto_infer: true
+            schema_keys: [label]
+          property_operations:
+            - target_path: label
+              source_path: label
+              operation: wrap
+              wrap_type: translatable
+          processing_order:
+            weight: -70
+
+    entity_keys:
+      type: mapping
+      processors:
+        - plugin_id: cleanup
+          execution:
+            service_methods:
+              - service: entity.helper
+                method: normalizeDefinitions
+          input:
+            auto_infer: true
+            schema_keys: [entity_keys]
+          cleanup_config:
+            target_path: entity_keys
+            operations: [remove_empty, set_defaults]
+            defaults:
+              id: 'id'
+              label: 'label'
+          processing_order:
+            weight: -60
+
+    route:
+      type: mapping
+      mapping:
+        link_templates_content:
+          type: sequence
+          processors:
+            - plugin_id: transform
+              execution:
+                service_methods:
+                  - service: entity.helper
+                    method: applyEntityTypeMappingsToConfig
+                hooks: [entity_type_presave]
+              input:
+                auto_infer: true
+                schema_keys: [route.link_templates_content]
+              transform_config:
+                source_path: route.link_templates_content
+                target_path: links
+                transformations:
+                  - type: map
+                    config:
+                      item_key: item_key
+                      item_value: item_value
+                      target_property: links
+              processing_order:
+                weight: -50
+```
+
+##### 1.13.2 bd.entity_operation.* Schema Processors
+
+**Processing Steps from EntityHelper::buildEntityOperationFromRoute()** (see `docroot/modules/share/bd/src/Entity/EntityHelper.php:2046-2295`):
+
+1. Route generation (from url config) - `generator` processor
+2. Context mapping (route parameters → context array) - `transform` processor
+3. Access control evaluation (from access_control config) - `conditional` processor
+4. Menu building (from menu.items config) - `generator` processor
+
+**Processor Declarations**:
+
+```yaml
+# In bd.entity_operation.* schema
+bd.entity_operation.*:
+  type: config_schema_set
+  mapping:
+    url:
+      type: mapping
+      processors:
+        - plugin_id: generator
+          execution:
+            hooks: [entity_operation_route_alter]
+          input:
+            auto_infer: true
+            schema_keys: [url]
+          generator_config:
+            output_type: route
+            template_path: url
+            context_mapping:
+              entity_type: context.entity_type
+              bundle: context.bundle
+            output_path: routes
+          processing_order:
+            weight: -100
+
+    context_mapping:
+      type: mapping
+      processors:
+        - plugin_id: transform
+          execution:
+            hooks: [entity_operation_definition]
+          input:
+            auto_infer: true
+            schema_keys: [context_mapping]
+          transform_config:
+            source_path: context_mapping
+            target_path: context
+            transformations:
+              - type: map
+                config:
+                  route_parameters: context.route_parameters
+                  entity_type: context.entity_type
+                  bundle: context.bundle
+          processing_order:
+            weight: -90
+
+    access_control:
+      type: mapping
+      processors:
+        - plugin_id: conditional
+          execution:
+            hooks: [entity_operation_route_alter]
+          input:
+            auto_infer: true
+            schema_keys: [access_control]
+          conditional_config:
+            condition_logic: AND
+            conditions:
+              - path: access_control.items
+                type: sequence
+            evaluation_context:
+              route: context.route
+              account: context.account
+            result_path: access_result
+          processing_order:
+            weight: -80
+
+    menu:
+      type: mapping
+      mapping:
+        items:
+          type: sequence
+          processors:
+            - plugin_id: generator
+              execution:
+                hooks: [entity_operation_definition]
+              input:
+                auto_infer: true
+                schema_keys: [menu.items]
+              generator_config:
+                output_type: menu_item
+                template_path: menu.items
+                context_mapping:
+                  route_name: context.route_name
+                  entity_type: context.entity_type
+                output_path: menu_items
+              processing_order:
+                weight: -70
+```
+
+##### 1.13.3 bd.entity_context.* Schema Processors
+
+**Processing Steps from EntityHelper::buildEntityContext()**:
+
+1. Entity data extraction (field values → context) - `transform` processor
+2. Pre-processor chain execution (from pre_processors sequence) - `sequence` processor
+
+**Processor Declarations**:
+
+```yaml
+# In bd.entity_context.* schema
+bd.entity_context.*:
+  type: config_schema_set
+  mapping:
+    fields:
+      type: mapping
+      processors:
+        - plugin_id: transform
+          execution:
+            hooks: [entity_context_build]
+          input:
+            auto_infer: true
+            schema_keys: [fields]
+          transform_config:
+            source_path: fields
+            target_path: context.fields
+            transformations:
+              - type: extract
+                config:
+                  entity: context.entity
+                  field_names: fields
+          processing_order:
+            weight: -100
+
+    processing:
+      type: mapping
+      mapping:
+        pre_processors:
+          type: sequence
+          processors:
+            - plugin_id: sequence
+              execution:
+                hooks: [entity_context_preprocess]
+              input:
+                auto_infer: true
+                schema_keys: [processing.pre_processors]
+              sequence_config:
+                source_path: processing.pre_processors
+                plugin_chain: true
+                item_processor:
+                  plugin_id: transform
+                  transform_config:
+                    source_path: item
+                    target_path: context.processed
+              processing_order:
+                weight: -90
+```
+
+##### 1.13.4 bd.entity_field.* / field_definition.third_party_settings.* Schema Processors
+
+**Processing Steps from EntityFieldHelper::buildBaseFieldDefinitions()** (see `docroot/modules/share/bd/src/Entity/EntityFieldHelper.php:150-422`):
+
+1. Field definition creation (from field.definition config) - `field_definition` processor
+2. Field template merging (from field_template) - `merge` processor
+3. Field properties setting (label, description, computed, etc.) - `property_setter` processor
+4. Options provider processing - `options` processor
+5. Field access control evaluation - `conditional` processor
+
+**Processor Declarations**:
+
+```yaml
+# In field.config.schema.yml
+field_definition.third_party_settings.bd.field:
+  type: mapping
+  mapping:
+    definition:
+      type: mapping
+      processors:
+        - plugin_id: field_definition
+          execution:
+            hooks: [entity_base_field_info_alter, entity_bundle_field_info_alter]
+          input:
+            auto_infer: true
+            schema_keys: [definition]
+          field_definition_config:
+            field_type_source: config_path
+            field_type_path: definition.type
+          processing_order:
+            weight: -100
+            priority: critical
+
+    field_template:
+      type: string
+      processors:
+        - plugin_id: merge
+          execution:
+            hooks: [entity_base_field_info_alter]
+          input:
+            auto_infer: true
+            schema_keys: [field_template]
+          merge_config:
+            source_path: field_template
+            merge_strategy: recursive
+            source_type: template
+          processing_order:
+            weight: -90
+
+    label:
+      type: string
+      processors:
+        - plugin_id: property_setter
+          execution:
+            hooks: [entity_base_field_info_alter]
+          input:
+            auto_infer: true
+            schema_keys: [label]
+          property_operations:
+            - target_path: label
+              source_path: label
+              operation: wrap
+              wrap_type: translatable
+          processing_order:
+            weight: -80
+
+    options_provider:
+      type: plugin_instance
+      processors:
+        - plugin_id: options
+          execution:
+            hooks: [entity_form_display_alter]
+          input:
+            auto_infer: true
+            schema_keys: [options_provider]
+          options_config:
+            provider_path: options_provider
+            provider_type: options_provider
+            context_keys: [field_definition, entity]
+            result_path: field_definition.options
+          processing_order:
+            weight: -70
+
+    access:
+      type: mapping
+      processors:
+        - plugin_id: conditional
+          execution:
+            hooks: [entity_field_access]
+          input:
+            auto_infer: true
+            schema_keys: [access]
+          conditional_config:
+            condition_logic: AND
+            conditions:
+              - path: access.roles_permissions
+                type: mapping
+            evaluation_context:
+              account: context.account
+              operation: context.operation
+            result_path: access_result
+          processing_order:
+            weight: -60
+```
+
+##### 1.13.5 bd.entity_display.* / entity_display.third_party_settings.* Schema Processors
+
+**Processing Steps from EntityDisplayBuilder::buildEntityDisplay()** (see `docroot/modules/share/bd/src/Entity/EntityTypeBuilder.php:446-595`):
+
+1. Form title/description/help text setting - `transform` processor
+2. Widget settings processing - `transform` processor
+3. Formatter settings processing - `transform` processor
+4. Component settings sync - handled by framework
+
+**Processor Declarations**:
+
+```yaml
+# In display.config.schema.yml
+entity_display.third_party_settings.design_system.general.form_display:
+  type: mapping
+  mapping:
+    form_title:
+      type: string
+      processors:
+        - plugin_id: transform
+          execution:
+            hooks: [form_alter]
+          input:
+            auto_infer: true
+            schema_keys: [form_title]
+          transform_config:
+            source_path: form_title
+            target_path: '#title'
+            transformations:
+              - type: wrap
+                config:
+                  wrap_type: translatable
+          processing_order:
+            weight: -100
+
+    widget:
+      type: mapping
+      mapping:
+        widget_settings:
+          type: mapping
+          processors:
+            - plugin_id: transform
+              execution:
+                hooks: [entity_form_display_alter]
+              input:
+                auto_infer: true
+                schema_keys: [widget.widget_settings]
+              transform_config:
+                source_path: widget.widget_settings
+                target_path: component.settings
+                transformations:
+                  - type: map
+                    config:
+                      sync_to_component: true
+              processing_order:
+                weight: -90
+```
+
+##### 1.13.6 bd.computed_field.* Schema Processors
+
+**Processing Steps from EntityFieldHelper::buildBundleFieldDefinitions()** (see `docroot/modules/share/bd/src/Entity/EntityFieldHelper.php:504-609`):
+
+1. Plugin instance extraction (plugin_field_type, plugin_computed_field) - `plugin_instance_extractor` processor
+2. Field definition creation - `field_definition` processor
+3. Computed field properties setting - `property_setter` processor
+
+**Processor Declarations**:
+
+```yaml
+# In bd.computed_field.* schema
+bd.computed_field.*:
+  type: config_schema_set
+  mapping:
+    plugin_field_type:
+      type: plugin_instance
+      processors:
+        - plugin_id: plugin_instance_extractor
+          execution:
+            hooks: [entity_bundle_field_info_alter]
+          input:
+            auto_infer: true
+            schema_keys: [plugin_field_type]
+          extraction_config:
+            source_path: plugin_field_type
+            extractions:
+              - source_property: plugin_id
+                target_path: field_type
+                required: true
+          processing_order:
+            weight: -100
+            priority: critical
+
+    plugin_computed_field:
+      type: plugin_instance
+      processors:
+        - plugin_id: plugin_instance_extractor
+          execution:
+            hooks: [entity_bundle_field_info_alter]
+          input:
+            auto_infer: true
+            schema_keys: [plugin_computed_field]
+          extraction_config:
+            source_path: plugin_computed_field
+            extractions:
+              - source_property: plugin_id
+                target_path: computed_field_plugin_id
+                required: true
+              - source_property: plugin_config
+                target_path: computed_field_plugin_config
+                required: false
+          processing_order:
+            weight: -90
+
+    label:
+      type: string
+      processors:
+        - plugin_id: property_setter
+          execution:
+            hooks: [entity_bundle_field_info_alter]
+          input:
+            auto_infer: true
+            schema_keys: [label]
+          property_operations:
+            - target_path: label
+              source_path: label
+              operation: wrap
+              wrap_type: translatable
+            - target_path: computed
+              value: true
+              operation: set
+          processing_order:
+            weight: -80
+```
 
 ## Implementation Algorithm Examples
 

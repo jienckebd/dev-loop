@@ -20,9 +20,12 @@ export interface CoordinationResult {
 
 export interface PrdState {
   prdId: string;
-  status: 'pending' | 'running' | 'complete' | 'blocked';
+  status: 'pending' | 'running' | 'complete' | 'blocked' | 'failed';
   currentPhase?: number;
   completedPhases: number[];
+  startTime?: Date;
+  endTime?: Date;
+  error?: string;
 }
 
 export interface SharedKey {
@@ -85,21 +88,58 @@ export class PrdCoordinator {
   /**
    * Wait for PRD dependencies to complete.
    */
-  async waitForDependencies(prd: PrdMetadata): Promise<void> {
+  async waitForDependencies(
+    prd: PrdMetadata,
+    options: { timeout?: number; pollInterval?: number } = {}
+  ): Promise<{ success: boolean; message?: string }> {
+    const { timeout = 3600000, pollInterval = 5000 } = options; // Default: 1 hour timeout, 5s poll
     const dependencies = prd.relationships?.dependsOn || [];
+    const startTime = Date.now();
 
     for (const dep of dependencies) {
-      if (dep.waitForCompletion) {
-        const depState = await this.getPrdState(dep.prd);
-        if (depState && depState.status !== 'complete') {
+      const depId = typeof dep === 'string' ? dep : dep.prd;
+      const waitForCompletion = typeof dep === 'string' ? true : (dep.waitForCompletion ?? true);
+
+      if (!waitForCompletion) {
+        continue;
+      }
+
+      while (Date.now() - startTime < timeout) {
+        const depState = await this.getPrdState(depId);
+
+        if (depState?.status === 'complete') {
           if (this.debug) {
-            logger.debug(`[PrdCoordinator] Waiting for PRD ${dep.prd} to complete...`);
+            logger.debug(`[PrdCoordinator] PRD ${depId} dependency complete`);
           }
-          // In a real implementation, this would wait/poll
-          // For now, just check state
+          break;
         }
+
+        if (depState?.status === 'failed' || depState?.status === 'blocked') {
+          return {
+            success: false,
+            message: `Dependency PRD ${depId} is ${depState.status}`,
+          };
+        }
+
+        if (this.debug) {
+          logger.debug(`[PrdCoordinator] Waiting for PRD ${depId} to complete... (status: ${depState?.status || 'unknown'})`);
+        }
+
+        // Poll interval
+        await new Promise(resolve => setTimeout(resolve, pollInterval));
+      }
+
+      // Check if timeout exceeded
+      const finalState = await this.getPrdState(depId);
+      if (finalState?.status !== 'complete') {
+        return {
+          success: false,
+          message: `Timeout waiting for PRD ${depId} to complete (status: ${finalState?.status || 'unknown'})`,
+        };
       }
     }
+
+    return { success: true };
   }
 
   /**
@@ -130,11 +170,14 @@ export class PrdCoordinator {
     const dependencies = prd.relationships?.dependsOn || [];
 
     for (const dep of dependencies) {
-      const depState = await this.getPrdState(dep.prd);
+      const depId = typeof dep === 'string' ? dep : dep.prd;
+      const waitForCompletion = typeof dep === 'string' ? true : (dep.waitForCompletion ?? true);
+
+      const depState = await this.getPrdState(depId);
       if (!depState) {
-        errors.push(`Dependent PRD ${dep.prd} not found in state`);
-      } else if (dep.waitForCompletion && depState.status !== 'complete') {
-        errors.push(`Dependent PRD ${dep.prd} is not complete (status: ${depState.status})`);
+        errors.push(`Dependent PRD ${depId} not found in state`);
+      } else if (waitForCompletion && depState.status !== 'complete') {
+        errors.push(`Dependent PRD ${depId} is not complete (status: ${depState.status})`);
       }
     }
 

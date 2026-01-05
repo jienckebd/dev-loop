@@ -290,10 +290,6 @@ config:
         path: "docroot/modules/share/bd/config/install/bd.schema_processor_test.yml"
         createIfMissing: true
       - type: "config"
-        path: "docroot/modules/share/bd/config/install/bd.schema_processor_test.yml"
-        createIfMissing: true
-    setup:
-      - type: "config"
         createIfMissing: true
       - type: "entity"
         entityType: "node_type"

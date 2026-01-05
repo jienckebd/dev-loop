@@ -25,6 +25,7 @@ import { contributionCommand } from './cli/commands/contribution';
 import { evolveCommand } from './cli/commands/evolve';
 import { prdCommand } from './cli/commands/prd';
 import { validatePrdCommand } from './cli/commands/validate-prd';
+import { prdSetExecuteCommand, prdSetStatusCommand, prdSetListCommand, prdSetValidateCommand } from './cli/commands/prd-set';
 import { scanCommand } from './cli/commands/scan';
 import { recommendCommand } from './cli/commands/recommend';
 import { feedbackCommand } from './cli/commands/feedback';
@@ -311,6 +312,85 @@ program
       schema: options.schema,
       verbose: options.verbose,
     });
+  });
+
+const prdSetCmd = program
+  .command('prd-set')
+  .description('PRD set execution and management commands');
+
+prdSetCmd
+  .command('execute <path>')
+  .description('Execute entire PRD set (discovers index.md.yml automatically)')
+  .option('-c, --config <path>', 'Path to config file', 'devloop.config.js')
+  .option('-d, --debug', 'Enable debug mode')
+  .option('--parallel', 'Enable parallel execution of independent PRDs', true)
+  .option('--max-concurrent <n>', 'Maximum concurrent PRD executions', (v) => parseInt(v, 10), 2)
+  .action(async (path, options) => {
+    await prdSetExecuteCommand({
+      path,
+      config: options.config,
+      debug: options.debug,
+      parallel: options.parallel,
+      maxConcurrent: options.maxConcurrent,
+    });
+  });
+
+prdSetCmd
+  .command('status <path>')
+  .description('Show current PRD set execution status')
+  .option('-d, --debug', 'Enable debug mode')
+  .action(async (path, options) => {
+    await prdSetStatusCommand({
+      path,
+      debug: options.debug,
+    });
+  });
+
+prdSetCmd
+  .command('list')
+  .description('List all discovered PRD sets')
+  .option('--planning-dir <dir>', 'Planning directory to scan', '.taskmaster/planning')
+  .option('-d, --debug', 'Enable debug mode')
+  .action(async (options) => {
+    await prdSetListCommand({
+      planningDir: options.planningDir,
+      debug: options.debug,
+    });
+  });
+
+prdSetCmd
+  .command('validate <path>')
+  .description('Validate PRD set without executing')
+  .option('-d, --debug', 'Enable debug mode')
+  .action(async (path, options) => {
+    await prdSetValidateCommand({
+      path,
+      debug: options.debug,
+    });
+  });
+
+prdSetCmd
+  .command('pause <path>')
+  .description('Pause PRD set execution')
+  .action(async (path) => {
+    console.log('Pause command not yet implemented');
+    // TODO: Implement pause functionality
+  });
+
+prdSetCmd
+  .command('resume <path>')
+  .description('Resume paused PRD set execution')
+  .action(async (path) => {
+    console.log('Resume command not yet implemented');
+    // TODO: Implement resume functionality
+  });
+
+prdSetCmd
+  .command('cancel <path>')
+  .description('Cancel PRD set execution')
+  .action(async (path) => {
+    console.log('Cancel command not yet implemented');
+    // TODO: Implement cancel functionality
   });
 
 program

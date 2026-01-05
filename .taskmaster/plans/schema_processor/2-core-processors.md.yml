@@ -48,15 +48,16 @@ requirements:
           testSpec:
             type: "playwright"
             file: "tests/playwright/bd/schema-processor-core-processors.spec.ts"
-            describe: "FormTitleProcessor Execution Tests"
+            describe: "Transform Processor for Form Title Execution Tests"
             cases:
-              - name: "should execute FormTitleProcessor plugin"
+              - name: "should execute transform processor for form_title"
                 steps:
                   - action: "execute-php"
-                    command: "ddev exec bash -c 'drush ev \"$manager = \\\\Drupal::service(\\\\\\\"plugin.manager.schema_processor\\\\\\\"); $processors = $manager->getAllProcessorsForHook(\\\\\"entity_form_display_alter\\\\\"); echo array_key_exists(\\\\\"form_title\\\\\", $processors) ? \\\\\"OK\\\\\" : \\\\\"FAIL\\\\\";\"'"
+                    command: "ddev exec bash -c 'drush ev \"$manager = \\\\Drupal::service(\\\\\\\"plugin.manager.schema_processor\\\\\\\"); $processors = $manager->getAllProcessorsForHook(\\\\\"form_alter\\\\\"); $found = false; foreach ($processors as $processor) { if ($processor->getPluginId() === \\\\\"transform\\\\\" && isset($processor->getConfiguration()[\\\\\"transform_config\\\\\"][\\\\\"source_path\\\\\"]) && $processor->getConfiguration()[\\\\\"transform_config\\\\\"][\\\\\"source_path\\\\\"] === \\\\\"form_title\\\\\") { $found = true; break; } } echo $found ? \\\\\"OK\\\\\" : \\\\\"FAIL\\\\\";\"'"
                   - action: "assert"
                     type: "processor-exists"
-                    processorId: "form_title"
+                    processorId: "transform"
+                    configCheck: "form_title"
             dataSetup:
               - type: "config"
                 path: "docroot/modules/share/bd/config/install/bd.entity_form_display.test.yml"
@@ -88,15 +89,16 @@ requirements:
           testSpec:
             type: "playwright"
             file: "tests/playwright/bd/field-features.spec.ts"
-            describe: "OptionsProviderProcessor Execution Tests"
+            describe: "Options Processor Execution Tests"
             cases:
-              - name: "should execute OptionsProviderProcessor plugin"
+              - name: "should execute options processor for options_provider"
                 steps:
                   - action: "execute-php"
-                    command: "ddev exec bash -c 'drush ev \"$manager = \\\\Drupal::service(\\\\\\\"plugin.manager.schema_processor\\\\\\\"); $processors = $manager->getAllProcessorsForHook(\\\\\"entity_form_display_alter\\\\\"); echo array_key_exists(\\\\\"options_provider\\\\\", $processors) ? \\\\\"OK\\\\\" : \\\\\"FAIL\\\\\";\"'"
+                    command: "ddev exec bash -c 'drush ev \"$manager = \\\\Drupal::service(\\\\\\\"plugin.manager.schema_processor\\\\\\\"); $processors = $manager->getAllProcessorsForHook(\\\\\"entity_form_display_alter\\\\\"); $found = false; foreach ($processors as $processor) { if ($processor->getPluginId() === \\\\\"options\\\\\" && isset($processor->getConfiguration()[\\\\\"options_config\\\\\"][\\\\\"provider_type\\\\\"]) && $processor->getConfiguration()[\\\\\"options_config\\\\\"][\\\\\"provider_type\\\\\"] === \\\\\"options_provider\\\\\") { $found = true; break; } } echo $found ? \\\\\"OK\\\\\" : \\\\\"FAIL\\\\\";\"'"
                   - action: "assert"
                     type: "processor-exists"
-                    processorId: "options_provider"
+                    processorId: "options"
+                    configCheck: "options_provider"
             dataSetup:
               - type: "config"
                 path: "docroot/modules/share/bd/config/install/field.field.node.article.test_field.yml"
@@ -128,15 +130,16 @@ requirements:
           testSpec:
             type: "playwright"
             file: "tests/playwright/bd/field-definition.spec.ts"
-            describe: "FieldTemplateProcessor Execution Tests"
+            describe: "Merge Processor for Field Template Execution Tests"
             cases:
-              - name: "should execute FieldTemplateProcessor plugin"
+              - name: "should execute merge processor for field_template"
                 steps:
                   - action: "execute-php"
-                    command: "ddev exec bash -c 'drush ev \"$manager = \\\\Drupal::service(\\\\\\\"plugin.manager.schema_processor\\\\\\\"); $processors = $manager->getAllProcessorsForHook(\\\\\"entity_bundle_field_info_alter\\\\\"); echo array_key_exists(\\\\\"field_template\\\\\", $processors) ? \\\\\"OK\\\\\" : \\\\\"FAIL\\\\\";\"'"
+                    command: "ddev exec bash -c 'drush ev \"$manager = \\\\Drupal::service(\\\\\\\"plugin.manager.schema_processor\\\\\\\"); $processors = $manager->getAllProcessorsForHook(\\\\\"entity_base_field_info_alter\\\\\"); $found = false; foreach ($processors as $processor) { if ($processor->getPluginId() === \\\\\"merge\\\\\" && isset($processor->getConfiguration()[\\\\\"merge_config\\\\\"][\\\\\"source_path\\\\\"]) && $processor->getConfiguration()[\\\\\"merge_config\\\\\"][\\\\\"source_path\\\\\"] === \\\\\"field_template\\\\\") { $found = true; break; } } echo $found ? \\\\\"OK\\\\\" : \\\\\"FAIL\\\\\";\"'"
                   - action: "assert"
                     type: "processor-exists"
-                    processorId: "field_template"
+                    processorId: "merge"
+                    configCheck: "field_template"
             dataSetup:
               - type: "config"
                 path: "test-field-definition.yml"
@@ -156,21 +159,22 @@ requirements:
     - id: 5
       name: "Entity Operation & Context Processors"
       parallel: false
-      dependsOn: [1]
+      dependsOn: [2, 3, 4]
       tasks:
         - id: "TASK-250"
           testSpec:
             type: "playwright"
             file: "tests/playwright/bd/entity-operation.spec.ts"
-            describe: "RouteGenerationProcessor Execution Tests"
+            describe: "Generator Processor for Route Generation Execution Tests"
             cases:
-              - name: "should execute RouteGenerationProcessor plugin"
+              - name: "should execute generator processor for route generation"
                 steps:
                   - action: "execute-php"
-                    command: "ddev exec bash -c 'drush ev \"$manager = \\\\Drupal::service(\\\\\\\"plugin.manager.schema_processor\\\\\\\"); $processors = $manager->getAllProcessorsForHook(\\\\\"entity_operation_definition\\\\\"); echo array_key_exists(\\\\\"route_generation\\\\\", $processors) ? \\\\\"OK\\\\\" : \\\\\"FAIL\\\\\";\"'"
+                    command: "ddev exec bash -c 'drush ev \"$manager = \\\\Drupal::service(\\\\\\\"plugin.manager.schema_processor\\\\\\\"); $processors = $manager->getAllProcessorsForHook(\\\\\"entity_operation_route_alter\\\\\"); $found = false; foreach ($processors as $processor) { if ($processor->getPluginId() === \\\\\"generator\\\\\" && isset($processor->getConfiguration()[\\\\\"generator_config\\\\\"][\\\\\"output_type\\\\\"]) && $processor->getConfiguration()[\\\\\"generator_config\\\\\"][\\\\\"output_type\\\\\"] === \\\\\"route\\\\\") { $found = true; break; } } echo $found ? \\\\\"OK\\\\\" : \\\\\"FAIL\\\\\";\"'"
                   - action: "assert"
                     type: "processor-exists"
-                    processorId: "route_generation"
+                    processorId: "generator"
+                    configCheck: "route"
             dataSetup: []
         - id: "TASK-251"
           testSpec:
@@ -189,15 +193,16 @@ requirements:
           testSpec:
             type: "playwright"
             file: "tests/playwright/bd/entity-operation.spec.ts"
-            describe: "ContextMappingProcessor Execution Tests"
+            describe: "Transform Processor for Context Mapping Execution Tests"
             cases:
-              - name: "should execute ContextMappingProcessor plugin"
+              - name: "should execute transform processor for context_mapping"
                 steps:
                   - action: "execute-php"
-                    command: "ddev exec bash -c 'drush ev \"$manager = \\\\Drupal::service(\\\\\\\"plugin.manager.schema_processor\\\\\\\"); $processors = $manager->getAllProcessorsForHook(\\\\\"entity_operation_definition\\\\\"); echo array_key_exists(\\\\\"context_mapping\\\\\", $processors) ? \\\\\"OK\\\\\" : \\\\\"FAIL\\\\\";\"'"
+                    command: "ddev exec bash -c 'drush ev \"$manager = \\\\Drupal::service(\\\\\\\"plugin.manager.schema_processor\\\\\\\"); $processors = $manager->getAllProcessorsForHook(\\\\\"entity_operation_definition\\\\\"); $found = false; foreach ($processors as $processor) { if ($processor->getPluginId() === \\\\\"transform\\\\\" && isset($processor->getConfiguration()[\\\\\"transform_config\\\\\"][\\\\\"source_path\\\\\"]) && $processor->getConfiguration()[\\\\\"transform_config\\\\\"][\\\\\"source_path\\\\\"] === \\\\\"context_mapping\\\\\") { $found = true; break; } } echo $found ? \\\\\"OK\\\\\" : \\\\\"FAIL\\\\\";\"'"
                   - action: "assert"
                     type: "processor-exists"
-                    processorId: "context_mapping"
+                    processorId: "transform"
+                    configCheck: "context_mapping"
             dataSetup: []
         - id: "TASK-253"
           testSpec:
@@ -216,15 +221,16 @@ requirements:
           testSpec:
             type: "playwright"
             file: "tests/playwright/bd/entity-operation.spec.ts"
-            describe: "AccessControlProcessor Execution Tests"
+            describe: "Conditional Processor for Access Control Execution Tests"
             cases:
-              - name: "should execute AccessControlProcessor plugin"
+              - name: "should execute conditional processor for access_control"
                 steps:
                   - action: "execute-php"
-                    command: "ddev exec bash -c 'drush ev \"$manager = \\\\Drupal::service(\\\\\\\"plugin.manager.schema_processor\\\\\\\"); $processors = $manager->getAllProcessorsForHook(\\\\\"entity_operation_route_alter\\\\\"); echo array_key_exists(\\\\\"access_control\\\\\", $processors) ? \\\\\"OK\\\\\" : \\\\\"FAIL\\\\\";\"'"
+                    command: "ddev exec bash -c 'drush ev \"$manager = \\\\Drupal::service(\\\\\\\"plugin.manager.schema_processor\\\\\\\"); $processors = $manager->getAllProcessorsForHook(\\\\\"entity_operation_route_alter\\\\\"); $found = false; foreach ($processors as $processor) { if ($processor->getPluginId() === \\\\\"conditional\\\\\" && isset($processor->getConfiguration()[\\\\\"conditional_config\\\\\"][\\\\\"result_path\\\\\"]) && $processor->getConfiguration()[\\\\\"conditional_config\\\\\"][\\\\\"result_path\\\\\"] === \\\\\"access_result\\\\\") { $found = true; break; } } echo $found ? \\\\\"OK\\\\\" : \\\\\"FAIL\\\\\";\"'"
                   - action: "assert"
                     type: "processor-exists"
-                    processorId: "access_control"
+                    processorId: "conditional"
+                    configCheck: "access_control"
             dataSetup: []
         - id: "TASK-255"
           testSpec:
@@ -243,15 +249,16 @@ requirements:
           testSpec:
             type: "playwright"
             file: "tests/playwright/bd/entity-operation.spec.ts"
-            describe: "MenuBuilderProcessor Execution Tests"
+            describe: "Generator Processor for Menu Building Execution Tests"
             cases:
-              - name: "should execute MenuBuilderProcessor plugin"
+              - name: "should execute generator processor for menu building"
                 steps:
                   - action: "execute-php"
-                    command: "ddev exec bash -c 'drush ev \"$manager = \\\\Drupal::service(\\\\\\\"plugin.manager.schema_processor\\\\\\\"); $processors = $manager->getAllProcessorsForHook(\\\\\"entity_operation_definition\\\\\"); echo array_key_exists(\\\\\"menu_builder\\\\\", $processors) ? \\\\\"OK\\\\\" : \\\\\"FAIL\\\\\";\"'"
+                    command: "ddev exec bash -c 'drush ev \"$manager = \\\\Drupal::service(\\\\\\\"plugin.manager.schema_processor\\\\\\\"); $processors = $manager->getAllProcessorsForHook(\\\\\"entity_operation_definition\\\\\"); $found = false; foreach ($processors as $processor) { if ($processor->getPluginId() === \\\\\"generator\\\\\" && isset($processor->getConfiguration()[\\\\\"generator_config\\\\\"][\\\\\"output_type\\\\\"]) && $processor->getConfiguration()[\\\\\"generator_config\\\\\"][\\\\\"output_type\\\\\"] === \\\\\"menu_item\\\\\") { $found = true; break; } } echo $found ? \\\\\"OK\\\\\" : \\\\\"FAIL\\\\\";\"'"
                   - action: "assert"
                     type: "processor-exists"
-                    processorId: "menu_builder"
+                    processorId: "generator"
+                    configCheck: "menu_item"
             dataSetup: []
         - id: "TASK-257"
           testSpec:
@@ -270,15 +277,16 @@ requirements:
           testSpec:
             type: "playwright"
             file: "tests/playwright/bd/entity-context.spec.ts"
-            describe: "EntityDataExtractorProcessor Execution Tests"
+            describe: "Transform Processor for Entity Data Extraction Execution Tests"
             cases:
-              - name: "should execute EntityDataExtractorProcessor plugin"
+              - name: "should execute transform processor for entity data extraction"
                 steps:
                   - action: "execute-php"
-                    command: "ddev exec bash -c 'drush ev \"$manager = \\\\Drupal::service(\\\\\\\"plugin.manager.schema_processor\\\\\\\"); $processors = $manager->getAllProcessorsForHook(\\\\\"entity_context_build\\\\\"); echo array_key_exists(\\\\\"entity_data_extractor\\\\\", $processors) ? \\\\\"OK\\\\\" : \\\\\"FAIL\\\\\";\"'"
+                    command: "ddev exec bash -c 'drush ev \"$manager = \\\\Drupal::service(\\\\\\\"plugin.manager.schema_processor\\\\\\\"); $processors = $manager->getAllProcessorsForHook(\\\\\"entity_context_build\\\\\"); $found = false; foreach ($processors as $processor) { if ($processor->getPluginId() === \\\\\"transform\\\\\" && isset($processor->getConfiguration()[\\\\\"transform_config\\\\\"][\\\\\"transformations\\\\\"][0][\\\\\"type\\\\\"]) && $processor->getConfiguration()[\\\\\"transform_config\\\\\"][\\\\\"transformations\\\\\"][0][\\\\\"type\\\\\"] === \\\\\"extract\\\\\") { $found = true; break; } } echo $found ? \\\\\"OK\\\\\" : \\\\\"FAIL\\\\\";\"'"
                   - action: "assert"
                     type: "processor-exists"
-                    processorId: "entity_data_extractor"
+                    processorId: "transform"
+                    configCheck: "extract"
             dataSetup: []
         - id: "TASK-261"
           testSpec:
@@ -297,15 +305,16 @@ requirements:
           testSpec:
             type: "playwright"
             file: "tests/playwright/bd/entity-context.spec.ts"
-            describe: "PreProcessorChainProcessor Execution Tests"
+            describe: "Sequence Processor for Pre-Processor Chain Execution Tests"
             cases:
-              - name: "should execute PreProcessorChainProcessor plugin"
+              - name: "should execute sequence processor for pre-processor chain"
                 steps:
                   - action: "execute-php"
-                    command: "ddev exec bash -c 'drush ev \"$manager = \\\\Drupal::service(\\\\\\\"plugin.manager.schema_processor\\\\\\\"); $processors = $manager->getAllProcessorsForHook(\\\\\"entity_context_preprocess\\\\\"); echo array_key_exists(\\\\\"pre_processor_chain\\\\\", $processors) ? \\\\\"OK\\\\\" : \\\\\"FAIL\\\\\";\"'"
+                    command: "ddev exec bash -c 'drush ev \"$manager = \\\\Drupal::service(\\\\\\\"plugin.manager.schema_processor\\\\\\\"); $processors = $manager->getAllProcessorsForHook(\\\\\"entity_context_preprocess\\\\\"); $found = false; foreach ($processors as $processor) { if ($processor->getPluginId() === \\\\\"sequence\\\\\" && isset($processor->getConfiguration()[\\\\\"sequence_config\\\\\"][\\\\\"plugin_chain\\\\\"]) && $processor->getConfiguration()[\\\\\"sequence_config\\\\\"][\\\\\"plugin_chain\\\\\"] === true) { $found = true; break; } } echo $found ? \\\\\"OK\\\\\" : \\\\\"FAIL\\\\\";\"'"
                   - action: "assert"
                     type: "processor-exists"
-                    processorId: "pre_processor_chain"
+                    processorId: "sequence"
+                    configCheck: "plugin_chain"
             dataSetup: []
         - id: "TASK-263"
           testSpec:
@@ -378,15 +387,16 @@ requirements:
           testSpec:
             type: "playwright"
             file: "tests/playwright/bd/field-definition-processors.spec.ts"
-            describe: "FieldOptionsProviderProcessor Execution Tests"
+            describe: "Options Processor for Field Options Provider Execution Tests"
             cases:
-              - name: "should execute FieldOptionsProviderProcessor plugin"
+              - name: "should execute options processor for field options provider"
                 steps:
                   - action: "execute-php"
-                    command: "ddev exec bash -c 'drush ev \"$manager = \\\\Drupal::service(\\\\\\\"plugin.manager.schema_processor\\\\\\\"); $processors = $manager->getAllProcessorsForHook(\\\\\"field_definition_alter\\\\\"); echo array_key_exists(\\\\\"field_options_provider\\\\\", $processors) ? \\\\\"OK\\\\\" : \\\\\"FAIL\\\\\";\"'"
+                    command: "ddev exec bash -c 'drush ev \"$manager = \\\\Drupal::service(\\\\\\\"plugin.manager.schema_processor\\\\\\\"); $processors = $manager->getAllProcessorsForHook(\\\\\"entity_form_display_alter\\\\\"); $found = false; foreach ($processors as $processor) { if ($processor->getPluginId() === \\\\\"options\\\\\" && isset($processor->getConfiguration()[\\\\\"options_config\\\\\"][\\\\\"provider_type\\\\\"]) && $processor->getConfiguration()[\\\\\"options_config\\\\\"][\\\\\"provider_type\\\\\"] === \\\\\"options_provider\\\\\") { $found = true; break; } } echo $found ? \\\\\"OK\\\\\" : \\\\\"FAIL\\\\\";\"'"
                   - action: "assert"
                     type: "processor-exists"
-                    processorId: "field_options_provider"
+                    processorId: "options"
+                    configCheck: "options_provider"
             dataSetup: []
         - id: "TASK-269"
           testSpec:
@@ -405,15 +415,16 @@ requirements:
           testSpec:
             type: "playwright"
             file: "tests/playwright/bd/field-definition-processors.spec.ts"
-            describe: "FieldWidgetProcessor Execution Tests"
+            describe: "Transform Processor for Field Widget Settings Execution Tests"
             cases:
-              - name: "should execute FieldWidgetProcessor plugin"
+              - name: "should execute transform processor for widget settings"
                 steps:
                   - action: "execute-php"
-                    command: "ddev exec bash -c 'drush ev \"$manager = \\\\Drupal::service(\\\\\\\"plugin.manager.schema_processor\\\\\\\"); $processors = $manager->getAllProcessorsForHook(\\\\\"field_widget_form_alter\\\\\"); echo array_key_exists(\\\\\"field_widget\\\\\", $processors) ? \\\\\"OK\\\\\" : \\\\\"FAIL\\\\\";\"'"
+                    command: "ddev exec bash -c 'drush ev \"$manager = \\\\Drupal::service(\\\\\\\"plugin.manager.schema_processor\\\\\\\"); $processors = $manager->getAllProcessorsForHook(\\\\\"entity_form_display_alter\\\\\"); $found = false; foreach ($processors as $processor) { if ($processor->getPluginId() === \\\\\"transform\\\\\" && isset($processor->getConfiguration()[\\\\\"transform_config\\\\\"][\\\\\"target_path\\\\\"]) && strpos($processor->getConfiguration()[\\\\\"transform_config\\\\\"][\\\\\"target_path\\\\\"], \\\\\"component.settings\\\\\") !== false) { $found = true; break; } } echo $found ? \\\\\"OK\\\\\" : \\\\\"FAIL\\\\\";\"'"
                   - action: "assert"
                     type: "processor-exists"
-                    processorId: "field_widget"
+                    processorId: "transform"
+                    configCheck: "widget_settings"
             dataSetup: []
         - id: "TASK-271"
           testSpec:
@@ -432,15 +443,16 @@ requirements:
           testSpec:
             type: "playwright"
             file: "tests/playwright/bd/field-definition-processors.spec.ts"
-            describe: "FieldFormatterProcessor Execution Tests"
+            describe: "Transform Processor for Field Formatter Settings Execution Tests"
             cases:
-              - name: "should execute FieldFormatterProcessor plugin"
+              - name: "should execute transform processor for formatter settings"
                 steps:
                   - action: "execute-php"
-                    command: "ddev exec bash -c 'drush ev \"$manager = \\\\Drupal::service(\\\\\\\"plugin.manager.schema_processor\\\\\\\"); $processors = $manager->getAllProcessorsForHook(\\\\\"field_formatter_view_alter\\\\\"); echo array_key_exists(\\\\\"field_formatter\\\\\", $processors) ? \\\\\"OK\\\\\" : \\\\\"FAIL\\\\\";\"'"
+                    command: "ddev exec bash -c 'drush ev \"$manager = \\\\Drupal::service(\\\\\\\"plugin.manager.schema_processor\\\\\\\"); $processors = $manager->getAllProcessorsForHook(\\\\\"entity_view_display_alter\\\\\"); $found = false; foreach ($processors as $processor) { if ($processor->getPluginId() === \\\\\"transform\\\\\" && isset($processor->getConfiguration()[\\\\\"transform_config\\\\\"][\\\\\"target_path\\\\\"]) && strpos($processor->getConfiguration()[\\\\\"transform_config\\\\\"][\\\\\"target_path\\\\\"], \\\\\"component.settings\\\\\") !== false) { $found = true; break; } } echo $found ? \\\\\"OK\\\\\" : \\\\\"FAIL\\\\\";\"'"
                   - action: "assert"
                     type: "processor-exists"
-                    processorId: "field_formatter"
+                    processorId: "transform"
+                    configCheck: "formatter_settings"
             dataSetup: []
         - id: "TASK-273"
           testSpec:
@@ -459,15 +471,16 @@ requirements:
           testSpec:
             type: "playwright"
             file: "tests/playwright/bd/field-definition-processors.spec.ts"
-            describe: "FieldValueProviderProcessor Execution Tests"
+            describe: "Options Processor for Field Value Provider Execution Tests"
             cases:
-              - name: "should execute FieldValueProviderProcessor plugin"
+              - name: "should execute options processor for value provider"
                 steps:
                   - action: "execute-php"
-                    command: "ddev exec bash -c 'drush ev \"$manager = \\\\Drupal::service(\\\\\\\"plugin.manager.schema_processor\\\\\\\"); $processors = $manager->getAllProcessorsForHook(\\\\\"field_definition_alter\\\\\"); echo array_key_exists(\\\\\"field_value_provider\\\\\", $processors) ? \\\\\"OK\\\\\" : \\\\\"FAIL\\\\\";\"'"
+                    command: "ddev exec bash -c 'drush ev \"$manager = \\\\Drupal::service(\\\\\\\"plugin.manager.schema_processor\\\\\\\"); $processors = $manager->getAllProcessorsForHook(\\\\\"entity_load\\\\\"); $found = false; foreach ($processors as $processor) { if ($processor->getPluginId() === \\\\\"options\\\\\" && isset($processor->getConfiguration()[\\\\\"options_config\\\\\"][\\\\\"provider_type\\\\\"]) && $processor->getConfiguration()[\\\\\"options_config\\\\\"][\\\\\"provider_type\\\\\"] === \\\\\"value_provider\\\\\") { $found = true; break; } } echo $found ? \\\\\"OK\\\\\" : \\\\\"FAIL\\\\\";\"'"
                   - action: "assert"
                     type: "processor-exists"
-                    processorId: "field_value_provider"
+                    processorId: "options"
+                    configCheck: "value_provider"
             dataSetup: []
         - id: "TASK-275"
           testSpec:
@@ -486,15 +499,16 @@ requirements:
           testSpec:
             type: "playwright"
             file: "tests/playwright/bd/field-definition-processors.spec.ts"
-            describe: "FieldAccessControlProcessor Execution Tests"
+            describe: "Conditional Processor for Field Access Control Execution Tests"
             cases:
-              - name: "should execute FieldAccessControlProcessor plugin"
+              - name: "should execute conditional processor for field access control"
                 steps:
                   - action: "execute-php"
-                    command: "ddev exec bash -c 'drush ev \"$manager = \\\\Drupal::service(\\\\\\\"plugin.manager.schema_processor\\\\\\\"); $processors = $manager->getAllProcessorsForHook(\\\\\"field_definition_alter\\\\\"); echo array_key_exists(\\\\\"field_access_control\\\\\", $processors) ? \\\\\"OK\\\\\" : \\\\\"FAIL\\\\\";\"'"
+                    command: "ddev exec bash -c 'drush ev \"$manager = \\\\Drupal::service(\\\\\\\"plugin.manager.schema_processor\\\\\\\"); $processors = $manager->getAllProcessorsForHook(\\\\\"entity_field_access\\\\\"); $found = false; foreach ($processors as $processor) { if ($processor->getPluginId() === \\\\\"conditional\\\\\" && isset($processor->getConfiguration()[\\\\\"conditional_config\\\\\"][\\\\\"result_path\\\\\"]) && $processor->getConfiguration()[\\\\\"conditional_config\\\\\"][\\\\\"result_path\\\\\"] === \\\\\"access_result\\\\\") { $found = true; break; } } echo $found ? \\\\\"OK\\\\\" : \\\\\"FAIL\\\\\";\"'"
                   - action: "assert"
                     type: "processor-exists"
-                    processorId: "field_access_control"
+                    processorId: "conditional"
+                    configCheck: "field_access"
             dataSetup: []
         - id: "TASK-277"
           testSpec:
@@ -1318,75 +1332,85 @@ For detailed schema definitions, implementation specifications, and design patte
     - Hook: `form_alter`
     - Output: Form method, action, autocomplete, debug settings
 
-#### Field Feature Processors (10 plugins)
+#### Field Feature Processors (10 plugins → 3 generic processors)
 
-1. **OptionsProviderProcessor** - Options provider plugin integration
+1. **Options Processor** (generic, Section 1.11.12) - Replaces OptionsProviderProcessor
    - Schema key: `overview.options_provider` or `options_provider`
    - Hook: Field options callback
    - Output: Dynamic field options
+   - Use Options Processor with `options_config.provider_type: options_provider`
 
-2. **ConditionalFieldsProcessor** - Conditional field visibility
+2. **Conditional Processor** (generic, Section 1.11.9) - Replaces ConditionalFieldsProcessor
    - Schema key: `conditional` or `conditional_fields`
    - Hook: `form_alter`
    - Output: Field visibility based on conditions
+   - Use Conditional Processor with `conditional_config` for visibility evaluation
 
-3. **MultiValueProcessor** - Multi-value display settings
+3. **Transform Processor** (generic, Section 1.11.8) - Replaces MultiValueProcessor
    - Schema key: `field_values.multi_value`
    - Hook: `field_formatter_view`, `preprocess_field`
    - Output: Max items limit, delimiter rendering
+   - Use Transform Processor with `transform_config` for multi-value formatting
 
-4. **ValidationConstraintsProcessor** - Field validation rules
+4. **Sequence Processor** (generic, Section 1.11.10) - Replaces ValidationConstraintsProcessor
    - Schema key: `validation.validators`
    - Hook: `entity_bundle_field_info_alter`
    - Output: Validation constraints on field definitions
+   - Use Sequence Processor with `sequence_config` for validation rule chains
 
-5. **AutocompleteProcessor** - Autocomplete route and settings
+5. **Transform Processor** (generic, Section 1.11.8) - Replaces AutocompleteProcessor
    - Schema key: `widget.autocomplete`
    - Hook: `field_widget_single_element_form_alter`
    - Output: Autocomplete route configuration, drupalSettings
+   - Use Transform Processor with `transform_config` for autocomplete settings
 
-6. **FieldAccessProcessor** - Field access control
+6. **Conditional Processor** (generic, Section 1.11.9) - Replaces FieldAccessProcessor
    - Schema key: `field_access` or `access`
    - Hook: `entity_field_access`
    - Output: AccessResult (allowed/forbidden/neutral)
+   - Use Conditional Processor with `conditional_config` for access evaluation
 
-7. **DefaultValueProcessor** - Default value providers
+7. **Options Processor** (generic, Section 1.11.12) - Replaces DefaultValueProcessor
    - Schema key: `field_values.default_value` or `default_value_provider`
    - Hook: `entity_create`, `entity_prepare_form`
    - Output: Field value population
+   - Use Options Processor with `options_config.provider_type: value_provider`
 
-8. **EmptyValueProcessor** - Empty value providers
+8. **Options Processor** (generic, Section 1.11.12) - Replaces EmptyValueProcessor
    - Schema key: `field_values.empty_value` or `empty_value_provider`
    - Hook: `entity_load`
    - Output: Fallback value population
+   - Use Options Processor with `options_config.provider_type: value_provider`
 
-9. **FormatterProcessor** - Default formatter application
+9. **Transform Processor** (generic, Section 1.11.8) - Replaces FormatterProcessor
    - Schema key: `formatter.formatter_settings.default_field_formatter`
    - Hook: `entity_view_display_alter`
    - Output: Display component configuration
+   - Use Transform Processor with `transform_config` for formatter settings mapping
 
-10. **WidgetProcessor** - Default widget application
+10. **Transform Processor** (generic, Section 1.11.8) - Replaces WidgetProcessor
     - Schema key: `widget.widget_settings.default_field_widget`
     - Hook: `entity_form_display_alter`
     - Output: Form display component configuration
+    - Use Transform Processor with `transform_config` for widget settings mapping
 
-#### Field Definition Processors (4 plugins → 2 specialized + 1 generic)
-
-**Note**: FieldTemplateProcessor and BaseFieldDefinitionProcessor are replaced by Field Definition Processor (Section 1.11.4) with appropriate configuration.
+#### Field Definition Processors (4 plugins → 2 generic processors)
 
 1-2. **Field Definition Processor** (generic, Section 1.11.4) - Replaces FieldTemplateProcessor, BaseFieldDefinitionProcessor
    - Use Field Definition Processor with `field_definition_config` configuration
    - Supports config-based and template-based field definition creation
 
-3. **FieldTypeValidationProcessor** - Field type validation
+3. **Cleanup Processor** (generic, Section 1.11.5) - Replaces FieldTypeValidationProcessor
    - Schema key: N/A (runs on all field definitions)
    - Hook: `entity_base_field_info_alter`, `entity_bundle_field_info_alter`
    - Output: Filters invalid field types
+   - Use Cleanup Processor with `cleanup_config.operations: [remove_keys]` and `keys_to_remove: [invalid_field_types]`
 
-4. **FieldSettingsMergeProcessor** - Settings merge priority handling
+4. **Merge Processor** (generic, Section 1.11.2) - Replaces FieldSettingsMergeProcessor
    - Schema key: `type.plugin_config`, `settings` (from field template)
    - Hook: `entity_base_field_info_alter`
    - Output: Properly merged field settings
+   - Use Merge Processor with `merge_config.merge_strategy: recursive`
 
 #### 4.5 Entity Type Schema Processors (17 plugins)
 
@@ -1495,36 +1519,36 @@ For detailed schema definitions, implementation specifications, and design patte
 
 Replace methods with SchemaProcessorManager invocations:
 
-- `processGeneralSettings()` → invoke `FormTitleProcessor`, `FormDescriptionProcessor`, `FormHelpTextProcessor`
-- `processAjaxSettings()` → invoke `AjaxBehaviorProcessor`
-- `processValidationSettings()` → invoke `ValidationProcessor`
-- `processSecuritySettings()` → invoke `SecurityLimitsProcessor`
-- `processAccessSettings()` → invoke `AccessControlProcessor`
-- `processActionsAndButtons()` → invoke `ActionsButtonsProcessor`
-- `processSubmissionResponse()` → invoke `SubmissionResponseProcessor`
-- `processAdvancedSettings()` → invoke `AdvancedSettingsProcessor`
-- `processFormHandlers()` → invoke `FormHandlerProcessor`
+- `processGeneralSettings()` → invoke `transform` processor for form_title, form_description, form_help_text
+- `processAjaxSettings()` → invoke `AjaxBehaviorProcessor` (specialized)
+- `processValidationSettings()` → invoke `ValidationProcessor` (specialized)
+- `processSecuritySettings()` → invoke `SecurityLimitsProcessor` (specialized)
+- `processAccessSettings()` → invoke `conditional` processor for access control
+- `processActionsAndButtons()` → invoke `ActionsButtonsProcessor` (specialized)
+- `processSubmissionResponse()` → invoke `SubmissionResponseProcessor` (specialized)
+- `processAdvancedSettings()` → invoke `AdvancedSettingsProcessor` (specialized)
+- `processFormHandlers()` → invoke `FormHandlerProcessor` (specialized)
 
 #### bd/src/Field/FieldSchemaProcessor.php
 
 Replace methods with SchemaProcessorManager invocations:
 
-- `checkFieldAccess()` → invoke `FieldAccessProcessor`
-- `alterEntityViewDisplay()` → invoke `FormatterProcessor`
-- `alterEntityFormDisplay()` → invoke `WidgetProcessor`
-- `processDefaultValues()` → invoke `DefaultValueProcessor`
-- `processEmptyValues()` → invoke `EmptyValueProcessor`
-- `alterFormatterOutput()` → invoke `MultiValueProcessor` + display settings processors
-- `alterWidgetForm()` → invoke widget-specific processors
+- `checkFieldAccess()` → invoke `conditional` processor for field access
+- `alterEntityViewDisplay()` → invoke `transform` processor for formatter settings
+- `alterEntityFormDisplay()` → invoke `transform` processor for widget settings
+- `processDefaultValues()` → invoke `options` processor with value_provider type
+- `processEmptyValues()` → invoke `options` processor with value_provider type
+- `alterFormatterOutput()` → invoke `transform` processor for multi-value + display settings
+- `alterWidgetForm()` → invoke `transform` processor for widget-specific settings
 
 #### bd/src/Entity/EntityFieldHelper.php
 
 Replace methods with SchemaProcessorManager invocations:
 
-- `buildFieldDefinitionFromTemplate()` → invoke `FieldTemplateProcessor`
-- `processFieldConfig()` → invoke `BaseFieldDefinitionProcessor`
-- Field type validation → invoke `FieldTypeValidationProcessor`
-- Settings merging → invoke `FieldSettingsMergeProcessor`
+- `buildFieldDefinitionFromTemplate()` → invoke `merge` processor for field_template
+- `processFieldConfig()` → invoke `field_definition` processor for base field definitions
+- Field type validation → invoke `cleanup` processor to filter invalid types
+- Settings merging → invoke `merge` processor for field settings
 
 #### bd/src/Hook/BdHooks.php
 
@@ -1549,90 +1573,91 @@ Update hooks to use `SchemaProcessorManager`:
 
 ### Phase 2: Entity Display Processors
 
-**Goal**: Create 11 schema processor plugins for entity display features and replace custom methods in EntityDisplay.php.
+**Goal**: Use generic processors (transform, conditional, property_setter) for entity display features and replace custom methods in EntityDisplay.php.
 
 **Tasks**:
-- TASK-201: Create `FormTitleProcessor` plugin
-- TASK-202: Create `FormDescriptionProcessor` plugin
-- TASK-203: Create `FormHelpTextProcessor` plugin
-- TASK-204: Create `FormHandlerProcessor` plugin
-- TASK-205: Create `SubmissionResponseProcessor` plugin
-- TASK-206: Create `AjaxBehaviorProcessor` plugin
-- TASK-207: Create `ValidationProcessor` plugin
-- TASK-208: Create `SecurityLimitsProcessor` plugin
-- TASK-209: Create `AccessControlProcessor` plugin
-- TASK-210: Create `ActionsButtonsProcessor` plugin
-- TASK-211: Create `AdvancedSettingsProcessor` plugin
+- TASK-201: Configure `transform` processor for form_title (replaces FormTitleProcessor)
+- TASK-202: Configure `transform` processor for form_description (replaces FormDescriptionProcessor)
+- TASK-203: Configure `transform` processor for form_help_text (replaces FormHelpTextProcessor)
+- TASK-204: Create `FormHandlerProcessor` plugin (specialized - handles complex handler logic)
+- TASK-205: Create `SubmissionResponseProcessor` plugin (specialized - handles submission workflow)
+- TASK-206: Create `AjaxBehaviorProcessor` plugin (specialized - handles AJAX integration)
+- TASK-207: Create `ValidationProcessor` plugin (specialized - handles validation rules)
+- TASK-208: Create `SecurityLimitsProcessor` plugin (specialized - handles security features)
+- TASK-209: Configure `conditional` processor for access control (replaces AccessControlProcessor)
+- TASK-210: Create `ActionsButtonsProcessor` plugin (specialized - handles button configuration)
+- TASK-211: Create `AdvancedSettingsProcessor` plugin (specialized - handles advanced settings)
 - TASK-212: Update `EntityDisplay.php` to use `SchemaProcessorManager` for all features
 - TASK-213: Update `DesignSystemHooks.php` to invoke processors
 - TASK-214: Test with `entity-display-features.spec.ts` Playwright tests
 
 **Acceptance Criteria**:
-- All 11 processors created and registered
+- Generic processors (transform, conditional) configured for form_title, form_description, form_help_text, access_control
+- Specialized processors created only where generic processors insufficient
 - EntityDisplay.php uses SchemaProcessorManager instead of custom methods
 - All entity-display-features.spec.ts tests pass
 - No functional regressions
 
 ### Phase 3: Field Feature Processors
 
-**Goal**: Create 10 schema processor plugins for field features and replace custom methods in FieldSchemaProcessor.php.
+**Goal**: Use generic processors (options, conditional, transform, sequence) for field features and replace custom methods in FieldSchemaProcessor.php.
 
 **Tasks**:
-- TASK-301: Create `OptionsProviderProcessor` plugin
-- TASK-302: Create `ConditionalFieldsProcessor` plugin
-- TASK-303: Create `MultiValueProcessor` plugin
-- TASK-304: Create `ValidationConstraintsProcessor` plugin
-- TASK-305: Create `AutocompleteProcessor` plugin
-- TASK-306: Create `FieldAccessProcessor` plugin
-- TASK-307: Create `DefaultValueProcessor` plugin
-- TASK-308: Create `EmptyValueProcessor` plugin
-- TASK-309: Create `FormatterProcessor` plugin
-- TASK-310: Create `WidgetProcessor` plugin
+- TASK-301: Configure `options` processor for options_provider (replaces OptionsProviderProcessor)
+- TASK-302: Configure `conditional` processor for conditional fields (replaces ConditionalFieldsProcessor)
+- TASK-303: Configure `transform` processor for multi-value display (replaces MultiValueProcessor)
+- TASK-304: Configure `sequence` processor for validation constraints (replaces ValidationConstraintsProcessor)
+- TASK-305: Configure `transform` processor for autocomplete (replaces AutocompleteProcessor)
+- TASK-306: Configure `conditional` processor for field access (replaces FieldAccessProcessor)
+- TASK-307: Configure `options` processor for default value provider (replaces DefaultValueProcessor)
+- TASK-308: Configure `options` processor for empty value provider (replaces EmptyValueProcessor)
+- TASK-309: Configure `transform` processor for formatter settings (replaces FormatterProcessor)
+- TASK-310: Configure `transform` processor for widget settings (replaces WidgetProcessor)
 - TASK-311: Update `FieldSchemaProcessor.php` to use `SchemaProcessorManager` for all features
 - TASK-312: Update `BdHooks.php` to invoke processors
 - TASK-313: Test with `field-features.spec.ts` Playwright tests
 
 **Acceptance Criteria**:
-- All 10 processors created and registered
+- Generic processors (options, conditional, transform, sequence) configured for all field features
 - FieldSchemaProcessor.php uses SchemaProcessorManager instead of custom methods
 - All field-features.spec.ts tests pass
 - No functional regressions
 
 ### Phase 4: Field Definition Processors
 
-**Goal**: Create 4 schema processor plugins for field definition processing and replace custom methods in EntityFieldHelper.php.
+**Goal**: Use generic processors (field_definition, merge, cleanup) for field definition processing and replace custom methods in EntityFieldHelper.php.
 
 **Tasks**:
-- TASK-401: Create `FieldTemplateProcessor` plugin
-- TASK-402: Create `BaseFieldDefinitionProcessor` plugin
-- TASK-403: Create `FieldTypeValidationProcessor` plugin
-- TASK-404: Create `FieldSettingsMergeProcessor` plugin
+- TASK-401: Configure `merge` processor for field_template (replaces FieldTemplateProcessor)
+- TASK-402: Configure `field_definition` processor for base field definitions (replaces BaseFieldDefinitionProcessor)
+- TASK-403: Configure `cleanup` processor for field type validation (replaces FieldTypeValidationProcessor)
+- TASK-404: Configure `merge` processor for field settings (replaces FieldSettingsMergeProcessor)
 - TASK-405: Update `EntityFieldHelper.php` to use `SchemaProcessorManager` for all features
 - TASK-406: Update `BdHooks.php` to invoke processors for field definitions
 - TASK-407: Test with `field-definition.spec.ts` Playwright tests
 
 **Acceptance Criteria**:
-- All 4 processors created and registered
+- Generic processors (field_definition, merge, cleanup) configured for all field definition processing
 - EntityFieldHelper.php uses SchemaProcessorManager instead of custom methods
 - All field-definition.spec.ts tests pass
 - No functional regressions
 
 ### Phase 5: Entity Operation Processors
 
-**Goal**: Create 4 schema processor plugins for entity operation config processing (`bd.entity_operation.*`).
+**Goal**: Use generic processors (generator, transform, conditional) for entity operation config processing (`bd.entity_operation.*`).
 
 **Tasks**:
-- TASK-250: Create `RouteGenerationProcessor` plugin
+- TASK-250: Configure `generator` processor for route generation (replaces RouteGenerationProcessor)
 - TASK-251: Test route generation from entity operation config
-- TASK-252: Create `ContextMappingProcessor` plugin
+- TASK-252: Configure `transform` processor for context mapping (replaces ContextMappingProcessor)
 - TASK-253: Test context mapping from route parameters
-- TASK-254: Create `AccessControlProcessor` plugin
+- TASK-254: Configure `conditional` processor for access control (replaces AccessControlProcessor)
 - TASK-255: Test access evaluation with AND/OR logic
-- TASK-256: Create `MenuBuilderProcessor` plugin
+- TASK-256: Configure `generator` processor for menu building (replaces MenuBuilderProcessor)
 - TASK-257: Test menu building (links, tasks, actions)
 
 **Acceptance Criteria**:
-- All 4 processors created and registered
+- Generic processors (generator, transform, conditional) configured for all entity operation processing
 - Processors handle nested sequence processing (`context_mapping.parameters`, `menu.items`)
 - Processors handle plugin instance chains (`access_control.items` with condition plugins)
 - Access evaluation supports AND/OR logic
@@ -1641,20 +1666,21 @@ Update hooks to use `SchemaProcessorManager`:
 
 ### Phase 6: Entity Context Processors
 
-**Goal**: Create 4 schema processor plugins for entity context config processing (`bd.entity_context.*`).
+**Goal**: Use generic processors (transform, sequence) for entity context config processing (`bd.entity_context.*`).
 
 **Tasks**:
-- TASK-260: Create `EntityDataExtractorProcessor` plugin
+- TASK-260: Configure `transform` processor for entity data extraction (replaces EntityDataExtractorProcessor)
 - TASK-261: Test entity field extraction and formatting
-- TASK-262: Create `PreProcessorChainProcessor` plugin
+- TASK-262: Configure `sequence` processor for pre-processor chain (replaces PreProcessorChainProcessor)
 - TASK-263: Test pre-processing pipeline execution
-- TASK-264: Create `ContextAggregatorProcessor` plugin
+- TASK-264: Create `ContextAggregatorProcessor` plugin (specialized - handles complex aggregation logic)
 - TASK-265: Test context aggregation from multiple sources
-- TASK-266: Create `FieldFormatterProcessor` plugin
+- TASK-266: Configure `transform` processor for field formatting (replaces FieldFormatterProcessor)
 - TASK-267: Test field formatting (raw, rendered, JSON, plain)
 
 **Acceptance Criteria**:
-- All 4 processors created and registered
+- Generic processors (transform, sequence) configured for entity data extraction and pre-processor chains
+- Specialized processor (ContextAggregatorProcessor) created only where generic insufficient
 - Processors handle nested sequence processing (`processing.pre_processors`, `entity_data.fields`)
 - Processors handle plugin instance chains in pre-processing pipeline
 - Field formatting supports all format options
@@ -1663,26 +1689,26 @@ Update hooks to use `SchemaProcessorManager`:
 
 ### Phase 7: Field Definition Processors
 
-**Goal**: Create 7 schema processor plugins for field definition third-party settings processing (`field_definition.third_party_settings.*`).
+**Goal**: Use generic processors (options, transform, conditional, sequence) for field definition third-party settings processing (`field_definition.third_party_settings.*`).
 
 **Tasks**:
-- TASK-268: Create `FieldOptionsProviderProcessor` plugin
+- TASK-268: Configure `options` processor for field options provider (replaces FieldOptionsProviderProcessor)
 - TASK-269: Test options provider plugin processing
-- TASK-270: Create `FieldWidgetProcessor` plugin
+- TASK-270: Configure `transform` processor for widget settings (replaces FieldWidgetProcessor)
 - TASK-271: Test widget plugin processing with context awareness
-- TASK-272: Create `FieldFormatterProcessor` plugin (for field definitions)
+- TASK-272: Configure `transform` processor for formatter settings (replaces FieldFormatterProcessor)
 - TASK-273: Test formatter plugin processing with context awareness
-- TASK-274: Create `FieldValueProviderProcessor` plugin
+- TASK-274: Configure `options` processor for value provider (replaces FieldValueProviderProcessor)
 - TASK-275: Test default and empty value provider processing
-- TASK-276: Create `FieldAccessControlProcessor` plugin
+- TASK-276: Configure `conditional` processor for field access control (replaces FieldAccessControlProcessor)
 - TASK-277: Test access evaluation with AND/OR/XOR logic
-- TASK-278: Create `FieldValidationProcessor` plugin
+- TASK-278: Configure `sequence` processor for validation rules (replaces FieldValidationProcessor)
 - TASK-279: Test validation rule plugin chain processing
-- TASK-280: Create `ConditionalFieldProcessor` plugin
+- TASK-280: Configure `conditional` processor for conditional fields (replaces ConditionalFieldProcessor)
 - TASK-281: Test conditional field dependency processing with AND/OR/XOR logic
 
 **Acceptance Criteria**:
-- All 7 processors created and registered
+- Generic processors (options, transform, conditional, sequence) configured for all field definition processing
 - Processors are context-aware (field/widget/formatter contexts)
 - Processors handle plugin instance chains (validation rules, conditional handlers)
 - Conditional logic supports AND/OR/XOR evaluation

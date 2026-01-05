@@ -7,7 +7,7 @@ import { logger } from './logger';
 
 /**
  * PRD Config Parser
- * 
+ *
  * Extracts and parses configuration sections from PRD markdown files.
  * Supports three formats:
  * 1. YAML frontmatter (recommended)
@@ -18,7 +18,10 @@ export interface PrdMetadata {
   prd?: {
     id: string;
     version: string;
-    status: 'planning' | 'ready' | 'active' | 'blocked' | 'complete';
+    status: 'planning' | 'ready' | 'active' | 'blocked' | 'complete' | 'split';
+    parentPrd?: string;
+    prdSequence?: number;
+    note?: string;
   };
   execution?: {
     strategy?: 'sequential' | 'parallel' | 'phased';
@@ -196,7 +199,7 @@ export class PrdConfigParser {
   async parsePrdConfig(prdPath: string): Promise<Partial<Config> | null> {
     try {
       const content = await fs.readFile(prdPath, 'utf-8');
-      
+
       // Try YAML frontmatter first (recommended format)
       const frontmatter = this.parseFrontmatter(content);
       if (frontmatter && frontmatter.config) {
@@ -223,7 +226,7 @@ export class PrdConfigParser {
         }
         return this.parseConfigObject(configSection);
       }
-      
+
       if (this.debug) {
         logger.debug('[PrdConfigParser] No config section found in PRD');
       }
@@ -240,7 +243,7 @@ export class PrdConfigParser {
   async parsePrdMetadata(prdPath: string): Promise<PrdMetadata | null> {
     try {
       const content = await fs.readFile(prdPath, 'utf-8');
-      
+
       // Try YAML frontmatter first
       const frontmatter = this.parseFrontmatter(content);
       if (frontmatter) {
@@ -262,14 +265,14 @@ export class PrdConfigParser {
   private parseFrontmatter(content: string): PrdMetadata | null {
     const frontmatterPattern = /^---\s*\n([\s\S]*?)\n---\s*\n/m;
     const match = content.match(frontmatterPattern);
-    
+
     if (!match) {
       return null;
     }
 
     try {
       const parsed = yamlParse(match[1]);
-      
+
       // Extract config overlay if present
       let configOverlay: Partial<Config> | undefined;
       if (parsed.config) {
@@ -302,7 +305,7 @@ export class PrdConfigParser {
   private parseHtmlCommentMetadata(content: string): PrdMetadata | null {
     const commentPattern = /<!--\s*DEV-LOOP\s+METADATA\s*-->[\s\S]*?<!--\s*([\s\S]*?)\s*-->/;
     const match = content.match(commentPattern);
-    
+
     if (!match) {
       return null;
     }
@@ -317,7 +320,7 @@ export class PrdConfigParser {
         if (colonIndex > 0) {
           const key = line.substring(0, colonIndex).trim();
           let value: any = line.substring(colonIndex + 1).trim();
-          
+
           // Handle arrays (e.g., depends_on: [item1, item2])
           if (value.startsWith('[') && value.endsWith(']')) {
             value = value.slice(1, -1).split(',').map((v: string) => v.trim().replace(/^["']|["']$/g, ''));
@@ -363,19 +366,19 @@ export class PrdConfigParser {
     // Fixed: Use non-greedy match and ensure we capture until next ## header or end of file
     const sectionPattern = /^##\s+Dev-Loop\s+Configuration[^\n]*\n([\s\S]+?)(?=^##\s|^---\s*$|$(?![\s\S]))/m;
     const match = content.match(sectionPattern);
-    
+
     if (!match || !match[1]) {
       return null;
     }
 
     const sectionContent = match[1].trim();
-    
+
     // Extract JavaScript code blocks - handle both ```javascript and ```js
     // Also handle multiline code blocks properly
     const jsBlockPattern = /```(?:javascript|js)\s*\n([\s\S]*?)```/g;
     const codeBlocks: string[] = [];
     let blockMatch;
-    
+
     while ((blockMatch = jsBlockPattern.exec(sectionContent)) !== null) {
       if (blockMatch[1]) {
         codeBlocks.push(blockMatch[1].trim());
@@ -402,7 +405,7 @@ export class PrdConfigParser {
 
   /**
    * Parse JavaScript code and extract config object
-   * 
+   *
    * This safely evaluates JavaScript code blocks that should only contain
    * configuration object assignments. It looks for patterns like:
    * - module.exports = { ... }
@@ -441,7 +444,7 @@ export class PrdConfigParser {
         // Extract all object literal assignments
         const propertyPattern = /(\w+):\s*\{([^}]*\{[^}]*\}[^}]*)*\}/g;
         const matches = Array.from(trimmed.matchAll(propertyPattern));
-        
+
         if (matches.length > 0) {
           configObj = {};
           for (const match of matches) {
@@ -488,7 +491,7 @@ export class PrdConfigParser {
 
   /**
    * Safely evaluate JavaScript expression in a controlled context
-   * 
+   *
    * This uses Function constructor to evaluate code, which is safer than eval
    * but still should only be used with trusted PRD files.
    */
@@ -505,7 +508,7 @@ export class PrdConfigParser {
 
   /**
    * Merge PRD config overlay with base config
-   * 
+   *
    * Performs deep merge, where PRD config values override base config values.
    * Arrays are merged by appending PRD values to base values (unless they're
    * explicitly replaced).

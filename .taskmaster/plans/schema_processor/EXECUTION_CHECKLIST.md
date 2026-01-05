@@ -75,31 +75,30 @@ This checklist ensures all PRDs are ready for dev-loop execution with proper val
 ### PRD 2: Core Processors
 
 #### Phase 2: Entity Display Processors
-- [ ] All 11 entity display processors registered
+- [ ] Generic processors (transform, conditional, property_setter) configured for entity display
+- [ ] Specialized processors (FormHandlerProcessor, AjaxBehaviorProcessor, etc.) created where needed
 - [ ] Processor chain executes in correct order
 - [ ] Entity display features work in UI
 - [ ] Run phase 2 tests from `schema-processor-core-processors.spec.ts`
 
 #### Phase 3: Field Feature Processors
-- [ ] All 10 field feature processors registered
+- [ ] Generic processors (options, conditional, transform, sequence) configured for field features
 - [ ] Field processor chain complete
 - [ ] Run phase 3 tests from `schema-processor-core-processors.spec.ts`
 
 #### Phase 4: Field Definition Processors
-- [ ] All 4 field definition processors registered
+- [ ] Generic processors (field_definition, merge, cleanup) configured for field definitions
 - [ ] Run phase 4 tests from `schema-processor-core-processors.spec.ts`
 
 #### Phase 5: Entity Operation & Context Processors
-- [ ] Route generation processor registered
-- [ ] Context mapping processor registered
-- [ ] Access control processor registered
-- [ ] Menu builder processor registered
-- [ ] Entity data extractor processor registered
-- [ ] Pre-processor chain processor registered
+- [ ] Generic processors (generator, transform, conditional, sequence) configured for entity operations
+- [ ] Generic processors (transform, sequence) configured for entity context
+- [ ] Specialized processors (ContextAggregatorProcessor) created where needed
 - [ ] Run phase 5 tests from `schema-processor-core-processors.spec.ts`
 
 #### PRD 2 Completion
-- [ ] All core processors registered (>= 25 total)
+- [ ] All generic processors configured (transform, conditional, property_setter, options, sequence, generator, field_definition, merge, cleanup)
+- [ ] Specialized processors created only where generic processors insufficient
 - [ ] Service methods refactored to use processors
 - [ ] Run PRD 2 tests from `schema-processor-core-processors.spec.ts`
 
@@ -118,24 +117,29 @@ This checklist ensures all PRDs are ready for dev-loop execution with proper val
 ### PRD 4: Advanced Processors
 
 #### Phase 7: Entity Type Schema Processors
-- [ ] All 17 entity type processors registered
+- [ ] Generic processors (merge, cleanup, property_setter, transform, link, tag) configured for entity types
+- [ ] Specialized processors (EntityTypeDefinitionAdditionProcessor, EntityTypeStorageHandlerProcessor) created where needed
 - [ ] Run phase 7 tests from `schema-processor-advanced-processors.spec.ts`
 
 #### Phase 8: Computed Field Schema Processors
-- [ ] All 12 computed field processors registered
+- [ ] Generic processors (plugin_instance_extractor, field_definition, property_setter, transform) configured for computed fields
+- [ ] Specialized processors (ComputedFieldSettingsProcessor, ComputedFieldClassMapperProcessor) created where needed
 - [ ] Run phase 8 tests from `schema-processor-advanced-processors.spec.ts`
 
 #### Phase 9: Field Set Schema Processors
-- [ ] Field set grouping processor registered
+- [ ] Generic processors (sequence, transform) configured for field sets
 - [ ] Run phase 9 tests from `schema-processor-advanced-processors.spec.ts`
 
 #### PRD 4 Completion
-- [ ] All advanced processors registered (>= 30 total)
+- [ ] All generic processors configured (merge, cleanup, property_setter, transform, link, tag, plugin_instance_extractor, field_definition, sequence)
+- [ ] Specialized processors created only where generic processors insufficient
 - [ ] Run PRD 4 tests from `schema-processor-advanced-processors.spec.ts`
 
 ### PRD 5: Final Integration - Phase 10
 
-- [ ] All processors working together (>= 50 total)
+- [ ] All generic processors (10 total) working together
+- [ ] All specialized processors (5-10 total) working together
+- [ ] Total processor count: ~15-20 (down from 50+)
 - [ ] Cross-processor validation passing
 - [ ] System-wide performance validation passing
 - [ ] All test suites passing

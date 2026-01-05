@@ -27,15 +27,16 @@ requirements:
           testSpec:
             type: "playwright"
             file: "tests/playwright/bd/entity-type-definition.spec.ts"
-            describe: "EntityTypeTemplateSeparationProcessor Tests"
+            describe: "Generic Processors for Entity Type Processing Tests"
             cases:
-              - name: "should execute EntityTypeTemplateSeparationProcessor plugin"
+              - name: "should execute merge processor for base entity type merging"
                 steps:
                   - action: "execute-php"
-                    command: "ddev exec bash -c 'drush ev \"$manager = \\\\Drupal::service(\\\\\\\"plugin.manager.schema_processor\\\\\\\"); $processors = $manager->getAllProcessorsForHook(\\\\\"entity_type_definition_alter\\\\\"); echo array_key_exists(\\\\\"entity_type_template_separation\\\\\", $processors) ? \\\\\"OK\\\\\" : \\\\\"FAIL\\\\\";\"'"
+                    command: "ddev exec bash -c 'drush ev \"$manager = \\\\Drupal::service(\\\\\\\"plugin.manager.schema_processor\\\\\\\"); $processors = $manager->getAllProcessorsForServiceMethod(\\\\\"entity.helper\\\\\", \\\\\"normalizeDefinitions\\\\\"); $found = false; foreach ($processors as $processor) { if ($processor->getPluginId() === \\\\\"merge\\\\\" && isset($processor->getConfiguration()[\\\\\"merge_config\\\\\"][\\\\\"source_path\\\\\"]) && $processor->getConfiguration()[\\\\\"merge_config\\\\\"][\\\\\"source_path\\\\\"] === \\\\\"base\\\\\") { $found = true; break; } } echo $found ? \\\\\"OK\\\\\" : \\\\\"FAIL\\\\\";\"'"
                   - action: "assert"
                     type: "processor-exists"
-                    processorId: "entity_type_template_separation"
+                    processorId: "merge"
+                    configCheck: "base"
             dataSetup:
               - type: "config"
                 path: "test-entity-type.yml"
@@ -62,15 +63,16 @@ requirements:
           testSpec:
             type: "playwright"
             file: "tests/playwright/bd/field-definition.spec.ts"
-            describe: "ComputedFieldPluginTypeExtractorProcessor Tests"
+            describe: "Plugin Instance Extractor Processor for Computed Field Tests"
             cases:
-              - name: "should execute ComputedFieldPluginTypeExtractorProcessor plugin"
+              - name: "should execute plugin_instance_extractor processor for plugin_field_type"
                 steps:
                   - action: "execute-php"
-                    command: "ddev exec bash -c 'drush ev \"$manager = \\\\Drupal::service(\\\\\\\"plugin.manager.schema_processor\\\\\\\"); $processors = $manager->getAllProcessorsForHook(\\\\\"entity_bundle_field_info_alter\\\\\"); echo array_key_exists(\\\\\"computed_field_plugin_type_extractor\\\\\", $processors) ? \\\\\"OK\\\\\" : \\\\\"FAIL\\\\\";\"'"
+                    command: "ddev exec bash -c 'drush ev \"$manager = \\\\Drupal::service(\\\\\\\"plugin.manager.schema_processor\\\\\\\"); $processors = $manager->getAllProcessorsForHook(\\\\\"entity_bundle_field_info_alter\\\\\"); $found = false; foreach ($processors as $processor) { if ($processor->getPluginId() === \\\\\"plugin_instance_extractor\\\\\" && isset($processor->getConfiguration()[\\\\\"extraction_config\\\\\"][\\\\\"source_path\\\\\"]) && $processor->getConfiguration()[\\\\\"extraction_config\\\\\"][\\\\\"source_path\\\\\"] === \\\\\"plugin_field_type\\\\\") { $found = true; break; } } echo $found ? \\\\\"OK\\\\\" : \\\\\"FAIL\\\\\";\"'"
                   - action: "assert"
                     type: "processor-exists"
-                    processorId: "computed_field_plugin_type_extractor"
+                    processorId: "plugin_instance_extractor"
+                    configCheck: "plugin_field_type"
             dataSetup:
               - type: "config"
                 path: "test-computed-field.yml"
@@ -97,15 +99,16 @@ requirements:
           testSpec:
             type: "playwright"
             file: "tests/playwright/bd/field-definition.spec.ts"
-            describe: "FieldSetProcessor Tests"
+            describe: "Sequence Processor for Field Set Tests"
             cases:
-              - name: "should execute FieldSetProcessor plugin"
+              - name: "should execute sequence processor for field_set"
                 steps:
                   - action: "execute-php"
-                    command: "ddev exec bash -c 'drush ev \"$manager = \\\\Drupal::service(\\\\\\\"plugin.manager.schema_processor\\\\\\\"); $processors = $manager->getAllProcessorsForHook(\\\\\"entity_bundle_field_info_alter\\\\\"); echo array_key_exists(\\\\\"field_set\\\\\", $processors) ? \\\\\"OK\\\\\" : \\\\\"FAIL\\\\\";\"'"
+                    command: "ddev exec bash -c 'drush ev \"$manager = \\\\Drupal::service(\\\\\\\"plugin.manager.schema_processor\\\\\\\"); $processors = $manager->getAllProcessorsForHook(\\\\\"entity_bundle_field_info_alter\\\\\"); $found = false; foreach ($processors as $processor) { if ($processor->getPluginId() === \\\\\"sequence\\\\\" && isset($processor->getConfiguration()[\\\\\"sequence_config\\\\\"][\\\\\"source_path\\\\\"]) && strpos($processor->getConfiguration()[\\\\\"sequence_config\\\\\"][\\\\\"source_path\\\\\"], \\\\\"field_set\\\\\") !== false) { $found = true; break; } } echo $found ? \\\\\"OK\\\\\" : \\\\\"FAIL\\\\\";\"'"
                   - action: "assert"
                     type: "processor-exists"
-                    processorId: "field_set"
+                    processorId: "sequence"
+                    configCheck: "field_set"
             dataSetup:
               - type: "config"
                 path: "test-field-set.yml"
@@ -323,26 +326,26 @@ This PRD covers Phases 7, 8, and 9: creating advanced processors for entity type
 
 ### Phase 7: Entity Type Config Processors
 
-**Goal**: Create 17 schema processor plugins for entity_type config processing and refactor `EntityHelper::normalizeDefinitions()` to use `SchemaProcessorManager`.
+**Goal**: Use generic processors (merge, cleanup, property_setter, transform, link, tag) for entity_type config processing and refactor `EntityHelper::normalizeDefinitions()` to use `SchemaProcessorManager`.
 
 **Tasks**:
-- TASK-601: Create `EntityTypeTemplateSeparationProcessor` plugin
-- TASK-602: Create `EntityTypeDefinitionAdditionProcessor` plugin
-- TASK-603: Create `EntityTypeBundleCreationProcessor` plugin
-- TASK-604: Create `EntityTypeBaseMergeProcessor` plugin
-- TASK-605: Create `EntityTypeHandlerMergeProcessor` plugin
-- TASK-606: Create `EntityTypeTagProcessor` plugin
-- TASK-607: Create `EntityTypeAlterProcessor` plugin
-- TASK-608: Create `EntityTypeLinkDefaultProcessor` plugin
-- TASK-609: Create `EntityTypeBundleLinkProcessor` plugin
-- TASK-610: Create `EntityTypeTagDerivationProcessor` plugin
-- TASK-611: Create `EntityTypeVariableReplaceProcessor` plugin
-- TASK-612: Create `EntityTypeLinkTemplateProcessor` plugin
-- TASK-613: Create `EntityTypeTranslationProcessor` plugin
-- TASK-614: Create `EntityTypeHandlerCleanupProcessor` plugin
-- TASK-615: Create `EntityTypeLabelWrapProcessor` plugin
-- TASK-616: Create `EntityTypeEntityKeysProcessor` plugin
-- TASK-617: Create `EntityTypeStorageHandlerProcessor` plugin
+- TASK-601: Configure `merge` processor for base entity type merging (replaces EntityTypeBaseMergeProcessor)
+- TASK-602: Create `EntityTypeDefinitionAdditionProcessor` plugin (specialized - handles definition addition logic)
+- TASK-603: Configure `merge` processor for bundle creation (replaces EntityTypeBundleCreationProcessor)
+- TASK-604: Configure `merge` processor for base merging (replaces EntityTypeBaseMergeProcessor)
+- TASK-605: Configure `merge` processor for handler merging (replaces EntityTypeHandlerMergeProcessor)
+- TASK-606: Configure `tag` processor for tag attachment (replaces EntityTypeTagProcessor)
+- TASK-607: Configure `merge` processor for alter processing (replaces EntityTypeAlterProcessor)
+- TASK-608: Configure `link` processor for link defaults (replaces EntityTypeLinkDefaultProcessor)
+- TASK-609: Configure `link` processor for bundle links (replaces EntityTypeBundleLinkProcessor)
+- TASK-610: Configure `tag` processor for tag derivation (replaces EntityTypeTagDerivationProcessor)
+- TASK-611: Configure `transform` processor for variable replacement (replaces EntityTypeVariableReplaceProcessor)
+- TASK-612: Configure `link` processor for link template mapping (replaces EntityTypeLinkTemplateProcessor)
+- TASK-613: Configure `property_setter` processor for translation wrapping (replaces EntityTypeTranslationProcessor)
+- TASK-614: Configure `cleanup` processor for handler cleanup (replaces EntityTypeHandlerCleanupProcessor)
+- TASK-615: Configure `property_setter` processor for label wrapping (replaces EntityTypeLabelWrapProcessor)
+- TASK-616: Configure `cleanup` processor for entity keys (replaces EntityTypeEntityKeysProcessor)
+- TASK-617: Create `EntityTypeStorageHandlerProcessor` plugin (specialized - handles storage handler logic)
 - TASK-618: Add `processEntityTypeDefinition()` method to `SchemaProcessorManager`
 - TASK-619: Refactor `EntityHelper::normalizeDefinitions()` to use `SchemaProcessorManager`
 - TASK-620: Add `processors` property to `entity.types.schema.yml` at root and key properties
@@ -350,7 +353,8 @@ This PRD covers Phases 7, 8, and 9: creating advanced processors for entity type
 - TASK-622: Update acceptance criteria and tests
 
 **Acceptance Criteria**:
-- All 17 processors created and functional
+- Generic processors (merge, cleanup, property_setter, transform, link, tag) configured for entity type processing
+- Specialized processors created only where generic processors insufficient
 - All normalization steps covered by processors or explicitly preserved
 - `EntityHelper::normalizeDefinitions()` refactored to use processors
 - Existing entity type definitions work identically
@@ -361,21 +365,21 @@ This PRD covers Phases 7, 8, and 9: creating advanced processors for entity type
 
 ### Phase 8: Computed Field Config Processors
 
-**Goal**: Create 12 schema processor plugins for computed_field config processing and refactor `EntityFieldHelper::buildBundleFieldDefinitions()` to use `SchemaProcessorManager`.
+**Goal**: Use generic processors (plugin_instance_extractor, field_definition, property_setter, transform) for computed_field config processing and refactor `EntityFieldHelper::buildBundleFieldDefinitions()` to use `SchemaProcessorManager`.
 
 **Tasks**:
-- TASK-701: Create `ComputedFieldPluginTypeExtractorProcessor` plugin
-- TASK-702: Create `ComputedFieldPluginExtractorProcessor` plugin
-- TASK-703: Create `ComputedFieldNameExtractorProcessor` plugin
-- TASK-704: Create `ComputedFieldDefinitionCreatorProcessor` plugin
-- TASK-705: Create `ComputedFieldPropertiesProcessor` plugin
-- TASK-706: Create `ComputedFieldSettingsProcessor` plugin
-- TASK-707: Create `ComputedFieldFlagProcessor` plugin
-- TASK-708: Create `ComputedFieldDisplayConfigurableProcessor` plugin
-- TASK-709: Create `ComputedFieldIdentityProcessor` plugin
-- TASK-710: Create `ComputedFieldCardinalityProcessor` plugin
-- TASK-711: Create `ComputedFieldClassMapperProcessor` plugin
-- TASK-712: Create `ComputedFieldClassSetterProcessor` plugin
+- TASK-701: Configure `plugin_instance_extractor` processor for plugin_field_type (replaces ComputedFieldPluginTypeExtractorProcessor)
+- TASK-702: Configure `plugin_instance_extractor` processor for plugin_computed_field (replaces ComputedFieldPluginExtractorProcessor)
+- TASK-703: Configure `transform` processor for field name extraction (replaces ComputedFieldNameExtractorProcessor)
+- TASK-704: Configure `field_definition` processor for field definition creation (replaces ComputedFieldDefinitionCreatorProcessor)
+- TASK-705: Configure `property_setter` processor for computed field properties (replaces ComputedFieldPropertiesProcessor)
+- TASK-706: Create `ComputedFieldSettingsProcessor` plugin (specialized - handles settings configuration)
+- TASK-707: Configure `property_setter` processor for computed flag (replaces ComputedFieldFlagProcessor)
+- TASK-708: Configure `property_setter` processor for display configurable (replaces ComputedFieldDisplayConfigurableProcessor)
+- TASK-709: Configure `property_setter` processor for field identity (replaces ComputedFieldIdentityProcessor)
+- TASK-710: Configure `property_setter` processor for cardinality (replaces ComputedFieldCardinalityProcessor)
+- TASK-711: Create `ComputedFieldClassMapperProcessor` plugin (specialized - handles class mapping logic)
+- TASK-712: Configure `property_setter` processor for class setting (replaces ComputedFieldClassSetterProcessor)
 - TASK-713: Add `processBundleFieldDefinition()` method to `SchemaProcessorManager`
 - TASK-714: Refactor `EntityFieldHelper::buildBundleFieldDefinitions()` to use `SchemaProcessorManager`
 - TASK-715: Add `processors` property to `field.config.schema.yml` for computed_field properties
@@ -383,7 +387,8 @@ This PRD covers Phases 7, 8, and 9: creating advanced processors for entity type
 - TASK-717: Update acceptance criteria and tests
 
 **Acceptance Criteria**:
-- All 12 processors created and functional
+- Generic processors (plugin_instance_extractor, field_definition, property_setter, transform) configured for computed field processing
+- Specialized processors created only where generic processors insufficient
 - All processing steps covered by processors or explicitly preserved
 - `EntityFieldHelper::buildBundleFieldDefinitions()` refactored to use processors
 - Existing computed_field definitions work identically

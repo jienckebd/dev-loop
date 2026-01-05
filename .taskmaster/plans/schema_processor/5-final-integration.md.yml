@@ -24,7 +24,7 @@ requirements:
     - id: 10
       name: "Final Integration & Testing"
       tasks:
-        - id: "TASK-801"
+        - id: "TASK-806"
           testSpec:
             type: "playwright"
             file: "tests/playwright/bd/entity-display-features.spec.ts"
@@ -51,7 +51,7 @@ requirements:
             dataSetup:
               - type: "config"
                 path: "test-e2e-config.yml"
-        - id: "TASK-803"
+        - id: "TASK-807"
           testSpec:
             type: "playwright"
             file: "tests/playwright/bd/entity-display-features.spec.ts"
@@ -64,7 +64,7 @@ requirements:
                   - action: "assert"
                     type: "cross-processor-valid"
             dataSetup: []
-        - id: "TASK-804"
+        - id: "TASK-808"
           testSpec:
             type: "playwright"
             file: "tests/playwright/bd/entity-display-features.spec.ts"
@@ -161,10 +161,6 @@ config:
         path: "docroot/modules/share/bd/config/install/bd.schema_processor_test.yml"
         createIfMissing: true
       - type: "config"
-        path: "docroot/modules/share/bd/config/install/bd.schema_processor_test.yml"
-        createIfMissing: true
-    setup:
-      - type: "config"
         createIfMissing: true
       - type: "entity"
         entityType: "node_type"
@@ -210,19 +206,19 @@ config:
       - test: "entity-display-features.spec.ts"
         dependsOn:
           - phase: 10
-            tasks: ["TASK-801", "TASK-803", "TASK-804"]
+            tasks: ["TASK-806", "TASK-807", "TASK-808"]
       - test: "field-features.spec.ts"
         dependsOn:
           - phase: 10
-            tasks: ["TASK-801", "TASK-803", "TASK-804"]
+            tasks: ["TASK-806", "TASK-807", "TASK-808"]
       - test: "field-definition.spec.ts"
         dependsOn:
           - phase: 10
-            tasks: ["TASK-801", "TASK-803", "TASK-804"]
+            tasks: ["TASK-806", "TASK-807", "TASK-808"]
       - test: "entity-type-definition.spec.ts"
         dependsOn:
           - phase: 10
-            tasks: ["TASK-801", "TASK-803", "TASK-804"]
+            tasks: ["TASK-806", "TASK-807", "TASK-808"]
 
   errorHandling:
     strategies:
@@ -272,12 +268,9 @@ Perform comprehensive integration testing across all processors, validate cross-
 **Goal**: Comprehensive integration testing across all processors from all previous phases.
 
 **Tasks**:
-- TASK-801: Run all Playwright test suites (entity-display-features, field-features, field-definition)
-- TASK-802: Fix any regressions from processor refactoring
-- TASK-803: Run cross-processor validation tests
-- TASK-804: Perform system-wide performance validation
-- TASK-805: Complete documentation updates
-- TASK-806: Final code review and cleanup
+- TASK-806: Run all Playwright test suites (entity-display-features, field-features, field-definition)
+- TASK-807: Run cross-processor validation tests
+- TASK-808: Perform system-wide performance validation
 
 **Acceptance Criteria**:
 - All Playwright test suites pass
