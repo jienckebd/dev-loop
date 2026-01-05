@@ -47,7 +47,7 @@ requirements:
         - id: "TASK-201"
           testSpec:
             type: "playwright"
-            file: "tests/playwright/bd/entity-display-features.spec.ts"
+            file: "tests/playwright/bd/schema-processor-core-processors.spec.ts"
             describe: "FormTitleProcessor Execution Tests"
             cases:
               - name: "should execute FormTitleProcessor plugin"
@@ -59,11 +59,18 @@ requirements:
                     processorId: "form_title"
             dataSetup:
               - type: "config"
-                path: "test-entity-form-display.yml"
+                path: "docroot/modules/share/bd/config/install/bd.entity_form_display.test.yml"
+                createIfMissing: true
+                content:
+                  id: "node.article.default"
+                  targetEntityType: "node"
+                  bundle: "article"
+                  mode: "default"
+                  status: true
         - id: "TASK-210"
           testSpec:
             type: "playwright"
-            file: "tests/playwright/bd/entity-display-features.spec.ts"
+            file: "tests/playwright/bd/schema-processor-core-processors.spec.ts"
             describe: "Processor Chain Validation Tests"
             cases:
               - name: "should execute processors in correct order"
@@ -92,7 +99,14 @@ requirements:
                     processorId: "options_provider"
             dataSetup:
               - type: "config"
-                path: "test-field-config.yml"
+                path: "docroot/modules/share/bd/config/install/field.field.node.article.test_field.yml"
+                createIfMissing: true
+                content:
+                  id: "node.article.test_field"
+                  field_name: "test_field"
+                  entity_type: "node"
+                  bundle: "article"
+                  status: true
         - id: "TASK-310"
           testSpec:
             type: "playwright"

@@ -82,11 +82,98 @@ export class PatternMatcher implements LogAnalyzer {
     const uniqueErrors = [...new Set(errors)];
     const uniqueWarnings = [...new Set(warnings)];
 
+    // Analyze validation failure patterns
+    const validationFailures = this.analyzeValidationFailures(uniqueErrors, uniqueWarnings);
+    const recommendations = this.generateRecommendations(validationFailures);
+
     return {
       errors: uniqueErrors,
       warnings: uniqueWarnings,
       summary: `Found ${uniqueErrors.length} error(s) and ${uniqueWarnings.length} warning(s) in logs`,
+      recommendations: recommendations.length > 0 ? recommendations : undefined,
     };
+  }
+
+  /**
+   * Analyze validation failure patterns.
+   */
+  private analyzeValidationFailures(errors: string[], warnings: string[]): Array<{ type: string; pattern: string; suggestion: string }> {
+    const validationPatterns = [
+      {
+        pattern: /Schema validation failed/i,
+        type: 'schema-validation-failure',
+        suggestion: 'Check schema syntax and TypedConfigManager discovery',
+      },
+      {
+        pattern: /Plugin type.*not found/i,
+        type: 'plugin-discovery-failure',
+        suggestion: 'Verify plugin_type.yml and annotation format',
+      },
+      {
+        pattern: /Service.*not found/i,
+        type: 'service-not-found',
+        suggestion: 'Check service definition in services.yml',
+      },
+      {
+        pattern: /Method.*does not exist/i,
+        type: 'method-not-found',
+        suggestion: 'Verify method exists in class and check class autoloading',
+      },
+      {
+        pattern: /Validation gate.*failed/i,
+        type: 'validation-gate-failure',
+        suggestion: 'Review validation gate configuration and assertion validators',
+      },
+      {
+        pattern: /Prerequisite.*failed/i,
+        type: 'prerequisite-failure',
+        suggestion: 'Check code requirements and environment readiness',
+      },
+      {
+        pattern: /Test.*failed.*assertion/i,
+        type: 'test-assertion-failure',
+        suggestion: 'Review test assertions and expected outcomes',
+      },
+      {
+        pattern: /Performance.*regression/i,
+        type: 'performance-regression',
+        suggestion: 'Compare with baseline performance metrics',
+      },
+    ];
+
+    const failures: Array<{ type: string; pattern: string; suggestion: string }> = [];
+
+    for (const error of errors) {
+      for (const validationPattern of validationPatterns) {
+        if (validationPattern.pattern.test(error)) {
+          failures.push({
+            type: validationPattern.type,
+            pattern: error,
+            suggestion: validationPattern.suggestion,
+          });
+          break; // Only match first pattern
+        }
+      }
+    }
+
+    return failures;
+  }
+
+  /**
+   * Generate recommendations based on validation failures.
+   */
+  private generateRecommendations(failures: Array<{ type: string; pattern: string; suggestion: string }>): string[] {
+    const recommendations: string[] = [];
+    const seenTypes = new Set<string>();
+
+    for (const failure of failures) {
+      if (!seenTypes.has(failure.type)) {
+        seenTypes.add(failure.type);
+        recommendations.push(`${failure.type}: ${failure.suggestion}`);
+      }
+    }
+
+    return recommendations;
   }
 }
 

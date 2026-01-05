@@ -1,5 +1,51 @@
 # Schema Processor Refactoring - PRD Index
 
+## Autonomous Execution Flow for Schema Processor PRD
+
+```mermaid
+sequenceDiagram
+    participant User
+    participant DevLoop
+    participant PrereqValidator
+    participant PrdCoordinator
+    participant WorkflowEngine
+    participant ValidationGateExecutor
+    participant TestExecutor
+    participant ProgressTracker
+    participant RollbackManager
+
+    User->>DevLoop: Execute PRD 1
+    DevLoop->>PrereqValidator: Validate Prerequisites
+    PrereqValidator-->>DevLoop: Prerequisites Valid
+
+    DevLoop->>PrdCoordinator: Check Dependencies
+    PrdCoordinator-->>DevLoop: No Dependencies
+
+    DevLoop->>WorkflowEngine: Start Phase 1
+    WorkflowEngine->>RollbackManager: Create Checkpoint
+
+    loop For Each Task
+        WorkflowEngine->>TestExecutor: Execute Test Spec
+        TestExecutor-->>WorkflowEngine: Test Results
+        WorkflowEngine->>ValidationGateExecutor: Execute Task Gates
+        ValidationGateExecutor-->>WorkflowEngine: Gate Results
+    end
+
+    WorkflowEngine->>ValidationGateExecutor: Execute Phase Gates
+    ValidationGateExecutor-->>WorkflowEngine: Phase Validation Pass
+
+    WorkflowEngine->>ProgressTracker: Track Phase Completion
+    WorkflowEngine->>RollbackManager: Create Phase Checkpoint
+    ProgressTracker->>TestBaselineManager: Create Baseline
+
+    WorkflowEngine-->>DevLoop: Phase 1 Complete
+
+    DevLoop->>PrdCoordinator: Share State with PRD 2 & 4
+    PrdCoordinator->>DevLoop: State Shared
+
+    DevLoop-->>User: PRD 1 Complete, PRD 2 & 4 Can Start
+```
+
 This directory contains 5 phased PRDs that collectively implement the schema processor refactoring project.
 
 ## Project Purpose
@@ -347,6 +393,100 @@ This PRD suite covers 7 major config schema sets:
 5. Complete documentation
 
 **Tasks**: TASK-801 through TASK-806 (6 tasks)
+
+## Validation Infrastructure
+
+### Pre-Execution Validation
+
+Before executing any PRD, run the prerequisite validation script:
+
+```bash
+ddev exec bash -c "php script/validate-prd-prerequisites.php"
+```
+
+This validates:
+- Pre-existing modules, classes, and services
+- Drupal environment readiness
+- Test infrastructure availability
+
+### Schema Validation
+
+Validate all schema files, plugin types, and service definitions:
+
+```bash
+ddev exec bash -c "php script/validate-schema.php"
+```
+
+This validates:
+- YAML syntax for all `*.schema.yml` files
+- Schema structure against Drupal TypedConfigManager
+- Plugin type definitions in `bd.plugin_type.yml`
+- Service definitions in `bd.services.yml`
+
+### Validation Gates
+
+Validation gates use the `validate-gates.php` helper script:
+
+```bash
+# Check for PHP fatal errors
+php script/validate-gates.php no-php-errors
+
+# Validate schema files
+php script/validate-gates.php schema-validates
+
+# Check plugin types are discoverable
+php script/validate-gates.php plugin-types-discoverable
+
+# Check methods exist on a service
+php script/validate-gates.php methods-exist plugin.manager.schema_processor getAllProcessorsForHook discoverSchemaAttachedProcessors
+```
+
+### Test File Structure
+
+All validation tests are organized by PRD and phase:
+
+```
+tests/playwright/bd/
+├── schema-processor-foundation.spec.ts          # PRD 1: Schema Foundation
+├── schema-processor-core-processors.spec.ts     # PRD 2: Core Processors
+├── schema-processor-integration-1.spec.ts       # PRD 3: Integration 1
+├── schema-processor-advanced-processors.spec.ts # PRD 4: Advanced Processors
+├── schema-processor-final-integration.spec.ts   # PRD 5: Final Integration
+└── helpers/
+    ├── schema-helper.ts                         # Schema validation helpers
+    ├── plugin-helper.ts                        # Plugin discovery helpers
+    ├── service-helper.ts                        # Service existence helpers
+    ├── processor-helper.ts                      # Processor execution helpers
+    └── integration-helper.ts                    # Integration test helpers
+```
+
+### Test Execution Strategy
+
+1. **Phase-Level Tests**: Run after each phase completes within a PRD
+2. **PRD-Level Tests**: Run after entire PRD completes
+3. **Integration Tests**: Run after PRDs 2 and 3 complete (first integration round)
+4. **Final Integration Tests**: Run after PRD 5 completes (final integration)
+
+### Troubleshooting
+
+#### Schema Validation Failures
+
+- **YAML syntax errors**: Check file encoding and indentation
+- **Schema not discoverable**: Clear Drupal cache with `ddev exec bash -c "drush cr"`
+- **Plugin type not found**: Verify `bd.plugin_type.yml` syntax and service registration
+
+#### Validation Gate Failures
+
+- **no-php-errors**: Check Drupal logs with `ddev logs -s web`
+- **schema-validates**: Run `script/validate-schema.php` directly to see detailed errors
+- **plugin-types-discoverable**: Verify plugin type is defined in `bd.plugin_type.yml` and cache is cleared
+- **methods-exist**: Check service class exists and method is defined
+
+#### Test Failures
+
+- **Service not found**: Verify service is registered in `bd.services.yml`
+- **Processor not discovered**: Check processor plugin annotation and hook registration
+- **Test timeout**: Increase timeout in test configuration or check for infinite loops
 
 ## Quick Reference
 

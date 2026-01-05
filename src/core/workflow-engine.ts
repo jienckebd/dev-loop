@@ -105,6 +105,41 @@ export class WorkflowEngine {
       this.debug
     );
 
+    // Initialize validation infrastructure
+    try {
+      const { ValidationScriptExecutor } = require('./validation-script-executor');
+      const { AssertionValidatorRegistry } = require('./assertion-validators');
+      const { ValidationGateExecutor } = require('./validation-gate-executor');
+      const { PrerequisiteValidator } = require('./prerequisite-validator');
+      const { TestDataManager } = require('./test-data-manager');
+      const { TestSpecExecutor } = require('./test-spec-executor');
+
+      const scriptExecutor = new ValidationScriptExecutor(this.debug);
+      const assertionRegistry = new AssertionValidatorRegistry(scriptExecutor, this.debug);
+      const validationGateExecutor = new ValidationGateExecutor(scriptExecutor, assertionRegistry, this.debug);
+      const prerequisiteValidator = new PrerequisiteValidator(scriptExecutor, this.debug);
+      const testDataManager = new TestDataManager(this.debug);
+      const testSpecExecutor = new TestSpecExecutor(
+        this.testRunner,
+        scriptExecutor,
+        assertionRegistry,
+        testDataManager,
+        this.debug
+      );
+
+      // Store for use in workflow
+      (this as any).validationScriptExecutor = scriptExecutor;
+      (this as any).assertionValidatorRegistry = assertionRegistry;
+      (this as any).validationGateExecutor = validationGateExecutor;
+      (this as any).prerequisiteValidator = prerequisiteValidator;
+      (this as any).testDataManager = testDataManager;
+      (this as any).testSpecExecutor = testSpecExecutor;
+    } catch (err) {
+      if (this.debug) {
+        console.warn('[WorkflowEngine] Could not initialize validation infrastructure:', err);
+      }
+    }
+
     // Initialize debug metrics if enabled
     if ((config as any).metrics?.enabled !== false) {
       const metricsPath = (config as any).metrics?.path || '.devloop/metrics.json';
@@ -2555,6 +2590,7 @@ export class WorkflowEngine {
     // Parse PRD config overlay and merge with base config
     const configParser = new PrdConfigParser(this.debug);
     const prdConfigOverlay = await configParser.parsePrdConfig(prdPath);
+    const prdMetadata = await configParser.parsePrdMetadata(prdPath);
 
     let effectiveConfig = this.config;
     if (prdConfigOverlay) {
@@ -2564,6 +2600,29 @@ export class WorkflowEngine {
       if (this.debug) {
         logger.debug(`[WorkflowEngine] Merged PRD config overlay. Keys: ${Object.keys(prdConfigOverlay).join(', ')}`);
       }
+    }
+
+    // Validate prerequisites before execution
+    const prerequisiteValidator = (this as any).prerequisiteValidator;
+    if (prerequisiteValidator && prdMetadata) {
+      console.log('[WorkflowEngine] Validating prerequisites...');
+      const prereqResult = await prerequisiteValidator.validatePrerequisites(prdMetadata);
+      if (!prereqResult.success) {
+        console.error('[WorkflowEngine] Prerequisite validation failed:');
+        prereqResult.errors.forEach((err: string) => console.error(`  - ${err}`));
+        if (prereqResult.codeRequirements && !prereqResult.codeRequirements.success) {
+          console.error('  Code requirements failed:', prereqResult.codeRequirements.failed);
+        }
+        if (!prereqResult.environment.success) {
+          console.error('  Environment validation failed:', prereqResult.environment.errors);
+        }
+        if (!prereqResult.testInfrastructure.success) {
+          console.error('  Test infrastructure validation failed:', prereqResult.testInfrastructure.errors);
+        }
+        // Block execution on critical failures
+        throw new Error('Prerequisite validation failed - cannot proceed with PRD execution');
+      }
+      console.log('[WorkflowEngine] Prerequisites validated successfully');
     }
 
     const autonomousConfig = (effectiveConfig as any).autonomous || {};
@@ -2726,6 +2785,9 @@ export class WorkflowEngine {
 
       await contextManager.save(context);
       console.log(`[WorkflowEngine] Generated ${tests.length} tests from ${requirements.length} requirements`);
+
+      // Execute phase 1 validation gates
+      await this.executePhaseValidation(1, prdMetadata);
     }
 
     // Phase 2: Main execution loop
@@ -2748,6 +2810,9 @@ export class WorkflowEngine {
 
       // Check for completion
       if (testResult.failed === 0) {
+        // Execute final phase validation gates before marking complete
+        await this.executePhaseValidation(2, prdMetadata);
+
         context.status = 'complete';
         console.log('[WorkflowEngine] All tests passing! PRD complete.');
         await contextManager.save(context);
@@ -3064,6 +3129,60 @@ export class WorkflowEngine {
     }
 
     return result;
+  }
+
+  /**
+   * Execute phase validation gates.
+   */
+  private async executePhaseValidation(phaseId: number, prdMetadata: any): Promise<void> {
+    const validationGateExecutor = (this as any).validationGateExecutor;
+    if (!validationGateExecutor || !prdMetadata) {
+      return;
+    }
+
+    try {
+      // Get phase validation from PRD metadata
+      const phases = prdMetadata.requirements?.phases || [];
+      const phase = phases.find((p: any) => p.id === phaseId);
+
+      if (phase && phase.validation) {
+        console.log(`[WorkflowEngine] Executing phase ${phaseId} validation gates...`);
+        const result = await validationGateExecutor.executePhaseValidation(phase.validation, phaseId);
+
+        if (!result.success) {
+          console.warn(`[WorkflowEngine] Phase ${phaseId} validation failed:`);
+          result.errors.forEach((err: string) => console.warn(`  - ${err}`));
+          // Don't block execution, but log warnings
+        } else {
+          console.log(`[WorkflowEngine] Phase ${phaseId} validation passed`);
+        }
+      }
+
+      // Also check for global validation gates for this phase
+      const validationGates = prdMetadata.config?.validation?.gates || [];
+      if (validationGates.length > 0) {
+        const phaseGates = validationGates.filter((g: any) => g.phase === phaseId);
+        if (phaseGates.length > 0) {
+          console.log(`[WorkflowEngine] Executing ${phaseGates.length} validation gate(s) for phase ${phaseId}...`);
+          const gateResults = await validationGateExecutor.executePhaseGates(phaseGates, phaseId);
+
+          const failedGates = gateResults.filter((g: any) => !g.success);
+          if (failedGates.length > 0) {
+            console.warn(`[WorkflowEngine] ${failedGates.length} validation gate(s) failed for phase ${phaseId}`);
+            failedGates.forEach((gate: any) => {
+              console.warn(`  - Gate "${gate.gateName}": ${gate.errors.join(', ')}`);
+            });
+          } else {
+            console.log(`[WorkflowEngine] All validation gates passed for phase ${phaseId}`);
+          }
+        }
+      }
+    } catch (error: any) {
+      console.warn(`[WorkflowEngine] Error executing phase ${phaseId} validation: ${error.message}`);
+      if (this.debug) {
+        logger.debug(`[WorkflowEngine] Phase validation error:`, error);
+      }
+    }
   }
 }
 

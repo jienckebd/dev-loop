@@ -58,10 +58,18 @@ dependencies:
   externalModules: []
   prds: []
   codeRequirements:
-    - bd module exists at docroot/modules/share/bd/
-    - SchemaProcessorManager exists at docroot/modules/share/bd/src/Plugin/SchemaProcessor/SchemaProcessorManager.php
-    - ConfigSchemaSubform patterns understood from docroot/modules/share/bd/src/Element/ConfigSchemaSubform.php
-    - Existing schema patterns in docroot/modules/share/*/config/schema/
+    preExisting:
+      - bd module exists at docroot/modules/share/bd/
+      - ConfigSchemaSubform class exists at docroot/modules/share/bd/src/Element/ConfigSchemaSubform.php
+      - Existing schema patterns in docroot/modules/share/*/config/schema/
+      - bd.plugin_type.yml exists at docroot/modules/share/bd/bd.plugin_type.yml
+      - bd.services.yml exists at docroot/modules/share/bd/bd.services.yml
+    willBeCreated:
+      - SchemaProcessorManager class at docroot/modules/share/bd/src/Plugin/SchemaProcessor/SchemaProcessorManager.php
+      - schema_processor plugin type in bd.plugin_type.yml
+      - condition plugin type in bd.plugin_type.yml
+      - validation_rule plugin type in bd.plugin_type.yml
+      - Schema processor schema files in docroot/modules/share/bd/config/schema/
 
 requirements:
   idPattern: "TASK-{id}"
@@ -87,7 +95,7 @@ requirements:
         - id: "TASK-101"
           testSpec:
             type: "playwright"
-            file: "tests/playwright/bd/entity-display-features.spec.ts"
+            file: "tests/playwright/bd/schema-processor-foundation.spec.ts"
             describe: "Schema Discovery Tests"
             cases:
               - name: "should discover schema processor plugin type after schema expansion"
@@ -97,11 +105,18 @@ requirements:
                   - action: "assert"
                     type: "service-exists"
                     service: "plugin.manager.schema_processor"
-            dataSetup: []
+            dataSetup:
+              - type: "config"
+                path: "docroot/modules/share/bd/config/install/bd.schema_processor_test.yml"
+                createIfMissing: true
+                content:
+                  id: "test_processor"
+                  label: "Test Processor"
+                  status: true
         - id: "TASK-105.1"
           testSpec:
             type: "playwright"
-            file: "tests/playwright/bd/entity-display-features.spec.ts"
+            file: "tests/playwright/bd/schema-processor-foundation.spec.ts"
             describe: "Condition and ValidationRule Plugin Types"
             cases:
               - name: "should discover condition plugin type"
@@ -118,11 +133,18 @@ requirements:
                   - action: "assert"
                     type: "service-exists"
                     service: "plugin.manager.validation_rule"
-            dataSetup: []
+            dataSetup:
+              - type: "config"
+                path: "docroot/modules/share/bd/config/install/bd.condition_test.yml"
+                createIfMissing: true
+                content:
+                  id: "test_condition"
+                  label: "Test Condition"
+                  status: true
         - id: "TASK-109"
           testSpec:
             type: "playwright"
-            file: "tests/playwright/bd/entity-display-features.spec.ts"
+            file: "tests/playwright/bd/schema-processor-foundation.spec.ts"
             describe: "SchemaProcessorManager Method Tests"
             cases:
               - name: "should have getAllProcessorsForHook method"
@@ -131,7 +153,7 @@ requirements:
                     command: "ddev exec bash -c 'drush ev \"$manager = \\\\Drupal::service(\\\\\\\"plugin.manager.schema_processor\\\\\\\"); echo method_exists($manager, \\\\\"getAllProcessorsForHook\\\\\") ? \\\\\"OK\\\\\" : \\\\\"FAIL\\\\\";\"'"
                   - action: "assert"
                     type: "method-exists"
-                    class: "SchemaProcessorManager"
+                    service: "plugin.manager.schema_processor"
                     method: "getAllProcessorsForHook"
               - name: "should have discoverSchemaAttachedProcessors method"
                 steps:
@@ -139,9 +161,16 @@ requirements:
                     command: "ddev exec bash -c 'drush ev \"$manager = \\\\Drupal::service(\\\\\\\"plugin.manager.schema_processor\\\\\\\"); echo method_exists($manager, \\\\\"discoverSchemaAttachedProcessors\\\\\") ? \\\\\"OK\\\\\" : \\\\\"FAIL\\\\\";\"'"
                   - action: "assert"
                     type: "method-exists"
-                    class: "SchemaProcessorManager"
+                    service: "plugin.manager.schema_processor"
                     method: "discoverSchemaAttachedProcessors"
-            dataSetup: []
+            dataSetup:
+              - type: "config"
+                path: "docroot/modules/share/bd/config/install/bd.schema_processor_test.yml"
+                createIfMissing: true
+                content:
+                  id: "test_processor"
+                  label: "Test Processor"
+                  status: true
 
 testing:
   directory: tests/playwright/bd/
@@ -163,16 +192,21 @@ validation:
       test: "script/validate-schema.php"
     - rule: plugin_types_discoverable
       description: "Plugin types are discoverable"
-      test: "ddev exec bash -c 'drush ev \"echo \\\\Drupal::service(\\\\\\\"plugin.manager.schema_processor\\\\\\\") ? \\\\\"OK\\\\\" : \\\\\"FAIL\\\\\";\"' == OK"
+      test: "php script/validate-gates.php plugin-types-discoverable"
 
 config:
   context:
     codeContext:
       requiredFiles:
-        - docroot/modules/share/bd/src/Plugin/SchemaProcessor/SchemaProcessorManager.php
         - docroot/modules/share/bd/src/Element/ConfigSchemaSubform.php
         - docroot/modules/share/bd/config/schema/bd.schema.yml
         - docroot/modules/share/bd/bd.plugin_type.yml
+        - docroot/modules/share/bd/bd.services.yml
+      willBeCreatedFiles:
+        - docroot/modules/share/bd/src/Plugin/SchemaProcessor/SchemaProcessorManager.php
+        - docroot/modules/share/bd/config/schema/plugin.schema-processor.schema.yml
+        - docroot/modules/share/bd/config/schema/plugin.condition.schema.yml
+        - docroot/modules/share/bd/config/schema/plugin.validation-rule.schema.yml
       searchPatterns:
         - "schema_processor"
         - "SchemaProcessor"
@@ -286,11 +320,15 @@ config:
         tests:
           - command: "ddev exec bash -c 'drush cr'"
             description: "Clear caches after schema changes"
-          - command: "ddev logs -s web | grep -i 'PHP Fatal' | wc -l"
-            expected: "0"
-            description: "No PHP fatal errors"
-          - command: "script/validate-schema.php"
-            description: "Schema validation script"
+          - command: "php script/validate-gates.php no-php-errors"
+            description: "Check for PHP fatal errors"
+            expected: "OK"
+          - command: "php script/validate-gates.php schema-validates"
+            description: "Validate schema files"
+            expected: "OK"
+          - command: "php script/validate-gates.php plugin-types-discoverable"
+            description: "Check plugin types are discoverable"
+            expected: "OK"
         assertions:
           - no-php-errors
           - schema-validates
@@ -303,9 +341,9 @@ config:
           - command: "ddev exec bash -c 'drush ev \"echo \\\\Drupal::service(\\\\\\\"plugin.manager.schema_processor\\\\\\\") ? \\\\\"OK\\\\\" : \\\\\"FAIL\\\\\";\"'"
             description: "Plugin type discovery"
             expected: "OK"
-          - command: "ddev logs -s web | grep -i 'PHP Fatal' | wc -l"
-            expected: "0"
-            description: "No PHP fatal errors"
+          - command: "php script/validate-gates.php no-php-errors"
+            description: "Check for PHP fatal errors"
+            expected: "OK"
         assertions:
           - plugin-types-discoverable
           - no-php-errors
@@ -326,7 +364,7 @@ config:
         task: "TASK-109"
         name: "SchemaProcessorManager-methods-gate"
         tests:
-          - command: "ddev exec bash -c 'drush ev \"$manager = \\\\Drupal::service(\\\\\\\"plugin.manager.schema_processor\\\\\\\"); echo method_exists($manager, \\\\\"getAllProcessorsForHook\\\\\") && method_exists($manager, \\\\\"discoverSchemaAttachedProcessors\\\\\") ? \\\\\"OK\\\\\" : \\\\\"FAIL\\\\\";\"'"
+          - command: "php script/validate-gates.php methods-exist plugin.manager.schema_processor getAllProcessorsForHook discoverSchemaAttachedProcessors"
             description: "SchemaProcessorManager methods exist"
             expected: "OK"
         assertions:
@@ -419,15 +457,43 @@ config:
       - type: "config"
         path: "docroot/modules/share/bd/config/install/bd.schema_processor_test.yml"
         createIfMissing: true
+        content:
+          id: "test_processor"
+          label: "Test Schema Processor"
+          status: true
+          execution:
+            hooks: ["entity_form_display_alter"]
+          input:
+            auto_infer: true
+          output:
+            form_array: true
       - type: "config"
-        path: "docroot/modules/share/bd/config/install/bd.schema_processor_test.yml"
+        path: "docroot/modules/share/bd/config/install/bd.condition_test.yml"
         createIfMissing: true
+        content:
+          id: "test_condition"
+          label: "Test Condition"
+          status: true
+      - type: "config"
+        path: "docroot/modules/share/bd/config/install/bd.validation_rule_test.yml"
+        createIfMissing: true
+        content:
+          id: "test_validation_rule"
+          label: "Test Validation Rule"
+          status: true
       - type: "entity"
         entityType: "node_type"
         bundle: "article"
         count: 1
     cleanup:
       - type: "config"
+        path: "docroot/modules/share/bd/config/install/bd.schema_processor_test.yml"
+        after: "test-completion"
+      - type: "config"
+        path: "docroot/modules/share/bd/config/install/bd.condition_test.yml"
+        after: "test-completion"
+      - type: "config"
+        path: "docroot/modules/share/bd/config/install/bd.validation_rule_test.yml"
         after: "test-completion"
 
   testArtifacts:
