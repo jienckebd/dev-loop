@@ -119,8 +119,19 @@ export class TaskMasterBridge {
       // Filter out tasks that have exceeded max retries
       const eligibleTasks = pending.filter(t => !this.hasExceededMaxRetries(t.id));
 
+      // Filter out tasks whose dependencies haven't been completed
+      const completedTaskIds = new Set(
+        tasks.filter(t => t.status === 'done').map(t => String(t.id))
+      );
+      const readyTasks = eligibleTasks.filter(t => {
+        const deps = (t as any).dependencies || [];
+        if (deps.length === 0) return true;
+        // All dependencies must be completed
+        return deps.every((depId: string | number) => completedTaskIds.has(String(depId)));
+      });
+
       // Sort by priority and prefer original tasks over fix tasks
-      return eligibleTasks.sort((a, b) => {
+      return readyTasks.sort((a, b) => {
         // First, prefer in-progress tasks (to resume them)
         if (a.status === 'in-progress' && b.status !== 'in-progress') return -1;
         if (b.status === 'in-progress' && a.status !== 'in-progress') return 1;
