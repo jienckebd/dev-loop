@@ -627,7 +627,7 @@ export class WorkflowEngine {
             // Create fix task that emphasizes creating the required files
             const fixTask = await this.taskBridge.createFixTask(
               task.id,
-              `AI returned "no changes needed" but required files do not exist:\n${missingFiles.map(f => `- ${f}`).join('\n')}\n\n**CRITICAL**: The task details explicitly require creating these files. Similar files (e.g., bd.entity_type.*.yml) do NOT fulfill requirements for node.type.*.yml files.\n\nYou MUST create the EXACT files specified in the task details:\n\n${taskDetails.substring(0, 1000)}`,
+              `AI returned "no changes needed" but required files do not exist:\n${missingFiles.map(f => `- ${f}`).join('\n')}\n\n**CRITICAL ERROR**: You said files "already exist" but they DO NOT EXIST at the required paths.\n\n**RULES**:\n1. Finding SIMILAR files does NOT mean the REQUIRED file exists\n2. Files in OTHER directories (e.g., openapi_entity/) do NOT fulfill requirements for bd/ directory\n3. config/install/ is NOT the same as config/schema/\n4. You MUST create files at the EXACT paths specified in task details\n\n**REQUIRED ACTION**: Create the EXACT file(s) listed above using operation "create" with full content.\n\nTask details:\n${taskDetails.substring(0, 1000)}`,
               `Missing required files: ${missingFiles.join(', ')}`
             );
 
