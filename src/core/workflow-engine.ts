@@ -675,7 +675,9 @@ export class WorkflowEngine {
       // NEW: Pre-apply validation
       if ((this.config as any).preValidation?.enabled !== false) {
         logger.info('[WorkflowEngine] Running pre-apply validation...');
-        const validationResult = await this.validationGate.validate(changes);
+        // Pass allowed paths to prevent AI from modifying unrelated files
+        const allowedPaths = targetFiles?.split('\n').filter(Boolean) || [];
+        const validationResult = await this.validationGate.validate(changes, allowedPaths);
 
         if (!validationResult.valid) {
           logger.error('Pre-apply validation FAILED:');

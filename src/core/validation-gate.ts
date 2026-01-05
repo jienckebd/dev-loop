@@ -38,10 +38,35 @@ export class ValidationGate {
 
   /**
    * Validate all code changes before applying.
+   * @param changes The code changes to validate
+   * @param allowedPaths Optional list of file paths that are allowed to be modified
    */
-  async validate(changes: CodeChanges): Promise<ValidationResult> {
+  async validate(changes: CodeChanges, allowedPaths?: string[]): Promise<ValidationResult> {
     const errors: ValidationError[] = [];
     const warnings: string[] = [];
+
+    // If allowedPaths is provided, validate that all changed files are in the allowed list
+    if (allowedPaths && allowedPaths.length > 0) {
+      for (const file of changes.files) {
+        // Check if this file path is in the allowed list (or is a new file being created)
+        const isAllowed = file.operation === 'create' ||
+          allowedPaths.some(allowed => {
+            // Exact match or file is under an allowed directory
+            return file.path === allowed ||
+              file.path.startsWith(allowed.replace(/[^/]+$/, '')) ||
+              allowed.includes(path.basename(file.path));
+          });
+
+        if (!isAllowed) {
+          errors.push({
+            type: 'syntax',
+            file: file.path,
+            message: `File "${file.path}" is not in the task's target files and should not be modified`,
+            suggestion: `Only modify files explicitly mentioned in the task. Target files: ${allowedPaths.slice(0, 5).join(', ')}`,
+          });
+        }
+      }
+    }
 
     for (const file of changes.files) {
       const filePath = path.resolve(process.cwd(), file.path);
