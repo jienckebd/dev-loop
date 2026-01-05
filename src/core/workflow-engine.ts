@@ -2041,8 +2041,11 @@ export class WorkflowEngine {
     }
 
     console.log(`[WorkflowEngine] Found ${validFiles.length} relevant files (${totalContextSize} chars):`, validFiles);
-    if (this.debug && mentionedFiles.length > validFiles.length) {
-      console.log(`[DEBUG] Files mentioned but not found/skipped: ${mentionedFiles.filter(f => !validFiles.includes(f)).join(', ')}`);
+    
+    // Track files that need to be CREATED (mentioned in task but don't exist)
+    const filesToCreate = mentionedFiles.filter(f => !validFiles.includes(f));
+    if (this.debug && filesToCreate.length > 0) {
+      console.log(`[DEBUG] Files mentioned but not found/skipped: ${filesToCreate.join(', ')}`);
     }
 
     // Add Drupal service registry context for Drupal projects
@@ -2061,10 +2064,16 @@ export class WorkflowEngine {
       }
     }
 
+    // Build critical file creation notice for files that don't exist
+    let fileCreationNotice = '';
+    if (filesToCreate.length > 0) {
+      fileCreationNotice = `\n\n## ⚠️ FILES TO CREATE (CRITICAL)\n\nThe following files are mentioned in the task details but DO NOT EXIST in the codebase:\n${filesToCreate.map(f => `- **${f}** (DOES NOT EXIST - YOU MUST CREATE THIS FILE)`).join('\n')}\n\n**YOU MUST create these files using operation "create".** Do NOT return an empty files array. Do NOT claim these files "already exist" - they don't. Similar files in other directories do NOT fulfill this requirement.\n`;
+    }
+
     return {
       codebaseContext: contexts.length > 0
-        ? `## Existing Code Files (MODIFY THESE, DO NOT CREATE NEW FILES UNLESS NECESSARY)\n${contexts.join('\n---\n')}${serviceContext}`
-        : serviceContext,
+        ? `## Existing Code Files (MODIFY THESE, DO NOT CREATE NEW FILES UNLESS NECESSARY)\n${contexts.join('\n---\n')}${serviceContext}${fileCreationNotice}`
+        : `${serviceContext}${fileCreationNotice}`,
       targetFiles: validFiles.length > 0 ? validFiles.join('\n') : undefined,
       existingCode: existingCodeSections.length > 0 ? existingCodeSections.join('\n---\n') : undefined,
     };
