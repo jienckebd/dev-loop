@@ -13,10 +13,10 @@ const configSchema = z.object({
     path: z.string().default('.devloop/metrics.json'),
   }).optional(),
   ai: z.object({
-    provider: z.enum(['anthropic', 'openai', 'gemini', 'ollama']),
-    model: z.string(),
+    provider: z.enum(['anthropic', 'openai', 'gemini', 'ollama', 'cursor']),
+    model: z.string(), // For cursor: 'auto' (default) or specific model name
     fallback: z.string().optional(),
-    apiKey: z.string().optional(),
+    apiKey: z.string().optional(), // Not used for cursor provider
     maxTokens: z.number().optional(),
     maxContextChars: z.number().optional(),
   }),
@@ -238,7 +238,7 @@ const configSchema = z.object({
     }).optional(),
     // NEW: Config overlay from PRD (merged at runtime)
     configOverlay: z.record(z.any()).optional(),
-    
+
     // NEW: Product identity and Schema.org mapping
     product: z.object({
       id: z.string(),
@@ -258,7 +258,7 @@ const configSchema = z.object({
         category: z.string().optional(),
       }).optional(),
     }).optional(),
-    
+
     // NEW: OpenAPI schema definition
     openapi: z.object({
       specUrl: z.string().url().optional(),
@@ -269,7 +269,7 @@ const configSchema = z.object({
       schemasToImport: z.array(z.string()).optional(),
       fieldTypeMapping: z.record(z.string(), z.string()).optional(),
     }).optional(),
-    
+
     // NEW: Entity generation templates
     entityGeneration: z.object({
       entityType: z.object({
@@ -299,7 +299,7 @@ const configSchema = z.object({
         })).optional(),
       }).passthrough().optional(), // Allows bundle-specific mappings
     }).optional(),
-    
+
     // NEW: Schema.org mapping configuration
     schemaOrg: z.object({
       namespace: z.string().url().default('https://schema.org/'),
@@ -322,7 +322,7 @@ const configSchema = z.object({
         })).optional(),
       }).optional(),
     }).optional(),
-    
+
     // NEW: Validation and acceptance criteria
     validation: z.object({
       criteriaFormat: z.enum(['gherkin', 'assertions', 'custom']).default('gherkin'),
@@ -354,7 +354,7 @@ const configSchema = z.object({
         testSuite: z.string(),
       })).optional(),
     }).optional(),
-    
+
     // NEW: Sync and feed configuration
     sync: z.object({
       feeds: z.array(z.object({
@@ -379,7 +379,7 @@ const configSchema = z.object({
         notifyOnConflict: z.boolean().default(false),
       }).optional(),
     }).optional(),
-    
+
     // NEW: PRD relationships
     relationships: z.object({
       dependsOn: z.array(z.object({

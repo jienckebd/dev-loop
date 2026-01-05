@@ -2,7 +2,7 @@ export type TaskStatus = 'pending' | 'in-progress' | 'done' | 'blocked';
 
 export type InterventionMode = 'autonomous' | 'review' | 'hybrid';
 
-export type AIProviderName = 'anthropic' | 'openai' | 'gemini' | 'ollama';
+export type AIProviderName = 'anthropic' | 'openai' | 'gemini' | 'ollama' | 'cursor';
 
 export type TestRunnerName = 'playwright' | 'cypress';
 
@@ -156,7 +156,7 @@ export interface Config {
   };
   // Framework-specific configuration
   framework?: FrameworkConfig;
-  
+
   // Enhanced context configuration
   context?: {
     // Include file skeleton in prompts (shows available helpers)
@@ -166,7 +166,7 @@ export interface Config {
     // Max helper signatures to show
     maxHelperSignatures?: number;
   };
-  
+
   // Pre-apply validation configuration
   preValidation?: {
     // Enable pre-apply validation
@@ -178,7 +178,7 @@ export interface Config {
     // Validate function references exist
     validateReferences?: boolean;
   };
-  
+
   // Pattern learning configuration
   patternLearning?: {
     // Enable pattern learning

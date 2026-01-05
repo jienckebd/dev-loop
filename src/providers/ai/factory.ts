@@ -4,6 +4,7 @@ import { AnthropicProvider } from './anthropic';
 import { OpenAIProvider } from './openai';
 import { GeminiProvider } from './gemini';
 import { OllamaProvider } from './ollama';
+import { CursorProvider } from './cursor';
 
 export class AIProviderFactory {
   static create(config: Config): AIProvider {
@@ -27,6 +28,11 @@ export class AIProviderFactory {
         return new GeminiProvider(providerConfig);
       case 'ollama':
         return new OllamaProvider(providerConfig);
+      case 'cursor':
+        return new CursorProvider({
+          ...providerConfig,
+          model: config.ai.model || 'auto',
+        });
       default:
         throw new Error(`Unknown AI provider: ${config.ai.provider}`);
     }

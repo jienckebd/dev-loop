@@ -100,9 +100,45 @@ export async function validateCommand(options: {
         spinner.succeed(`Node.js ${nodeVersion} OK`);
       }
 
-      // Check for API keys
-      if (!process.env.ANTHROPIC_API_KEY && !process.env.OPENAI_API_KEY) {
-        warnings.push('No AI API key found in environment (ANTHROPIC_API_KEY or OPENAI_API_KEY)');
+      // Check for API keys (skip for cursor provider)
+      // Load config to check provider
+      let config;
+      try {
+        config = await loadConfig(options.configPath);
+      } catch (error) {
+        // Config might not be available, skip provider check
+        config = null;
+      }
+
+      const aiProvider = config ? (config as any).ai?.provider : null;
+      if (aiProvider !== 'cursor') {
+        if (!process.env.ANTHROPIC_API_KEY && !process.env.OPENAI_API_KEY) {
+          warnings.push('No AI API key found in environment (ANTHROPIC_API_KEY or OPENAI_API_KEY)');
+        }
+      } else {
+        // Cursor provider validation
+        const requestsDir = path.join(process.cwd(), '.cursor-ai-requests');
+        const responsesDir = path.join(process.cwd(), '.cursor-ai-responses');
+
+        if (!await fs.pathExists(requestsDir)) {
+          if (options.fix) {
+            await fs.ensureDir(requestsDir);
+            spinner.succeed('Created .cursor-ai-requests directory');
+          } else {
+            warnings.push('.cursor-ai-requests directory does not exist (run with --fix to create)');
+          }
+        }
+
+        if (!await fs.pathExists(responsesDir)) {
+          if (options.fix) {
+            await fs.ensureDir(responsesDir);
+            spinner.succeed('Created .cursor-ai-responses directory');
+          } else {
+            warnings.push('.cursor-ai-responses directory does not exist (run with --fix to create)');
+          }
+        }
+
+        spinner.succeed('Cursor provider configured (uses Cursor account, no API key needed)');
       }
 
       // Check .devloop directory

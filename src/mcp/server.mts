@@ -27,25 +27,25 @@ const existingEnv = { ...process.env };
 let dotenvResult: { error?: Error; parsed?: Record<string, string> };
 if (fs.existsSync(envPath)) {
   dotenvResult = dotenvConfig({ path: envPath, override: true });
-  
+
   // Parse .env file manually to extract values (in case dotenv doesn't override properly)
   const envFileContent = fs.readFileSync(envPath, 'utf-8');
   const envLines = envFileContent.split('\n');
-  
+
   for (const line of envLines) {
     // Skip comments and empty lines
     const trimmed = line.trim();
     if (!trimmed || trimmed.startsWith('#')) continue;
-    
+
     // Parse KEY="value" or KEY=value format
     const match = trimmed.match(/^([A-Z_][A-Z0-9_]*)=(.+)$/);
     if (match) {
       const [, key, rawValue] = match;
-      
+
       // Check if existing value is a placeholder literal (e.g., "${VAR_NAME}")
       const existingValue = existingEnv[key];
       const isPlaceholder = existingValue && existingValue.startsWith('${') && existingValue.endsWith('}');
-      
+
       // Always override placeholders, or if key is one we care about
       if (isPlaceholder || ['ANTHROPIC_API_KEY', 'PERPLEXITY_API_KEY', 'OPENAI_API_KEY'].includes(key)) {
         let value = rawValue.trim();
@@ -606,6 +606,19 @@ addLoggedTool({
     }
   },
 });
+
+// ============================================
+// Cursor AI Tools (2)
+// ============================================
+
+// Import and register Cursor AI tools
+try {
+  const { registerCursorAITools } = await import('./tools/cursor-ai.js');
+  registerCursorAITools(mcp);
+} catch (error) {
+  console.error('Failed to register Cursor AI tools:', error);
+  // Continue without Cursor AI tools if import fails
+}
 
 // Start the MCP server
 mcp.start({ transportType: 'stdio' }).catch((error) => {
