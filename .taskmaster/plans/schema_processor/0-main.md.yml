@@ -1,0 +1,213 @@
+---
+# Dev-Loop PRD Metadata v1.2
+prd:
+  id: schema_processor_refactoring
+  version: 1.0.0
+  status: split
+  note: "This PRD has been split into 5 phased PRDs. See sub-PRDs below."
+
+execution:
+  strategy: phased
+  parallelism:
+    testGeneration: 4
+    testExecution: 4
+  maxIterations: 100
+  timeoutMinutes: 180
+
+dependencies:
+  externalModules: []
+  prds: []
+
+relationships:
+  dependedOnBy:
+    - prd: schema_processor_schema_foundation
+      features: [schema_expansion, plugin_types]
+    - prd: schema_processor_core_processors
+      features: [entity_display_processors, field_feature_processors, field_definition_processors]
+    - prd: schema_processor_integration_1
+      features: [integration_testing, regression_fixes]
+    - prd: schema_processor_advanced_processors
+      features: [entity_type_processors, computed_field_processors]
+    - prd: schema_processor_final_integration
+      features: [final_integration, production_readiness]
+
+requirements:
+  idPattern: "TASK-{id}"
+  phases:
+    - id: 1
+      name: "Schema Expansion"
+      parallel: false
+    - id: 2
+      name: "Entity Display Processors"
+      parallel: false
+      dependsOn: [1]
+    - id: 3
+      name: "Field Feature Processors"
+      parallel: false
+      dependsOn: [1]
+    - id: 4
+      name: "Field Definition Processors"
+      parallel: false
+      dependsOn: [1]
+    - id: 5
+      name: "Entity Operation & Context Processors"
+      parallel: false
+      dependsOn: [1]
+    - id: 6
+      name: "Integration & Testing"
+      parallel: false
+      dependsOn: [2, 3, 4, 5]
+    - id: 7
+      name: "Entity Type Schema Processors"
+      parallel: false
+      dependsOn: [1]
+    - id: 8
+      name: "Computed Field Schema Processors"
+      parallel: false
+      dependsOn: [1]
+    - id: 9
+      name: "Field Set Schema Processors"
+      parallel: false
+      dependsOn: [1]
+    - id: 10
+      name: "Final Integration & Testing"
+      parallel: false
+      dependsOn: [2, 3, 4, 5, 6, 7, 8, 9]
+
+testing:
+  directory: tests/playwright/bd/
+  framework: playwright
+  parallel: true
+  workers: 4
+  bundledTests: true
+  cleanupArtifacts: true
+
+---
+
+# Schema Processor Refactoring PRD
+
+> **This PRD has been split into 5 phased PRDs for better execution and management.**
+
+This document serves as an index and overview. For detailed implementation plans, see the individual phased PRDs listed below.
+
+## Overview
+
+Refactor entity display features, field features, and field definition processing from custom service methods into `schema_processor` plugins. This will centralize configuration-driven behavior, make the system more extensible, and enable new features to be added via configuration rather than code.
+
+## Split PRD Structure
+
+The original PRD (5804 lines, 8 phases, ~100 tasks) has been split into 5 logically grouped PRDs:
+
+```mermaid
+graph TD
+    PRD1[PRD 1: Schema Foundation<br/>Phase 1] --> PRD2[PRD 2: Core Processors<br/>Phases 2-5]
+    PRD1 --> PRD4[PRD 4: Advanced Processors<br/>Phases 7-9]
+    PRD2 --> PRD3[PRD 3: Integration 1<br/>Phase 6]
+    PRD4 --> PRD5[PRD 5: Final Integration<br/>Phase 10]
+    PRD3 --> PRD5
+
+    style PRD1 fill:#e1f5ff
+    style PRD2 fill:#fff4e1
+    style PRD3 fill:#ffe1f5
+    style PRD4 fill:#fff4e1
+    style PRD5 fill:#ffe1f5
+```
+
+## Phased PRDs
+
+### [PRD 1: Schema Processor Schema Foundation](./schema_processor/1-schema-foundation.md.yml)
+
+**Status**: Ready for execution
+**Sequence**: 1
+**Dependencies**: None (foundation PRD)
+**Scope**: Phase 1 only (TASK-101 through TASK-117)
+
+- Schema expansion for schema processor plugin type
+- Execution context, input/output, conditional execution schemas
+- Dependency management, processing order, transformation pipeline
+- Error handling, result handling, validation schemas
+- Built-in processors and schema-attached processors
+- Condition and ValidationRule plugin type creation
+
+### [PRD 2: Schema Processor Core Processors](./schema_processor/2-core-processors.md.yml)
+
+**Status**: Ready for execution
+**Sequence**: 2
+**Dependencies**: PRD 1 (schema foundation)
+**Scope**: Phases 2, 3, 4, 5 (TASK-201 through TASK-267)
+
+- Entity Display Processors (11 processors)
+- Field Feature Processors (10 processors)
+- Field Definition Processors (4 processors)
+- Service method refactoring to use SchemaProcessorManager
+- Hook integration updates
+
+### [PRD 3: Schema Processor Integration Testing (Round 1)](./schema_processor/3-integration.md.yml)
+
+**Status**: Ready for execution
+**Sequence**: 3
+**Dependencies**: PRD 2 (core processors)
+**Scope**: Phase 6 (TASK-501 through TASK-507)
+
+- Run all three Playwright test suites
+- Fix regressions
+- Performance testing
+- Documentation updates
+- Code cleanup and deprecation markers
+
+### [PRD 4: Schema Processor Advanced Processors](./schema_processor/4-advanced-processors.md.yml)
+
+**Status**: Ready for execution
+**Sequence**: 4
+**Dependencies**: PRD 1 (schema foundation)
+**Scope**: Phases 7, 8, 9 (TASK-601 through TASK-717)
+
+**Note**: Can run parallel to PRD 2-3 after PRD 1 completes.
+
+- Entity Type Schema Processors (17 processors)
+- Computed Field Schema Processors (12 processors)
+- Refactor EntityHelper::normalizeDefinitions()
+- Refactor EntityFieldHelper::buildBundleFieldDefinitions()
+
+### [PRD 5: Schema Processor Final Integration](./schema_processor/5-final-integration.md.yml)
+
+**Status**: Ready for execution
+**Sequence**: 5
+**Dependencies**: PRD 3, PRD 4 (both integration rounds)
+**Scope**: Phase 10 (expanded integration testing)
+
+- Final integration testing across all processors
+- Cross-processor validation
+- System-wide performance validation
+- Complete documentation
+- Final code review
+
+## Execution Sequence
+
+1. **Execute PRD 1** (Schema Foundation) - Must complete first
+2. **Execute PRD 2** (Core Processors) - After PRD 1
+3. **Execute PRD 4** (Advanced Processors) - Can start after PRD 1 (parallel to PRD 2)
+4. **Execute PRD 3** (Integration 1) - After PRD 2
+5. **Execute PRD 5** (Final Integration) - After PRD 3 and PRD 4
+
+## Key Files
+
+All PRDs are located in `.taskmaster/planning/schema_processor/`:
+- `1-schema-foundation.md.yml` - PRD 1
+- `2-core-processors.md.yml` - PRD 2
+- `3-integration.md.yml` - PRD 3
+- `4-advanced-processors.md.yml` - PRD 4
+- `5-final-integration.md.yml` - PRD 5
+- `README.md` - Index/manifest (see below)
+
+## Reference Documentation
+
+See [README.md](./schema_processor/README.md) for:
+- Complete dependency graph
+- Execution sequence diagram
+- Quick reference to key decisions
+- Links to all sub-PRDs
+
+## Original Content
+
+The full original PRD content (5804 lines) has been preserved and distributed across the phased PRDs. All content, tasks, and acceptance criteria remain intact.

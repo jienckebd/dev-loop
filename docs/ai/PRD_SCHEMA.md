@@ -1,5 +1,5 @@
 ---
-title: "Dev-Loop PRD Frontmatter Schema v1.0"
+title: "Dev-Loop PRD Frontmatter Schema v1.2"
 type: "reference"
 category: "prd"
 audience: "both"
@@ -10,7 +10,7 @@ related_docs:
 prerequisites: []
 estimated_read_time: 30
 ---
-# Dev-Loop PRD Frontmatter Schema v1.0
+# Dev-Loop PRD Frontmatter Schema v1.2
 
 ## Overview
 
@@ -28,7 +28,7 @@ This document defines the complete schema for dev-loop PRD frontmatter. The fron
 
 ```yaml
 ---
-# Dev-Loop PRD Metadata v1.0
+# Dev-Loop PRD Metadata v1.2
 prd: {...}
 execution: {...}
 dependencies: {...}
@@ -52,21 +52,45 @@ Metadata about the PRD itself.
 prd:
   id: string          # Required: Unique identifier (alphanumeric, underscores, hyphens)
   version: string     # Required: Semantic version (e.g., "1.0.0")
-  status: string      # Required: "ready" | "draft" | "deprecated"
+  status: string      # Required: "ready" | "draft" | "deprecated" | "split"
+  parentPrd: string   # Optional: Parent PRD ID (for child PRDs in split PRD sets)
+  prdSequence: integer # Optional: Sequence number in parent PRD (for child PRDs)
+  note: string        # Optional: Additional notes or clarification
 ```
 
 **Examples:**
 ```yaml
+# Standalone PRD
 prd:
   id: design_system
   version: 1.1.0
   status: ready
+
+# Parent PRD (split into child PRDs)
+prd:
+  id: schema_processor_refactoring
+  version: 1.0.0
+  status: split
+  note: "This PRD has been split into 5 phased PRDs. See sub-PRDs below."
+
+# Child PRD (part of a split PRD set)
+prd:
+  id: schema_processor_schema_foundation
+  version: 1.0.0
+  status: ready
+  parentPrd: schema_processor_refactoring
+  prdSequence: 1
 ```
 
 **Validation Rules:**
 - `id` must be unique across all PRDs
 - `version` should follow semantic versioning
 - `status: ready` required for dev-loop execution
+- `status: split` indicates parent PRD that has been split into child PRDs
+- `parentPrd` must reference a valid PRD ID when present
+- `prdSequence` must be a positive integer when present
+- Child PRDs must have `parentPrd` and `prdSequence` set
+- Parent PRD with `status: split` should have child PRDs listed in `relationships.dependedOnBy`
 
 ---
 
@@ -77,30 +101,95 @@ Execution strategy and limits.
 ```yaml
 execution:
   strategy: string            # Required: "phased" (only supported value)
+  mode: string                # Optional: "hybrid" | "autonomous" (default: "autonomous")
   waitForPrds: boolean        # Optional: Block until PRD dependencies complete (default: false)
+  intervention: object        # Optional: Intervention rules for hybrid mode
+    mode: string              # "hybrid" | "autonomous" | "manual"
+    pauseOn: array            # Array of trigger strings (e.g., "schema-changes", "plugin-creation")
+    autoApprove: array        # Array of auto-approved change types (e.g., "test-only", "documentation")
+    riskyPatterns: array     # Array of file patterns requiring review
+      - pattern: string       # File pattern (regex or glob)
+        reason: string        # Explanation of why this pattern is risky
+        requireReview: boolean # Whether to require manual review
   parallelism:
     testGeneration: integer   # Optional: Parallel test generation workers (default: 4)
     testExecution: integer    # Optional: Parallel test execution workers (default: 4)
+    processorCreation: integer # Optional: Parallel processor creation workers (default: 1)
+    taskExecution: integer    # Optional: Parallel task execution workers (default: 1)
   maxIterations: integer      # Optional: Maximum loop iterations (default: 100)
   timeoutMinutes: integer     # Optional: Overall timeout in minutes (default: 180)
+  retry: object               # Optional: Retry configuration
+    enabled: boolean          # Enable retry logic (default: false)
+    maxRetries: integer       # Maximum number of retries (default: 3)
+    retryOn: array            # Array of error types to retry on
+      - string                # Error type (e.g., "test-timeout", "schema-validation-failure")
+    backoff: string           # Backoff strategy: "exponential" | "linear" | "fixed" (default: "exponential")
+  rollback: object            # Optional: Rollback configuration
+    enabled: boolean          # Enable rollback (default: false)
+    strategy: string          # Rollback strategy: "phase-level" | "task-level" | "checkpoint"
+    checkpointOn: array       # Array of events to create checkpoints
+      - string                # Event type (e.g., "phase-completion", "test-pass")
+    restoreStrategy: string   # Restore strategy: "git-checkout" | "snapshot" | "manual"
 ```
 
 **Examples:**
 ```yaml
 execution:
   strategy: phased
-  waitForPrds: true          # Wait for design_system_prd to complete
+  mode: hybrid
+  waitForPrds: true
+  intervention:
+    mode: hybrid
+    pauseOn:
+      - schema-changes
+      - plugin-creation
+      - service-method-refactoring
+    autoApprove:
+      - test-only
+      - documentation
+      - code-comments
+    riskyPatterns:
+      - pattern: '\.schema\.yml$'
+        reason: "Schema files affect configuration structure"
+        requireReview: true
+      - pattern: 'bd\.plugin_type\.yml'
+        reason: "Plugin type definitions affect discovery"
+        requireReview: true
   parallelism:
     testGeneration: 4
-    testExecution: 3
-  maxIterations: 100
-  timeoutMinutes: 180
+    testExecution: 4
+    processorCreation: 1
+    taskExecution: 1
+  maxIterations: 150
+  timeoutMinutes: 240
+  retry:
+    enabled: true
+    maxRetries: 3
+    retryOn:
+      - test-timeout
+      - schema-validation-failure
+      - plugin-discovery-failure
+    backoff: exponential
+  rollback:
+    enabled: true
+    strategy: phase-level
+    checkpointOn:
+      - phase-completion
+      - test-pass
+      - schema-validation-pass
+    restoreStrategy: git-checkout
 ```
 
 **Validation Rules:**
 - `strategy` must be "phased"
+- `mode` must be "hybrid" or "autonomous"
+- `intervention.mode` must be "hybrid", "autonomous", or "manual"
 - `parallelism` values must be positive integers
 - `maxIterations` and `timeoutMinutes` must be positive integers
+- `retry.maxRetries` must be a positive integer
+- `retry.backoff` must be "exponential", "linear", or "fixed"
+- `rollback.strategy` must be "phase-level", "task-level", or "checkpoint"
+- `rollback.restoreStrategy` must be "git-checkout", "snapshot", or "manual"
 
 ---
 
@@ -132,6 +221,30 @@ phases:
     deferredReason: string    # Required if status: "deferred" - explanation of why deferred
     note: string              # Optional: Additional notes or clarification
     file: string              # Optional: Path to phase detail file (for directory-based PRDs)
+    checkpoint: boolean        # Optional: Enable checkpointing for this phase (default: false)
+    validation: object         # Optional: Phase validation configuration
+      after: array            # Array of completion triggers
+        - string              # Trigger type (e.g., "schema-files-created", "plugin-types-created")
+      tests: array            # Array of test commands
+        - string              # Test command (e.g., "ddev exec bash -c 'drush cr'")
+      assertions: array       # Array of assertion types
+        - string              # Assertion type (e.g., "no-php-errors", "schema-validates")
+    tasks: array              # Optional: Array of task objects with test specifications
+      - id: string            # Task ID (must match idPattern)
+        testSpec: object      # Test specification object
+          type: string        # Test type (e.g., "playwright")
+          file: string        # Test file path
+          describe: string   # Test suite description
+          cases: array        # Array of test cases
+            - name: string    # Test case name
+              steps: array    # Array of test steps
+                - action: string  # Action type (e.g., "execute-php", "assert")
+                  command: string # Command to execute (if action requires it)
+                  type: string    # Assertion type (if action is "assert")
+                  # ... other action-specific properties
+          dataSetup: array    # Array of data setup requirements
+            - type: string    # Data type (e.g., "config")
+              path: string    # Path to data file
 ```
 
 **Directory-Based PRDs:**
@@ -222,6 +335,34 @@ requirements:
     - id: 1
       name: "Foundation"
       parallel: false
+      checkpoint: true
+      validation:
+        after:
+          - schema-files-created
+          - plugin-types-created
+          - annotation-updated
+        tests:
+          - "ddev exec bash -c 'drush cr'"
+          - "script/validate-schema.php"
+        assertions:
+          - no-php-errors
+          - schema-validates
+          - plugin-types-discoverable
+      tasks:
+        - id: "TASK-101"
+          testSpec:
+            type: "playwright"
+            file: "tests/playwright/bd/entity-display-features.spec.ts"
+            describe: "Schema Discovery Tests"
+            cases:
+              - name: "should discover schema processor plugin type after schema expansion"
+                steps:
+                  - action: "execute-php"
+                    command: "ddev exec bash -c 'drush ev \"echo \\\\Drupal::service(\\\\\\\"plugin.manager.schema_processor\\\\\\\") ? \\\\\"OK\\\\\" : \\\\\"FAIL\\\\\";\"'"
+                  - action: "assert"
+                    type: "service-exists"
+                    service: "plugin.manager.schema_processor"
+            dataSetup: []
     - id: 2
       name: "Feature A"
       parallel: false
@@ -284,17 +425,21 @@ testing:
   workers: integer            # Optional: Number of parallel workers (default: 4)
   bundledTests: boolean       # Optional: Include existing tests (default: false)
   cleanupArtifacts: boolean   # Optional: Clean up test artifacts (default: true)
+  timeout: integer            # Optional: Test timeout in milliseconds (default: 30000)
+  retries: integer            # Optional: Number of test retries on failure (default: 0)
 ```
 
 **Examples:**
 ```yaml
 testing:
-  directory: tests/playwright/design-system/
+  directory: tests/playwright/bd/
   framework: playwright
   parallel: true
   workers: 4
-  bundledTests: false
+  bundledTests: true
   cleanupArtifacts: true
+  timeout: 300000
+  retries: 2
 ```
 
 ---
@@ -309,6 +454,8 @@ External module and PRD dependencies.
 dependencies:
   externalModules: array      # Optional: Array of external module names
   prds: array                 # Optional: Array of PRD IDs or PRD objects this PRD depends on
+  codeRequirements: array     # Optional: Array of code/file requirements
+    - string                  # Requirement description (e.g., "bd module exists at docroot/modules/share/bd/")
 ```
 
 **Simple PRD References (PRD IDs):**
@@ -332,11 +479,25 @@ dependencies:
       waitFor: true  # Block until this PRD completes
 ```
 
+**Code Requirements:**
+```yaml
+dependencies:
+  externalModules: []
+  prds: []
+  codeRequirements:
+    - bd module exists at docroot/modules/share/bd/
+    - SchemaProcessorManager exists at docroot/modules/share/bd/src/Plugin/SchemaProcessor/SchemaProcessorManager.php
+    - ConfigSchemaSubform patterns understood from docroot/modules/share/bd/src/Element/ConfigSchemaSubform.php
+    - Existing schema patterns in docroot/modules/share/*/config/schema/
+```
+
 **How it works:**
 - `externalModules`: Validated before PRD execution (module must be installed/enabled)
 - `prds`: Combined with `execution.waitForPrds: true` to block until dependencies complete
+- `codeRequirements`: Validated before PRD execution (code/files must exist or be accessible)
 - PRD references can be simple IDs (string) or detailed objects with `id`, `path`, and `waitFor` properties
 - When using directory-based PRDs, reference the main `README.md` file or specific phase files
+- Code requirements are checked at PRD validation time to ensure prerequisites are met
 
 ---
 
@@ -547,10 +708,22 @@ relationships:
       - targetType: string
         relationship: string
         cardinality: string   # "one_to_one" | "one_to_many" | "many_to_many"
+  prdSet: object              # Optional: PRD set coordination (for split PRDs)
+    parentPrd: string         # Parent PRD ID (for child PRDs)
+    childPrds: array          # Array of child PRD IDs with sequence numbers
+      - id: string            # Child PRD ID
+        sequence: integer     # Sequence number in parent PRD
+    phaseCoordination: object # Phase validation across PRD set
+      globalPhaseNumbering: boolean # Phases numbered globally across set (default: false)
+      phaseValidation: object # Phase validation rules
+        noOverlap: boolean    # Prevent phase ID overlap across PRDs (default: true)
+        sequential: boolean   # Enforce sequential phase numbering (default: false)
+        dependencyCrossPrd: boolean # Allow phase dependencies across PRDs (default: false)
 ```
 
 **Examples:**
 ```yaml
+# Standalone PRD
 relationships:
   dependsOn: []
   dependedOnBy:
@@ -564,7 +737,44 @@ relationships:
       - targetType: dom_token
         relationship: references_tokens
         cardinality: many_to_many
+
+# Parent PRD (split into child PRDs)
+relationships:
+  dependsOn: []
+  dependedOnBy:
+    - prd: schema_processor_schema_foundation
+      features: [schema_expansion, plugin_types]
+    - prd: schema_processor_core_processors
+      features: [entity_display_processors, field_feature_processors]
+  prdSet:
+    parentPrd: schema_processor_refactoring
+    childPrds:
+      - id: schema_processor_schema_foundation
+        sequence: 1
+      - id: schema_processor_core_processors
+        sequence: 2
+      - id: schema_processor_integration_1
+        sequence: 3
+    phaseCoordination:
+      globalPhaseNumbering: true
+      phaseValidation:
+        noOverlap: true
+        sequential: false
+        dependencyCrossPrd: true
+
+# Child PRD (part of a split PRD set)
+relationships:
+  dependsOn: []
+  prdSet:
+    parentPrd: schema_processor_refactoring
+    phaseCoordination:
+      globalPhaseNumbering: true
+      phaseValidation:
+        noOverlap: true
+        dependencyCrossPrd: true
 ```
+
+**Note:** The `relationships` section is the current implementation in dev-loop code. Both `PrdMetadata` interface and Zod schema use `relationships`.
 
 ---
 
@@ -594,18 +804,204 @@ config:
   contextFiles: object        # Context file management
     alwaysInclude: array      # Always-included file paths
     taskSpecific: object      # Task ID → file paths mapping
-  testGeneration: object      # Test generation configuration
-    imports: array
-    setupPattern: string
-    selectors: object
-    template: string
-    isolationRules: array
-    antiPatterns: array
+  context: object             # Enhanced context providers
+    codeContext: object      # Code context configuration
+      requiredFiles: array   # Array of required file paths
+      searchPatterns: array  # Array of search patterns for code discovery
+      frameworkPatterns: array # Array of framework-specific patterns
+    patternLearning: object  # Pattern learning configuration
+      enabled: boolean        # Enable pattern learning (default: false)
+      patternsPath: string   # Path to patterns JSON file
+      learnFrom: array        # Array of sources to learn from
+        - string             # Source type (e.g., "successful-schema-additions")
+      injectGuidance: boolean # Inject learned patterns into AI prompts
+    debugging: object         # Debugging strategy configuration
+      strategy: string        # Debugging strategy (e.g., "framework-aware")
+      framework: string       # Framework type for error classification
+      errorClassification: array # Array of error type classifications
+        - type: string       # Error type (e.g., "schema-validation-error")
+          investigation: string # Investigation level (e.g., "required")
+          suggestion: string # Suggested fix or investigation path
+      rootCauseAnalysis: object # Root cause analysis configuration
+        enabled: boolean      # Enable root cause analysis
+        trackPartialFixes: boolean # Track partial fixes
+        identifySystemicIssues: boolean # Identify systemic issues
+  validation: object          # Validation gates configuration
+    gates: array              # Array of validation gate objects
+      - phase: integer        # Phase ID this gate applies to
+        name: string          # Gate name/identifier
+        tests: array          # Array of test commands
+          - command: string   # Test command
+            description: string # Test description
+            expected: string  # Expected result (optional)
+        assertions: array     # Array of assertion types
+          - string           # Assertion type (e.g., "all-tests-pass", "no-php-errors")
+  errorHandling: object       # Error handling configuration
+    typeSpecific: object      # Type-specific error handling
+      [errorType]: object     # Error type configuration
+        retry: boolean        # Enable retry for this error type
+        maxRetries: integer   # Maximum retries for this type
+        diagnostics: array    # Diagnostic commands to run
+  ai: object                  # AI configuration
+    provider: string          # AI provider (e.g., "openai", "anthropic")
+    contextInjection: object  # Context injection configuration
+      enabled: boolean        # Enable context injection
+      maxTokens: integer      # Maximum tokens for context
+    customInstructions: string # Custom instructions for AI agents
+  progress: object            # Progress tracking configuration
+    tracking: boolean         # Enable progress tracking (default: false)
+    metrics: object          # Metrics collection
+      enabled: boolean       # Enable metrics collection
+      path: string           # Path to metrics JSON file
+      track: array          # Array of metrics to track
+        - string            # Metric name (e.g., "tasksCompleted", "testsPassed")
+    checkpoints: array       # Array of checkpoint configurations
+      - phase: integer       # Phase ID for checkpoint
+        name: string        # Checkpoint name
+  integration: object         # Integration coordination
+    prdDependencies: object  # PRD dependency tracking
+      trackState: boolean    # Track state between PRDs
+      statePath: string      # Path to state JSON file
+    stateSharing: object     # State sharing configuration
+      enabled: boolean       # Enable state sharing
+      sharedKeys: array     # Array of state keys to share
+  testGeneration: object      # Enhanced test generation configuration
+    enabled: boolean          # Enable test generation (default: true)
+    templates: object         # Test templates
+      [templateName]: object # Template configuration
+        file: string         # Template file path
+        variables: array     # Array of template variables
+    patterns: array           # Test generation patterns
+      - match: string        # Pattern to match (regex)
+        template: string     # Template name to use
+        generateAfter: string # When to generate (e.g., "code-creation")
+  testArtifacts: object       # Test artifact management
+    cleanup: boolean         # Clean up artifacts after tests (default: true)
+    preserve: array         # Array of artifact patterns to preserve
+  testExecution: object       # Enhanced test execution configuration
+    retryFailed: boolean     # Retry failed tests (default: false)
+    maxRetries: integer      # Maximum retries for failed tests
+    timeout: integer         # Test execution timeout (milliseconds)
+  testCoverage: object        # Test coverage requirements
+    required: boolean         # Require coverage thresholds (default: false)
+    thresholds: object       # Coverage thresholds
+      lines: integer         # Line coverage percentage
+      functions: integer     # Function coverage percentage
+      branches: integer     # Branch coverage percentage
+    perPhase: array          # Per-phase coverage requirements
+      - phase: integer       # Phase ID
+        minTests: integer   # Minimum number of tests
+        requiredScenarios: array # Array of required test scenarios
 ```
 
 **Examples:**
 
-See `.taskmaster/docs/DEV_LOOP_PRD_FEATURES.md` for comprehensive examples of config sections.
+**Example 1: Context Configuration**
+```yaml
+config:
+  context:
+    codeContext:
+      requiredFiles:
+        - docroot/modules/share/bd/src/Plugin/SchemaProcessor/SchemaProcessorManager.php
+        - docroot/modules/share/bd/src/Element/ConfigSchemaSubform.php
+        - docroot/modules/share/bd/config/schema/bd.schema.yml
+      searchPatterns:
+        - "schema_processor"
+        - "SchemaProcessor"
+        - "plugin.schema-processor"
+      frameworkPatterns:
+        - drupal-plugin-type
+        - drupal-config-schema
+        - drupal-service-injection
+    patternLearning:
+      enabled: true
+      patternsPath: .devloop/patterns.json
+      learnFrom:
+        - successful-schema-additions
+        - plugin-type-definitions
+        - validation-patterns
+      injectGuidance: true
+    debugging:
+      strategy: framework-aware
+      framework: drupal
+      errorClassification:
+        - type: schema-validation-error
+          investigation: required
+          suggestion: "Check schema syntax and TypedConfigManager discovery"
+        - type: plugin-discovery-error
+          investigation: required
+          suggestion: "Verify plugin_type.yml and annotation format"
+      rootCauseAnalysis:
+        enabled: true
+        trackPartialFixes: true
+        identifySystemicIssues: true
+```
+
+**Example 2: Validation Gates**
+```yaml
+config:
+  validation:
+    gates:
+      - phase: 2
+        name: "entity-display-processors-gate"
+        tests:
+          - command: "npm test -- entity-display-features.spec.ts"
+            description: "Entity display processor tests"
+          - command: "ddev logs -s web | grep -i 'PHP Fatal' | wc -l"
+            expected: "0"
+            description: "No PHP fatal errors"
+        assertions:
+          - all-processors-functional
+          - no-php-errors
+      - phase: 6
+        name: "integration-test-gate"
+        tests:
+          - command: "npm test -- entity-display-features.spec.ts"
+            description: "Entity display features tests"
+          - command: "npm test -- field-features.spec.ts"
+            description: "Field features tests"
+        assertions:
+          - all-tests-pass
+          - no-regressions
+```
+
+**Example 3: Progress Tracking**
+```yaml
+config:
+  progress:
+    tracking: true
+    metrics:
+      enabled: true
+      path: .devloop/metrics/schema_processor_schema_foundation.json
+      track:
+        - tasksCompleted
+        - testsPassed
+        - schemaFilesCreated
+        - pluginTypesCreated
+    checkpoints:
+      - phase: 1
+        name: "schema-foundation-checkpoint"
+```
+
+**Example 4: Test Coverage Requirements**
+```yaml
+config:
+  testCoverage:
+    required: true
+    thresholds:
+      lines: 90
+      functions: 85
+      branches: 80
+    perPhase:
+      - phase: 10
+        minTests: 20
+        requiredScenarios:
+          - end-to-end-processor-chains
+          - system-wide-validation
+          - production-readiness
+```
+
+See `.taskmaster/docs/DEV_LOOP_PRD_FEATURES.md` for additional comprehensive examples of config sections.
 
 **Key Config Sections:**
 
@@ -613,7 +1009,16 @@ See `.taskmaster/docs/DEV_LOOP_PRD_FEATURES.md` for comprehensive examples of co
 2. **config.drupal** - Drupal-specific settings
 3. **config.[prdId]** - PRD-specific configuration (e.g., `config.designSystem`, `config.wizard`)
 4. **config.contextFiles** - Context file management for AI agents
-5. **config.testGeneration** - Auto-test generation settings
+5. **config.context** - Enhanced context providers (codeContext, patternLearning, debugging)
+6. **config.validation** - Validation gates for phase-level validation
+7. **config.errorHandling** - Type-specific error handling and retry logic
+8. **config.ai** - AI provider settings and context injection
+9. **config.progress** - Progress tracking and metrics collection
+10. **config.integration** - PRD dependencies and state sharing
+11. **config.testGeneration** - Enhanced test generation with templates and patterns
+12. **config.testArtifacts** - Test artifact management
+13. **config.testExecution** - Enhanced test execution configuration
+14. **config.testCoverage** - Test coverage requirements and thresholds
 
 ---
 
@@ -687,14 +1092,106 @@ phases:
 
 | Field | Type | Required | Default | Allowed Values |
 |-------|------|----------|---------|----------------|
-| `prd.status` | string | Yes | - | `ready`, `draft`, `deprecated` |
+| `prd.status` | string | Yes | - | `ready`, `draft`, `deprecated`, `split` |
+| `prd.parentPrd` | string | No | - | Valid PRD ID (required for child PRDs) |
+| `prd.prdSequence` | integer | No | - | Positive integer (required for child PRDs) |
 | `execution.strategy` | string | Yes | - | `phased` |
+| `execution.mode` | string | No | `autonomous` | `hybrid`, `autonomous` |
+| `execution.intervention.mode` | string | No | - | `hybrid`, `autonomous`, `manual` |
+| `execution.retry.backoff` | string | No | `exponential` | `exponential`, `linear`, `fixed` |
+| `execution.rollback.strategy` | string | No | - | `phase-level`, `task-level`, `checkpoint` |
+| `execution.rollback.restoreStrategy` | string | No | - | `git-checkout`, `snapshot`, `manual` |
 | `requirements.idPattern` | string | Yes | - | Must contain `{id}` placeholder |
 | `phase.id` | integer | Yes | - | 0-999 |
 | `phase.parallel` | boolean | No | `false` | `true`, `false` |
 | `phase.status` | string | No | `pending` | `pending`, `complete`, `mostly_complete`, `deferred`, `optional`, `low_priority` |
+| `phase.checkpoint` | boolean | No | `false` | `true`, `false` |
 | `testing.framework` | string | No | `playwright` | `playwright`, `cypress` |
 | `testing.parallel` | boolean | No | `true` | `true`, `false` |
+| `testing.timeout` | integer | No | `30000` | Positive integer (milliseconds) |
+| `testing.retries` | integer | No | `0` | Non-negative integer |
+
+### PRD Set Validation Rules
+
+**Rule 1: Parent PRD Status**
+- Parent PRD must have `status: "split"` when child PRDs exist
+- Child PRDs must have `status: "ready"` or `status: "draft"` (not "split")
+
+**Rule 2: Child PRD References**
+- Child PRDs must reference valid parent PRD via `prd.parentPrd`
+- Child PRDs must have `prd.prdSequence` set to a positive integer
+- Parent PRD must list all child PRDs in `relationships.dependedOnBy` or `relationships.prdSet.childPrds`
+
+**Rule 3: Phase ID Overlap (when globalPhaseNumbering: true)**
+- Phase IDs must not overlap across PRD set
+- Each phase ID must be unique across all PRDs in the set
+- Example: If PRD 1 has Phase 1, PRD 2 cannot also have Phase 1
+
+**Rule 4: Cross-PRD Phase Dependencies (when dependencyCrossPrd: true)**
+- Phases can reference phases in other PRDs via `dependsOn`
+- Referenced phases must exist in the PRD set
+- Circular dependencies across PRDs are not allowed
+
+**Rule 5: Execution Order**
+- Execution order must respect PRD dependencies (`dependencies.prds`)
+- Execution order must respect phase dependencies within and across PRDs
+- Parallel execution must be validated for safety (no conflicts)
+
+**Rule 6: Parallel Execution Validation**
+- PRDs can run in parallel only if:
+  - All their dependencies are satisfied
+  - They don't conflict (no shared resources, no overlapping phases)
+  - Parent PRD allows parallel execution
+
+**Example PRD Set Validation:**
+```yaml
+# Parent PRD
+prd:
+  id: schema_processor_refactoring
+  status: split  # ✅ Required for parent PRD
+
+relationships:
+  prdSet:
+    childPrds:
+      - id: schema_processor_schema_foundation
+        sequence: 1
+      - id: schema_processor_core_processors
+        sequence: 2
+    phaseCoordination:
+      globalPhaseNumbering: true
+      phaseValidation:
+        noOverlap: true
+        dependencyCrossPrd: true
+
+# Child PRD 1
+prd:
+  id: schema_processor_schema_foundation
+  status: ready  # ✅ Child PRD cannot be "split"
+  parentPrd: schema_processor_refactoring  # ✅ References parent
+  prdSequence: 1  # ✅ Sequence number matches parent's childPrds
+
+requirements:
+  phases:
+    - id: 1  # ✅ Phase 1 - unique in set
+      name: "Schema Expansion"
+
+# Child PRD 2
+prd:
+  id: schema_processor_core_processors
+  status: ready
+  parentPrd: schema_processor_refactoring
+  prdSequence: 2
+
+dependencies:
+  prds:
+    - schema_processor_schema_foundation  # ✅ Depends on PRD 1
+
+requirements:
+  phases:
+    - id: 2  # ✅ Phase 2 - unique in set, depends on Phase 1
+      name: "Entity Display Processors"
+      dependsOn: [1]  # ✅ Cross-PRD dependency allowed
+```
 
 ---
 
@@ -794,6 +1291,137 @@ phases:
     dependsOn: [1]
 ```
 
+### Mistake 6: Missing parentPrd for Child PRDs
+
+**Error:**
+```yaml
+# Child PRD missing parent reference
+prd:
+  id: schema_processor_core_processors
+  status: ready
+  prdSequence: 2  # ❌ ERROR: Missing parentPrd
+```
+
+**Fix:**
+```yaml
+prd:
+  id: schema_processor_core_processors
+  status: ready
+  parentPrd: schema_processor_refactoring  # ✅ Required for child PRDs
+  prdSequence: 2
+```
+
+### Mistake 7: Parent PRD Not Marked as "split"
+
+**Error:**
+```yaml
+# Parent PRD not marked as split
+prd:
+  id: schema_processor_refactoring
+  status: ready  # ❌ ERROR: Should be "split" when child PRDs exist
+```
+
+**Fix:**
+```yaml
+prd:
+  id: schema_processor_refactoring
+  status: split  # ✅ Required when PRD is split into child PRDs
+```
+
+### Mistake 8: Phase ID Overlap in PRD Set
+
+**Error:**
+```yaml
+# PRD 1
+phases:
+  - id: 1
+    name: "Foundation"
+
+# PRD 2 (in same set with globalPhaseNumbering: true)
+phases:
+  - id: 1  # ❌ ERROR: Phase ID overlaps with PRD 1
+    name: "Core Processors"
+```
+
+**Fix:**
+```yaml
+# PRD 1
+phases:
+  - id: 1
+    name: "Foundation"
+
+# PRD 2
+phases:
+  - id: 2  # ✅ Unique phase ID
+    name: "Core Processors"
+    dependsOn: [1]  # ✅ Can reference Phase 1 from PRD 1 if dependencyCrossPrd: true
+```
+
+### Mistake 9: Incorrect Intervention Mode Configuration
+
+**Error:**
+```yaml
+execution:
+  mode: hybrid
+  intervention:
+    mode: autonomous  # ❌ ERROR: Inconsistent with execution.mode
+    pauseOn: []  # No pause triggers but mode is hybrid
+```
+
+**Fix:**
+```yaml
+execution:
+  mode: hybrid
+  intervention:
+    mode: hybrid  # ✅ Matches execution.mode
+    pauseOn:
+      - schema-changes
+      - plugin-creation
+    autoApprove:
+      - test-only
+      - documentation
+```
+
+### Mistake 10: Missing deferredReason for Deferred Phases
+
+**Error:**
+```yaml
+phases:
+  - id: 7
+    status: deferred
+    # ❌ ERROR: Missing deferredReason
+```
+
+**Fix:**
+```yaml
+phases:
+  - id: 7
+    status: deferred
+    deferredReason: "Requires manual API updates for Drupal 11"  # ✅ Required
+```
+
+### Guidance on Intervention Modes
+
+**When to use `execution.mode: hybrid`:**
+- Schema changes or critical infrastructure modifications
+- Plugin type creation or major architectural changes
+- Changes that affect multiple systems or require careful review
+- High-risk changes that need human oversight
+
+**When to use `execution.mode: autonomous`:**
+- Test-only changes
+- Documentation updates
+- Code comments and formatting
+- Low-risk feature additions
+- Well-tested patterns and established workflows
+
+**Intervention Configuration Best Practices:**
+1. **Set `pauseOn` for risky operations**: Schema changes, plugin creation, service refactoring
+2. **Set `autoApprove` for safe operations**: Test-only, documentation, code comments
+3. **Use `riskyPatterns` for file-level protection**: Critical files that always need review
+4. **Match `intervention.mode` to `execution.mode`**: Keep them consistent
+5. **Start conservative**: Use hybrid mode for new PRDs, then relax as confidence grows
+
 ---
 
 ## Schema Versioning
@@ -802,14 +1430,31 @@ The schema version is indicated by the comment:
 
 ```yaml
 ---
-# Dev-Loop PRD Metadata v1.0
+# Dev-Loop PRD Metadata v1.2
 ```
 
 When the schema changes:
-- Update version number (e.g., v1.1)
+- Update version number (e.g., v1.3)
 - Document breaking changes
 - Update this schema document
 - Update template and examples
+
+### Migration from v1.0 to v1.2
+
+**Breaking Changes:**
+- Enhanced execution configuration (mode, intervention, retry, rollback)
+- Enhanced PRD metadata (parentPrd, prdSequence, note)
+- Enhanced dependencies (codeRequirements)
+- Enhanced phase schema (checkpoint, validation, tasks with testSpec)
+- Enhanced config sections (context, validation.gates, errorHandling, ai, progress, integration, testGeneration, testArtifacts, testExecution, testCoverage)
+- Enhanced testing (timeout, retries)
+
+**Migration Steps:**
+1. Update frontmatter comment from `v1.0` to `v1.2`
+2. Add new optional fields as needed for your PRD
+3. No changes required for existing PRDs - v1.2 is backward compatible with v1.0
+
+**Note:** The `relationships` section name remains unchanged in v1.2. The dev-loop codebase uses `relationships` in both the `PrdMetadata` interface and Zod schema.
 
 ---
 
@@ -833,7 +1478,7 @@ See [`PRD_FEATURES.md`](PRD_FEATURES.md) for details on leveraging config sectio
 
 ```yaml
 ---
-# Dev-Loop PRD Metadata v1.0
+# Dev-Loop PRD Metadata v1.2
 prd:
   id: my_feature
   version: 1.0.0
@@ -851,6 +1496,206 @@ requirements:
 
 testing:
   directory: tests/playwright/my-feature/
+---
+```
+
+### Enhanced PRD Frontmatter with v1.2 Features
+
+```yaml
+---
+# Dev-Loop PRD Metadata v1.2
+prd:
+  id: schema_processor_schema_foundation
+  version: 1.0.0
+  status: ready
+  parentPrd: schema_processor_refactoring
+  prdSequence: 1
+
+execution:
+  strategy: phased
+  mode: hybrid
+  intervention:
+    mode: hybrid
+    pauseOn:
+      - schema-changes
+      - plugin-creation
+    autoApprove:
+      - test-only
+      - documentation
+  parallelism:
+    testGeneration: 4
+    testExecution: 4
+    processorCreation: 1
+    taskExecution: 1
+  retry:
+    enabled: true
+    maxRetries: 3
+    retryOn:
+      - test-timeout
+      - schema-validation-failure
+    backoff: exponential
+  rollback:
+    enabled: true
+    strategy: phase-level
+    checkpointOn:
+      - phase-completion
+      - test-pass
+
+dependencies:
+  externalModules: []
+  prds: []
+  codeRequirements:
+    - bd module exists at docroot/modules/share/bd/
+    - SchemaProcessorManager exists
+
+requirements:
+  idPattern: "TASK-{id}"
+  phases:
+    - id: 1
+      name: "Schema Expansion"
+      parallel: false
+      checkpoint: true
+      validation:
+        after:
+          - schema-files-created
+          - plugin-types-created
+        tests:
+          - "ddev exec bash -c 'drush cr'"
+        assertions:
+          - no-php-errors
+          - schema-validates
+      tasks:
+        - id: "TASK-101"
+          testSpec:
+            type: "playwright"
+            file: "tests/playwright/bd/entity-display-features.spec.ts"
+            describe: "Schema Discovery Tests"
+            cases:
+              - name: "should discover schema processor plugin type"
+                steps:
+                  - action: "execute-php"
+                    command: "ddev exec bash -c 'drush ev \"...\"'"
+                  - action: "assert"
+                    type: "service-exists"
+            dataSetup: []
+
+testing:
+  directory: tests/playwright/bd/
+  framework: playwright
+  parallel: true
+  workers: 4
+  timeout: 300000
+  retries: 2
+
+validation:
+  globalRules:
+    - rule: no_php_errors
+      description: "No PHP fatal errors in logs"
+      test: "ddev logs -s web | grep -i 'PHP Fatal' | wc -l == 0"
+
+config:
+  context:
+    codeContext:
+      requiredFiles:
+        - docroot/modules/share/bd/src/Plugin/SchemaProcessor/SchemaProcessorManager.php
+      searchPatterns:
+        - "schema_processor"
+    patternLearning:
+      enabled: true
+      patternsPath: .devloop/patterns.json
+    debugging:
+      strategy: framework-aware
+      framework: drupal
+  validation:
+    gates:
+      - phase: 1
+        name: "schema-foundation-gate"
+        tests:
+          - command: "npm test -- entity-display-features.spec.ts"
+            description: "Schema foundation tests"
+        assertions:
+          - all-tests-pass
+          - no-php-errors
+  progress:
+    tracking: true
+    metrics:
+      enabled: true
+      path: .devloop/metrics/schema_foundation.json
+      track:
+        - tasksCompleted
+        - testsPassed
+
+relationships:
+  dependsOn: []
+  prdSet:
+    parentPrd: schema_processor_refactoring
+    phaseCoordination:
+      globalPhaseNumbering: true
+      phaseValidation:
+        noOverlap: true
+        dependencyCrossPrd: true
+---
+```
+
+### PRD Set Example (Parent and Child PRDs)
+
+**Parent PRD:**
+```yaml
+---
+# Dev-Loop PRD Metadata v1.2
+prd:
+  id: schema_processor_refactoring
+  version: 1.0.0
+  status: split
+  note: "This PRD has been split into 5 phased PRDs."
+
+execution:
+  strategy: phased
+
+relationships:
+  dependedOnBy:
+    - prd: schema_processor_schema_foundation
+      features: [schema_expansion, plugin_types]
+    - prd: schema_processor_core_processors
+      features: [entity_display_processors]
+  prdSet:
+    childPrds:
+      - id: schema_processor_schema_foundation
+        sequence: 1
+      - id: schema_processor_core_processors
+        sequence: 2
+    phaseCoordination:
+      globalPhaseNumbering: true
+      phaseValidation:
+        noOverlap: true
+        dependencyCrossPrd: true
+---
+```
+
+**Child PRD:**
+```yaml
+---
+# Dev-Loop PRD Metadata v1.2
+prd:
+  id: schema_processor_schema_foundation
+  version: 1.0.0
+  status: ready
+  parentPrd: schema_processor_refactoring
+  prdSequence: 1
+
+execution:
+  strategy: phased
+  mode: hybrid
+
+dependencies:
+  prds: []
+
+requirements:
+  idPattern: "TASK-{id}"
+  phases:
+    - id: 1
+      name: "Schema Expansion"
+      parallel: false
 ---
 ```
 

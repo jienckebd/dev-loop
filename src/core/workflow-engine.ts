@@ -2054,7 +2054,7 @@ export class WorkflowEngine {
     }
 
     console.log(`[WorkflowEngine] Found ${validFiles.length} relevant files (${totalContextSize} chars):`, validFiles);
-    
+
     // Track files that need to be CREATED (mentioned in task but don't exist)
     const filesToCreate = mentionedFiles.filter(f => !validFiles.includes(f));
     if (this.debug && filesToCreate.length > 0) {

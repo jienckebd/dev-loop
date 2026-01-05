@@ -1,0 +1,288 @@
+---
+# Dev-Loop PRD Metadata v1.2
+prd:
+  id: schema_processor_final_integration
+  version: 1.0.0
+  status: ready
+  parentPrd: schema_processor_refactoring
+  prdSequence: 5
+
+execution:
+  strategy: phased
+  mode: autonomous
+  maxIterations: 100
+  timeoutMinutes: 240
+
+dependencies:
+  prds:
+    - schema_processor_integration_1
+    - schema_processor_advanced_processors
+
+requirements:
+  idPattern: "TASK-{id}"
+  phases:
+    - id: 10
+      name: "Final Integration & Testing"
+      tasks:
+        - id: "TASK-801"
+          testSpec:
+            type: "playwright"
+            file: "tests/playwright/bd/entity-display-features.spec.ts"
+            describe: "End-to-End Processor Chain Tests"
+            cases:
+              - name: "should execute complete processor chain for entity display"
+                steps:
+                  - action: "execute-php"
+                    command: "ddev exec bash -c 'drush ev \"...end-to-end processor chain test...\"'"
+                  - action: "assert"
+                    type: "processor-chain-complete"
+              - name: "should execute complete processor chain for field features"
+                steps:
+                  - action: "execute-php"
+                    command: "ddev exec bash -c 'drush ev \"...field features processor chain test...\"'"
+                  - action: "assert"
+                    type: "processor-chain-complete"
+              - name: "should execute complete processor chain for field definitions"
+                steps:
+                  - action: "execute-php"
+                    command: "ddev exec bash -c 'drush ev \"...field definition processor chain test...\"'"
+                  - action: "assert"
+                    type: "processor-chain-complete"
+            dataSetup:
+              - type: "config"
+                path: "test-e2e-config.yml"
+        - id: "TASK-803"
+          testSpec:
+            type: "playwright"
+            file: "tests/playwright/bd/entity-display-features.spec.ts"
+            describe: "System-Wide Cross-Processor Validation Tests"
+            cases:
+              - name: "should validate cross-processor interactions across all processors"
+                steps:
+                  - action: "execute-php"
+                    command: "ddev exec bash -c 'drush ev \"...system-wide cross-processor validation...\"'"
+                  - action: "assert"
+                    type: "cross-processor-valid"
+            dataSetup: []
+        - id: "TASK-804"
+          testSpec:
+            type: "playwright"
+            file: "tests/playwright/bd/entity-display-features.spec.ts"
+            describe: "System-Wide Performance Validation Tests"
+            cases:
+              - name: "should meet performance baseline across all processors"
+                steps:
+                  - action: "execute-php"
+                    command: "ddev exec bash -c 'drush ev \"...system-wide performance validation...\"'"
+                  - action: "assert"
+                    type: "performance-baseline-met"
+                    threshold: 1.1
+            dataSetup: []
+
+testing:
+  directory: tests/playwright/bd/
+  framework: playwright
+  parallel: true
+  workers: 4
+  bundledTests: true
+  cleanupArtifacts: true
+  timeout: 300000
+  retries: 2
+
+validation:
+  globalRules:
+    - rule: no_php_errors
+      description: "No PHP fatal errors in logs"
+      test: "ddev logs -s web | grep -i 'PHP Fatal' | wc -l == 0"
+    - rule: all_tests_pass
+      description: "All test suites pass"
+      test: "npm test -- entity-display-features.spec.ts field-features.spec.ts field-definition.spec.ts entity-type-definition.spec.ts"
+    - rule: production_ready
+      description: "Production readiness validated"
+      test: "npm test -- --grep 'production'"
+
+config:
+  validation:
+    gates:
+      - phase: 10
+        name: "final-integration-gate"
+        tests:
+          - command: "npm test -- entity-display-features.spec.ts"
+            description: "Entity display features tests"
+          - command: "npm test -- field-features.spec.ts"
+            description: "Field features tests"
+          - command: "npm test -- field-definition.spec.ts"
+            description: "Field definition tests"
+          - command: "npm test -- entity-type-definition.spec.ts"
+            description: "Entity type definition tests"
+          - command: "ddev logs -s web | grep -i 'PHP Fatal' | wc -l"
+            expected: "0"
+            description: "No PHP fatal errors"
+        assertions:
+          - all-tests-pass
+          - no-regressions
+          - no-php-errors
+          - production-ready
+      - phase: 10
+        name: "system-wide-validation-gate"
+        tests:
+          - command: "npm test -- --grep 'system-wide'"
+            description: "System-wide validation tests"
+        assertions:
+          - system-wide-valid
+      - phase: 10
+        name: "production-readiness-gate"
+        tests:
+          - command: "npm test -- --grep 'production'"
+            description: "Production readiness tests"
+        assertions:
+          - production-ready
+
+  testCoverage:
+    required: true
+    thresholds:
+      lines: 90
+      functions: 85
+      branches: 80
+    perPhase:
+      - phase: 10
+        minTests: 20
+        requiredScenarios:
+          - end-to-end-processor-chains
+          - system-wide-validation
+          - production-readiness
+          - cross-processor-interactions
+          - performance-validation
+          - all-test-suites-pass
+
+  testData:
+    setup:
+      - type: "config"
+        path: "docroot/modules/share/bd/config/install/bd.schema_processor_test.yml"
+        createIfMissing: true
+      - type: "config"
+        path: "docroot/modules/share/bd/config/install/bd.schema_processor_test.yml"
+        createIfMissing: true
+    setup:
+      - type: "config"
+        createIfMissing: true
+      - type: "entity"
+        entityType: "node_type"
+        bundle: "article"
+        count: 1
+      - type: "entity"
+        entityType: "node"
+        bundle: "article"
+        count: 20
+    cleanup:
+      - type: "config"
+        after: "test-completion"
+
+  testArtifacts:
+    collect:
+      - type: "screenshots"
+        on: "failure"
+        path: ".devloop/artifacts/screenshots/{taskId}/{timestamp}"
+      - type: "video"
+        on: "failure"
+        path: ".devloop/artifacts/videos/{taskId}/{timestamp}"
+      - type: "logs"
+        on: "always"
+        sources:
+          - "ddev logs -s web"
+          - "playwright-report"
+        path: ".devloop/artifacts/logs/{taskId}/{timestamp}"
+      - type: "performance-metrics"
+        on: "always"
+        sources:
+          - "playwright-report"
+        path: ".devloop/artifacts/performance/{taskId}/{timestamp}"
+      - type: "coverage-report"
+        on: "always"
+        sources:
+          - "playwright-coverage"
+        path: ".devloop/artifacts/coverage/{taskId}/{timestamp}"
+
+  testExecution:
+    order: "phase-sequential"
+    parallelWithinPhase: true
+    dependencies:
+      - test: "entity-display-features.spec.ts"
+        dependsOn:
+          - phase: 10
+            tasks: ["TASK-801", "TASK-803", "TASK-804"]
+      - test: "field-features.spec.ts"
+        dependsOn:
+          - phase: 10
+            tasks: ["TASK-801", "TASK-803", "TASK-804"]
+      - test: "field-definition.spec.ts"
+        dependsOn:
+          - phase: 10
+            tasks: ["TASK-801", "TASK-803", "TASK-804"]
+      - test: "entity-type-definition.spec.ts"
+        dependsOn:
+          - phase: 10
+            tasks: ["TASK-801", "TASK-803", "TASK-804"]
+
+  errorHandling:
+    strategies:
+      - type: test-failure
+        action: diagnose-and-fix
+        useRootCauseAnalysis: true
+      - type: test-regression
+        action: create-fix-task
+        priority: critical
+      - type: production-readiness-failure
+        action: stop-processing
+        requireReview: true
+    testFailure:
+      strategies:
+        - type: "playwright-timeout"
+          action: "retry-with-timeout-increase"
+          maxRetries: 2
+          timeoutMultiplier: 1.5
+        - type: "test-flaky"
+          action: "mark-flaky-and-continue"
+          threshold: 3
+        - type: "test-regression"
+          action: "create-fix-task"
+          priority: "critical"
+          assignTo: "current-task"
+        - type: "performance-degradation"
+          action: "investigate-and-fix"
+          threshold: 1.1
+          escalation: manual-review
+        - type: "production-readiness-failure"
+          action: "stop-processing"
+          requireReview: true
+
+---
+# Schema Processor Final Integration PRD
+
+> **Note**: This PRD depends on both the [Integration 1 PRD](./3-integration.md.yml) and [Advanced Processors PRD](./4-advanced-processors.md.yml) being completed first.
+
+This PRD covers Phase 10: Final comprehensive integration testing across all processors.
+
+## Overview
+
+Perform comprehensive integration testing across all processors, validate cross-processor interactions, perform system-wide performance validation, and complete final documentation.
+
+### Phase 10: Final Integration & Testing
+
+**Goal**: Comprehensive integration testing across all processors from all previous phases.
+
+**Tasks**:
+- TASK-801: Run all Playwright test suites (entity-display-features, field-features, field-definition)
+- TASK-802: Fix any regressions from processor refactoring
+- TASK-803: Run cross-processor validation tests
+- TASK-804: Perform system-wide performance validation
+- TASK-805: Complete documentation updates
+- TASK-806: Final code review and cleanup
+
+**Acceptance Criteria**:
+- All Playwright test suites pass
+- No regressions from processor refactoring
+- Cross-processor interactions validated
+- Performance meets or exceeds baseline
+- Documentation complete and accurate
+- Production readiness validated

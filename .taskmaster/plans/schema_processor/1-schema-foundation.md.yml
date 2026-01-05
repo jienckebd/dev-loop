@@ -1,0 +1,4661 @@
+---
+# Dev-Loop PRD Metadata v1.2
+prd:
+  id: schema_processor_schema_foundation
+  version: 1.0.0
+  status: ready
+  parentPrd: schema_processor_refactoring
+  prdSequence: 1
+
+execution:
+  strategy: phased
+  mode: hybrid  # hybrid for schema changes (risky), autonomous for tests
+  intervention:
+    mode: hybrid
+    pauseOn:
+      - schema-changes  # Schema files are critical infrastructure
+      - plugin-type-creation  # Plugin type changes affect all processors
+      - SchemaProcessorManager-changes  # Core manager changes
+    autoApprove:
+      - test-only
+      - documentation
+      - code-comments
+    riskyPatterns:
+      - pattern: '\.schema\.yml$'
+        reason: "Schema files affect configuration structure"
+        requireReview: true
+      - pattern: 'bd\.plugin_type\.yml'
+        reason: "Plugin type definitions affect discovery"
+        requireReview: true
+
+  parallelism:
+    testGeneration: 4
+    testExecution: 4
+    processorCreation: 1  # Sequential for foundation (schema changes)
+    taskExecution: 1  # Sequential for architectural changes
+
+  maxIterations: 150  # Schema work may need more iterations
+  timeoutMinutes: 240
+  retry:
+    enabled: true
+    maxRetries: 3
+    retryOn:
+      - test-timeout
+      - schema-validation-failure
+      - plugin-discovery-failure
+    backoff: exponential  # exponential | linear | fixed
+
+  rollback:
+    enabled: true
+    strategy: phase-level
+    checkpointOn:
+      - phase-completion
+      - test-pass
+      - schema-validation-pass
+    restoreStrategy: git-checkout  # git-checkout | snapshot | manual
+
+dependencies:
+  externalModules: []
+  prds: []
+  codeRequirements:
+    - bd module exists at docroot/modules/share/bd/
+    - SchemaProcessorManager exists at docroot/modules/share/bd/src/Plugin/SchemaProcessor/SchemaProcessorManager.php
+    - ConfigSchemaSubform patterns understood from docroot/modules/share/bd/src/Element/ConfigSchemaSubform.php
+    - Existing schema patterns in docroot/modules/share/*/config/schema/
+
+requirements:
+  idPattern: "TASK-{id}"
+  phases:
+    - id: 1
+      name: "Schema Expansion"
+      parallel: false
+      checkpoint: true
+      validation:
+        after:
+          - schema-files-created
+          - plugin-types-created
+          - annotation-updated
+        tests:
+          - "ddev exec bash -c 'drush cr'"
+          - "script/validate-schema.php"
+          - "schema-discovery-test"
+        assertions:
+          - no-php-errors
+          - schema-validates
+          - plugin-types-discoverable
+      tasks:
+        - id: "TASK-101"
+          testSpec:
+            type: "playwright"
+            file: "tests/playwright/bd/entity-display-features.spec.ts"
+            describe: "Schema Discovery Tests"
+            cases:
+              - name: "should discover schema processor plugin type after schema expansion"
+                steps:
+                  - action: "execute-php"
+                    command: "ddev exec bash -c 'drush ev \"echo \\\\Drupal::service(\\\\\\\"plugin.manager.schema_processor\\\\\\\") ? \\\\\"OK\\\\\" : \\\\\"FAIL\\\\\";\"'"
+                  - action: "assert"
+                    type: "service-exists"
+                    service: "plugin.manager.schema_processor"
+            dataSetup: []
+        - id: "TASK-105.1"
+          testSpec:
+            type: "playwright"
+            file: "tests/playwright/bd/entity-display-features.spec.ts"
+            describe: "Condition and ValidationRule Plugin Types"
+            cases:
+              - name: "should discover condition plugin type"
+                steps:
+                  - action: "execute-php"
+                    command: "ddev exec bash -c 'drush ev \"echo \\\\Drupal::service(\\\\\\\"plugin.manager.condition\\\\\\\") ? \\\\\"OK\\\\\" : \\\\\"FAIL\\\\\";\"'"
+                  - action: "assert"
+                    type: "service-exists"
+                    service: "plugin.manager.condition"
+              - name: "should discover validation_rule plugin type"
+                steps:
+                  - action: "execute-php"
+                    command: "ddev exec bash -c 'drush ev \"echo \\\\Drupal::service(\\\\\\\"plugin.manager.validation_rule\\\\\\\") ? \\\\\"OK\\\\\" : \\\\\"FAIL\\\\\";\"'"
+                  - action: "assert"
+                    type: "service-exists"
+                    service: "plugin.manager.validation_rule"
+            dataSetup: []
+        - id: "TASK-109"
+          testSpec:
+            type: "playwright"
+            file: "tests/playwright/bd/entity-display-features.spec.ts"
+            describe: "SchemaProcessorManager Method Tests"
+            cases:
+              - name: "should have getAllProcessorsForHook method"
+                steps:
+                  - action: "execute-php"
+                    command: "ddev exec bash -c 'drush ev \"$manager = \\\\Drupal::service(\\\\\\\"plugin.manager.schema_processor\\\\\\\"); echo method_exists($manager, \\\\\"getAllProcessorsForHook\\\\\") ? \\\\\"OK\\\\\" : \\\\\"FAIL\\\\\";\"'"
+                  - action: "assert"
+                    type: "method-exists"
+                    class: "SchemaProcessorManager"
+                    method: "getAllProcessorsForHook"
+              - name: "should have discoverSchemaAttachedProcessors method"
+                steps:
+                  - action: "execute-php"
+                    command: "ddev exec bash -c 'drush ev \"$manager = \\\\Drupal::service(\\\\\\\"plugin.manager.schema_processor\\\\\\\"); echo method_exists($manager, \\\\\"discoverSchemaAttachedProcessors\\\\\") ? \\\\\"OK\\\\\" : \\\\\"FAIL\\\\\";\"'"
+                  - action: "assert"
+                    type: "method-exists"
+                    class: "SchemaProcessorManager"
+                    method: "discoverSchemaAttachedProcessors"
+            dataSetup: []
+
+testing:
+  directory: tests/playwright/bd/
+  framework: playwright
+  parallel: true
+  workers: 4
+  bundledTests: true
+  cleanupArtifacts: true
+  timeout: 300000
+  retries: 2
+
+validation:
+  globalRules:
+    - rule: no_php_errors
+      description: "No PHP fatal errors in logs"
+      test: "ddev logs -s web | grep -i 'PHP Fatal' | wc -l == 0"
+    - rule: schema_validates
+      description: "Schema validation passes"
+      test: "script/validate-schema.php"
+    - rule: plugin_types_discoverable
+      description: "Plugin types are discoverable"
+      test: "ddev exec bash -c 'drush ev \"echo \\\\Drupal::service(\\\\\\\"plugin.manager.schema_processor\\\\\\\") ? \\\\\"OK\\\\\" : \\\\\"FAIL\\\\\";\"' == OK"
+
+config:
+  context:
+    codeContext:
+      requiredFiles:
+        - docroot/modules/share/bd/src/Plugin/SchemaProcessor/SchemaProcessorManager.php
+        - docroot/modules/share/bd/src/Element/ConfigSchemaSubform.php
+        - docroot/modules/share/bd/config/schema/bd.schema.yml
+        - docroot/modules/share/bd/bd.plugin_type.yml
+      searchPatterns:
+        - "schema_processor"
+        - "SchemaProcessor"
+        - "plugin.schema-processor"
+      frameworkPatterns:
+        - drupal-plugin-type
+        - drupal-config-schema
+        - drupal-service-injection
+    patternLearning:
+      enabled: true
+      patternsPath: .devloop/patterns.json
+      learnFrom:
+        - successful-schema-additions
+        - plugin-type-definitions
+        - validation-patterns
+      injectGuidance: true
+    debugging:
+      strategy: framework-aware
+      framework: drupal
+      errorClassification:
+        - type: schema-validation-error
+          investigation: required
+          suggestion: "Check schema syntax and TypedConfigManager discovery"
+        - type: plugin-discovery-error
+          investigation: required
+          suggestion: "Verify plugin_type.yml and annotation format"
+        - type: php-fatal-error
+          investigation: required
+          suggestion: "Check dependencies and service definitions"
+      rootCauseAnalysis:
+        enabled: true
+        trackPartialFixes: true
+        identifySystemicIssues: true
+
+  progress:
+    tracking: true
+    metrics:
+      enabled: true
+      path: .devloop/metrics/schema_processor_schema_foundation.json
+      track:
+        - tasksCompleted
+        - testsPassed
+        - schemaFilesCreated
+        - pluginTypesCreated
+        - validationPasses
+        - retriesAttempted
+        - timePerPhase
+    checkpoints:
+      - name: schema-foundation-complete
+        criteria:
+          - all-schema-sections-created
+          - plugin-types-working
+          - SchemaProcessorManager-enhanced
+          - all-tests-passing
+        unlocks:
+          - schema_processor_core_processors
+          - schema_processor_advanced_processors
+        signalsCompletion: true
+
+  integration:
+    coordination:
+      blockingPrds: []
+      blockedBy: []
+      parallelWith: []
+    communication:
+      outputs:
+        - schema-files: "docroot/modules/share/bd/config/schema/plugin.schema-processor.schema.yml"
+        - plugin-types: "bd.plugin_type.yml additions"
+        - SchemaProcessorManager-enhancements: "Manager methods for new schema"
+        - condition-plugin-type: "New plugin type for conditions"
+        - validation-rule-plugin-type: "New plugin type for validation"
+      inputs: []
+      stateSharing:
+        - schema-patterns-learned
+        - validation-patterns
+
+  ai:
+    provider:
+      primary: anthropic
+      model: claude-sonnet-4-20250514
+      fallback: openai:gpt-4o
+    prompts:
+      injectContext:
+        - cursorrules: ".cursorrules"
+        - claudeDocs: "CLAUDE.md"
+        - frameworkPatterns: "drupal-plugin-system"
+      customInstructions:
+        - "Always clear caches with 'ddev exec bash -c \"drush cr\"' after schema changes"
+        - "Verify schema changes by checking TypedConfigManager discovery"
+        - "Follow Drupal coding standards and 2-space indentation"
+        - "Never modify Drupal core or contrib code directly"
+
+  validation:
+    preApply:
+      enabled: true
+      checks:
+        - syntax: php
+        - syntax: yaml
+        - file-exists: required-files
+        - dependencies: service-definitions
+    postApply:
+      enabled: true
+      checks:
+        - cache-clear-required
+        - schema-discovery
+        - no-php-errors
+        - tests-pass
+    gates:
+      - phase: 1
+        name: schema-foundation-gate
+        tests:
+          - command: "ddev exec bash -c 'drush cr'"
+            description: "Clear caches after schema changes"
+          - command: "ddev logs -s web | grep -i 'PHP Fatal' | wc -l"
+            expected: "0"
+            description: "No PHP fatal errors"
+          - command: "script/validate-schema.php"
+            description: "Schema validation script"
+        assertions:
+          - no-php-errors
+          - schema-validates
+          - plugin-types-discoverable
+          - SchemaProcessorManager-loads
+      - phase: 1
+        task: "TASK-101"
+        name: "schema-plugin-type-gate"
+        tests:
+          - command: "ddev exec bash -c 'drush ev \"echo \\\\Drupal::service(\\\\\\\"plugin.manager.schema_processor\\\\\\\") ? \\\\\"OK\\\\\" : \\\\\"FAIL\\\\\";\"'"
+            description: "Plugin type discovery"
+            expected: "OK"
+          - command: "ddev logs -s web | grep -i 'PHP Fatal' | wc -l"
+            expected: "0"
+            description: "No PHP fatal errors"
+        assertions:
+          - plugin-types-discoverable
+          - no-php-errors
+      - phase: 1
+        task: "TASK-105.1"
+        name: "condition-validation-rule-gate"
+        tests:
+          - command: "ddev exec bash -c 'drush ev \"echo \\\\Drupal::service(\\\\\\\"plugin.manager.condition\\\\\\\") ? \\\\\"OK\\\\\" : \\\\\"FAIL\\\\\";\"'"
+            description: "Condition plugin type discovery"
+            expected: "OK"
+          - command: "ddev exec bash -c 'drush ev \"echo \\\\Drupal::service(\\\\\\\"plugin.manager.validation_rule\\\\\\\") ? \\\\\"OK\\\\\" : \\\\\"FAIL\\\\\";\"'"
+            description: "ValidationRule plugin type discovery"
+            expected: "OK"
+        assertions:
+          - plugin-types-discoverable
+          - no-php-errors
+      - phase: 1
+        task: "TASK-109"
+        name: "SchemaProcessorManager-methods-gate"
+        tests:
+          - command: "ddev exec bash -c 'drush ev \"$manager = \\\\Drupal::service(\\\\\\\"plugin.manager.schema_processor\\\\\\\"); echo method_exists($manager, \\\\\"getAllProcessorsForHook\\\\\") && method_exists($manager, \\\\\"discoverSchemaAttachedProcessors\\\\\") ? \\\\\"OK\\\\\" : \\\\\"FAIL\\\\\";\"'"
+            description: "SchemaProcessorManager methods exist"
+            expected: "OK"
+        assertions:
+          - SchemaProcessorManager-loads
+          - methods-exist
+    logAnalysis:
+      patterns:
+        - pattern: "PHP Fatal error"
+          severity: error
+          action: stop-processing
+        - pattern: "Schema validation failed"
+          severity: error
+          action: retry-with-fix
+        - pattern: "Plugin type.*not found"
+          severity: error
+          action: investigate-discovery
+
+  errorHandling:
+    strategies:
+      - type: schema-validation-failure
+        action: retry-with-fix
+        maxRetries: 3
+        escalation: manual-review
+      - type: plugin-discovery-failure
+        action: investigate-discovery
+        suggestion: "Check plugin_type.yml format and cache clearing"
+      - type: test-failure
+        action: diagnose-and-fix
+        useRootCauseAnalysis: true
+      - type: php-fatal-error
+        action: stop-processing
+        rollback: true
+        requireReview: true
+    testFailure:
+      strategies:
+        - type: "playwright-timeout"
+          action: "retry-with-timeout-increase"
+          maxRetries: 2
+          timeoutMultiplier: 1.5
+        - type: "test-flaky"
+          action: "mark-flaky-and-continue"
+          threshold: 3
+        - type: "test-regression"
+          action: "create-fix-task"
+          priority: "high"
+          assignTo: "current-task"
+        - type: "schema-validation-error"
+          action: "retry-with-fix"
+          maxRetries: 3
+    diagnostics:
+      enabled: true
+      useFrameworkPatterns: true
+      suggestInvestigation: true
+
+  testGeneration:
+    enabled: true
+    templates:
+      processorPlugin:
+        file: ".taskmaster/templates/processor-plugin-test.ts.template"
+        variables: ["processorId", "processorClass", "testScenarios"]
+      schemaValidation:
+        file: ".taskmaster/templates/schema-validation-test.ts.template"
+        variables: ["schemaPath", "validationRules"]
+    patterns:
+      - match: "Create.*Processor"
+        template: "processorPlugin"
+        generateAfter: "code-creation"
+      - match: "Expand.*schema|Add.*schema"
+        template: "schemaValidation"
+        generateAfter: "schema-files-created"
+
+  testCoverage:
+    required: true
+    thresholds:
+      lines: 80
+      functions: 75
+      branches: 70
+    perPhase:
+      - phase: 1
+        minTests: 5
+        requiredScenarios:
+          - schema-discovery
+          - plugin-type-creation
+          - annotation-update
+          - SchemaProcessorManager-methods
+          - schema-validation
+
+  testData:
+    setup:
+      - type: "config"
+        path: "docroot/modules/share/bd/config/install/bd.schema_processor_test.yml"
+        createIfMissing: true
+      - type: "config"
+        path: "docroot/modules/share/bd/config/install/bd.schema_processor_test.yml"
+        createIfMissing: true
+      - type: "entity"
+        entityType: "node_type"
+        bundle: "article"
+        count: 1
+    cleanup:
+      - type: "config"
+        after: "test-completion"
+
+  testArtifacts:
+    collect:
+      - type: "screenshots"
+        on: "failure"
+        path: ".devloop/artifacts/screenshots/{taskId}/{timestamp}"
+      - type: "video"
+        on: "failure"
+        path: ".devloop/artifacts/videos/{taskId}/{timestamp}"
+      - type: "logs"
+        on: "always"
+        sources:
+          - "ddev logs -s web"
+          - "playwright-report"
+        path: ".devloop/artifacts/logs/{taskId}/{timestamp}"
+
+  testExecution:
+    order: "phase-sequential"
+    parallelWithinPhase: false
+    dependencies:
+      - test: "entity-display-features.spec.ts"
+        dependsOn:
+          - phase: 1
+            tasks: ["TASK-101", "TASK-109"]
+
+---
+# Schema Processor Refactoring PRD
+
+## Overview
+
+Refactor entity display features, field features, and field definition processing from custom service methods into `schema_processor` plugins. This will centralize configuration-driven behavior, make the system more extensible, and enable new features to be added via configuration rather than code.
+
+## Background
+
+Currently, the sysf codebase implements configuration-driven features through custom service methods in:
+- `design_system/src/EntityDisplay.php` - Entity form display features (10 configuration tabs)
+- `bd/src/Field/FieldSchemaProcessor.php` - Field configuration features (options provider, conditional fields, validation, etc.)
+- `bd/src/Entity/EntityFieldHelper.php` - Field definition processing (templates, base fields, type validation)
+
+These implementations are tightly coupled to specific hooks and contexts. The `schema_processor` plugin type exists but is not being used for these features. This refactoring will:
+
+1. Expand the `schema_processor` plugin schema to support all execution contexts
+2. Create 25 schema processor plugins covering all current features
+3. Replace custom service methods with plugin invocations
+4. Maintain 100% test compatibility with existing Playwright tests
+
+## Research Findings
+
+
+### Comparable Solutions
+
+**1. Drupal Plugin System**
+
+Drupal's plugin system provides several relevant patterns:
+
+- **Context Definitions**: Plugins use `context_definitions` in annotations to specify required execution contexts (e.g., `@ContextDefinition("entity:node")`). This pattern informs our execution context schema.
+- **Weight-based Ordering**: Plugins support a `weight` property for processing order, which we extend with priority levels and before/after relationships.
+- **Condition Plugins**: Drupal's condition plugin system enables conditional execution, which we adopt for custom condition evaluation.
+- **Context-aware Plugins**: Plugins can be context-aware with required/optional contexts, informing our conditional execution schema.
+
+**2. Symfony Config Component**
+
+Symfony's configuration system offers structured schema definitions:
+
+- **TreeBuilder**: Provides hierarchical configuration with validation, informing our schema structure.
+- **Environment-based Conditionals**: Uses `when@dev` syntax for conditional configuration, inspiring our conditional execution patterns.
+- **Dependency Injection**: Service dependencies are managed through the container, informing our dependencies schema.
+- **Hierarchical Validation**: Configuration is validated against defined schemas, ensuring type safety.
+
+**3. Pipeline Frameworks (XProc, GreptimeDB, Prophecy)**
+
+Pipeline processing frameworks demonstrate execution patterns:
+
+- **Sequential Processing**: Processors execute in sequence with explicit dependencies, informing our processing order schema.
+- **Input/Output Definitions**: Each processor defines what it consumes and produces, directly informing our input/output configuration schema.
+- **Execution Context Management**: Processors operate within defined contexts, informing our execution context schema.
+- **Before/After Relationships**: Explicit ordering relationships between processors, informing our processing order schema.
+
+**4. Existing Patterns in Codebase**
+
+The sysf codebase already uses several relevant patterns:
+
+- **`plugin_instance` Type**: Custom schema type for plugin selection with dynamic configuration, demonstrating plugin integration patterns.
+- **`context` Property**: Schema properties can include `context` arrays to control visibility (e.g., `context: [field, widget]`), informing conditional execution.
+- **`dependencies` Mapping**: Existing schemas include dependency mappings (e.g., in `entity.operations.schema.yml`), providing a pattern for our dependencies schema.
+- **Condition Plugins**: The codebase uses condition plugins for conditional execution (e.g., in `entity_form_wizard`), demonstrating the pattern we'll adopt.
+- **Weight-based Sorting**: Existing processors use weight for ordering, which we'll enhance with priority and before/after relationships.
+
+### 5. Config Schema Processing Patterns (Codebase Analysis)
+
+
+- **Schema Pattern Resolution** (`ConfigSchemaSubform::resolveSchemaPatterns`): Supports wildcard patterns (`field_definition.third_party_settings.*`), `config_schema_set` types with `patterns` arrays, and pattern-based discovery via `TypedConfigManager::getDefinitionsByPattern()`. This PRD's `schema_patterns` input configuration aligns with this pattern.
+
+- **Context Condition Evaluation** (`ConfigSchemaSubform::shouldSkipProperty`): Implements sophisticated context evaluation with field-aware logic (field-level settings can appear in multiple contexts). This PRD's `context` conditions and `field_aware` logic match this implementation.
+
+- **Dot Notation Path Resolution** (`ConfigFactory::getSubconfigFromData`): Provides dot-notation path resolution with wildcard fallback support (`*` key). This PRD uses this same mechanism for all path resolution.
+
+- **Schema Data Normalization** (`ConfigSchemaSubform::normalizeValues`): Strips widget wrappers, handles sequences correctly, and reorganizes pattern-based properties. This PRD normalizes config data before passing to processors using this same method.
+
+- **Schema Property Weight Sorting** (`ConfigSchemaSubform::recurseProcessConfigSchemaMapping`): Sorts properties by `form.weight` or `weight` before processing. This PRD's `schema_weight_source` option aligns processor execution order with schema property processing order.
+
+- **Third-Party Settings Pattern Processing**: Uses pattern-based discovery, module property mapping, and input reorganization. This PRD's pattern-based third-party settings support aligns with this existing infrastructure.
+
+### Schema Design Principles
+
+Based on this research and codebase analysis, the enhanced schema follows these principles:
+
+1. **Comprehensive Execution Context**: Support hooks, events, and service method invocations to cover all Drupal integration points.
+2. **Flexible Input Configuration**: Support multiple input sources (schema keys, schema patterns for dynamic discovery, third-party settings with pattern matching) with filtering capabilities. Leverage existing `ConfigFactory::getSubconfigFromData()` for consistent path resolution.
+3. **Explicit Output Declaration**: Clearly declare what each processor modifies to enable dependency analysis and ordering.
+4. **Rich Conditional Execution**: Support context arrays (matching `ConfigSchemaSubform` behavior), entity type, bundle, field type, and custom condition plugins for flexible execution control. Implement field-aware logic for field-level settings.
+5. **Explicit Dependencies**: Declare module, service, and plugin dependencies for validation and error handling.
+6. **Sophisticated Processing Order**: Support weight (with optional schema alignment), priority, and before/after relationships for precise execution control. Align processor execution order with schema property processing order when appropriate.
+7. **Integration with Existing Patterns**: Reuse existing infrastructure (`ConfigFactory`, `ConfigSchemaSubform`, `TypedConfigManager`) for consistency, maintainability, and reduced cognitive load.
+
+## Architecture Changes
+
+### 1. Expand Schema Processor Plugin Schema
+
+
+The enhanced schema provides comprehensive configuration for schema processor plugins, supporting all execution contexts, input/output configuration, conditional execution, dependencies, and processing order.
+
+#### 1.1 Execution Context Schema
+
+Defines where and how the processor runs:
+
+```yaml
+plugin.plugin_configuration.schema_processor.*:
+  type: mapping
+  label: 'Schema processor configuration'
+  mapping:
+    execution:
+      type: mapping
+      label: 'Execution context'
+      description: 'Where and how this processor runs'
+      mapping:
+        hooks:
+          type: sequence
+          label: 'Drupal hooks'
+          description: 'Hook names this processor attaches to (e.g., form_alter, entity_field_access)'
+          sequence:
+            type: string
+        events:
+          type: sequence
+          label: 'Event subscribers'
+          description: 'Symfony events this processor subscribes to'
+          sequence:
+            type: mapping
+            mapping:
+              event_name:
+                type: string
+                label: 'Event name'
+              priority:
+                type: integer
+                label: 'Event priority'
+                default_value: 0
+        service_methods:
+          type: sequence
+          label: 'Service method invocations'
+          description: 'Service methods this processor can be invoked from'
+          sequence:
+            type: mapping
+            mapping:
+              service:
+                type: string
+                label: 'Service ID'
+              method:
+                type: string
+                label: 'Method name'
+              context_keys:
+                type: sequence
+                label: 'Context keys expected by method'
+                sequence:
+                  type: string
+        dry_run_safe:
+          type: boolean
+          label: 'Safe to run in dry-run mode'
+          description: 'If true, processor can execute in dry-run mode without side effects. Processors that modify external systems should set this to false.'
+          default_value: false
+```
+
+**Explanation**: Processors can attach to Drupal hooks, subscribe to Symfony events, or be invoked from service methods. Each execution context type has specific configuration requirements. The `dry_run_safe` flag indicates whether the processor can safely execute in preview/dry-run mode without causing side effects.
+
+**Entity Type Config Processing Context**: Processors for entity type config processing use service method invocation:
+
+```yaml
+execution:
+  service_methods:
+    - service: entity.helper
+      method: processEntityTypeDefinition
+      context_keys: [entity_type_definition, entity_type_id, entity_type_config_common, entity_type_templates, entity_type_config, entity_type_definitions]
+```
+
+Processors are invoked during `hook_entity_type_alter()` via `EntityHelper::normalizeDefinitions()` which calls `SchemaProcessorManager::processEntityTypeDefinition()` for each entity type definition.
+
+**Computed Field Processing Context**: Processors for computed_field config processing use hook execution:
+
+```yaml
+execution:
+  hooks:
+    - entity_bundle_field_info_alter
+```
+
+Processors are invoked during `hook_entity_bundle_field_info_alter()` via `EntityFieldHelper::buildBundleFieldDefinitions()` which calls `SchemaProcessorManager::processBundleFieldDefinition()` for each computed_field entity.
+
+**Entity Operation Processing Context**: Processors for entity operation config processing use hook execution:
+
+```yaml
+execution:
+  hooks:
+    - entity_operation_definition
+    - entity_operation_route_alter
+```
+
+Processors are invoked during entity operation definition building and route generation to process `bd.entity_operation.*` config entities.
+
+**Entity Context Processing Context**: Processors for AI context building use hook execution:
+
+```yaml
+execution:
+  hooks:
+    - entity_context_build
+    - entity_context_preprocess
+```
+
+Processors are invoked during AI context building to process `bd.entity_context.*` config entities and preprocess context data.
+
+**Field Definition Processing Context**: Processors for field definition third-party settings use hook execution:
+
+```yaml
+execution:
+  hooks:
+    - field_definition_alter
+    - field_widget_form_alter
+    - field_formatter_view_alter
+```
+
+Processors are invoked during field definition building, widget form building, and formatter view rendering to process `field_definition.third_party_settings.*` config.
+
+**Entity Display Processing Context**: Processors for entity display third-party settings use hook execution:
+
+```yaml
+execution:
+  hooks:
+    - entity_display_build
+    - entity_form_display_alter
+    - entity_view_display_alter
+```
+
+Processors are invoked during entity display building to process `entity_display.third_party_settings.*` config for form and view displays.
+
+**ECA (Rules Engine) Processing Context**: Processors for ECA rule execution use hook execution:
+
+```yaml
+execution:
+  hooks:
+    - eca_rule_execute
+    - eca_event_trigger
+    - eca_condition_evaluate
+```
+
+Processors are invoked during ECA rule execution, event triggering, and condition evaluation to process config entities and modify rule behavior.
+
+**Webhooks Processing Context**: Processors for webhook processing use hook execution:
+
+```yaml
+execution:
+  hooks:
+    - webhook_receive
+    - webhook_process
+    - webhook_response
+```
+
+Processors are invoked during webhook reception, processing, and response generation to process webhook config and modify webhook behavior.
+
+**Queue Processing Context**: Processors for queue processing use hook execution:
+
+```yaml
+execution:
+  hooks:
+    - hook_queue_info
+    - hook_cron
+    - hook_queue_worker
+```
+
+Processors are invoked during queue information building, cron execution, and queue worker processing to process queue config and modify queue behavior.
+
+**Batch Processing Context**: Processors for batch operations use hook execution:
+
+```yaml
+execution:
+  hooks:
+    - hook_batch_alter
+```
+
+Processors are invoked during batch operation building to process batch config and modify batch behavior.
+
+**REST/JSON:API Processing Context**: Processors for REST and JSON:API processing use hook execution:
+
+```yaml
+execution:
+  hooks:
+    - hook_rest_resource_alter
+    - hook_jsonapi_resource_type_build
+    - hook_jsonapi_entity_filter_access
+```
+
+Processors are invoked during REST resource building and JSON:API resource type building to process API config and modify API behavior.
+
+**Symfony Event Processing Context**: Processors for Symfony event processing use event subscription:
+
+```yaml
+execution:
+  events:
+    - event_name: kernel.request
+      priority: 0
+    - event_name: kernel.response
+      priority: 0
+    - event_name: kernel.finish_request
+      priority: 0
+```
+
+Processors are invoked during Symfony kernel events to process config and modify request/response behavior.
+
+#### 1.2 Input Configuration Schema
+
+Defines what configuration the processor reads:
+
+```yaml
+    input:
+      type: mapping
+      label: 'Input configuration'
+      description: 'What configuration this processor reads'
+      mapping:
+        schema_keys:
+          type: sequence
+          label: 'Schema key paths'
+          description: 'Dot-notation paths to configuration (e.g., general.form_display.form_title)'
+          sequence:
+            type: string
+        schema_patterns:
+          type: sequence
+          label: 'Schema pattern paths'
+          description: 'Wildcard patterns for schema discovery (e.g., field_definition.third_party_settings.*). Uses fnmatch() pattern matching to discover multiple schemas dynamically.'
+          sequence:
+            type: string
+        third_party_settings:
+          type: sequence
+          label: 'Third-party settings paths'
+          description: 'Paths to third-party settings (e.g., third_party_settings.design_system.general)'
+          sequence:
+            type: mapping
+            mapping:
+              module:
+                type: string
+                label: 'Module name (optional for patterns)'
+                description: 'Module name. Omit when using pattern matching.'
+              path:
+                type: string
+                label: 'Dot-notation path or pattern'
+                description: 'Dot-notation path within third-party settings, or wildcard pattern if pattern is true'
+              pattern:
+                type: boolean
+                label: 'Use pattern matching'
+                description: 'If true, path is a wildcard pattern (e.g., third_party_settings.*) for discovering multiple module schemas'
+                default_value: false
+        pattern_resolution:
+          type: mapping
+          label: 'Pattern resolution options'
+          description: 'Options for resolving schema patterns (aligns with ConfigSchemaSubform::resolveSchemaPatterns)'
+          mapping:
+            flatten:
+              type: boolean
+              label: 'Flatten pattern-based schemas'
+              description: 'If true, flatten discovered schemas into single structure (for config_schema_set type schemas)'
+              default_value: false
+            module_mapping:
+              type: boolean
+              label: 'Build module property mapping'
+              description: 'If true, build dynamic module-to-property mapping from discovered schemas (for third_party_settings patterns)'
+              default_value: true
+        filters:
+          type: mapping
+          label: 'Input filters'
+          description: 'Filters to determine if processor should run'
+          mapping:
+            entity_types:
+              type: sequence
+              label: 'Entity type filters'
+              description: 'Only run for these entity types (empty = all)'
+              sequence:
+                type: string
+            bundles:
+              type: sequence
+              label: 'Bundle filters'
+              description: 'Only run for these bundles (empty = all)'
+              sequence:
+                type: string
+            field_types:
+              type: sequence
+              label: 'Field type filters'
+              description: 'Only run for these field types (empty = all)'
+              sequence:
+                type: string
+            custom_conditions:
+              type: sequence
+              label: 'Custom condition plugins'
+              description: 'Condition plugins that must evaluate to true'
+              sequence:
+                type: plugin_instance
+                label: 'Condition'
+                plugin_type: condition
+                configurable: true
+```
+
+**Explanation**: Processors can read from schema keys (dot-notation paths), schema patterns (wildcard patterns for dynamic discovery), or third-party settings (with optional pattern matching). Pattern resolution options control how discovered schemas are processed, aligning with `ConfigSchemaSubform::resolveSchemaPatterns()` behavior. Filters allow processors to run only for specific entity types, bundles, or field types. Custom conditions enable complex filtering logic.
+
+**Path Resolution**: All path resolution uses `ConfigFactory::getSubconfigFromData()` which supports:
+- Dot-notation paths (e.g., `general.form_display.form_title`)
+- Wildcard fallback (`*` key when exact path not found)
+- Consistent behavior with rest of codebase
+
+#### 1.3 Output Configuration Schema
+
+Defines what the processor modifies:
+
+```yaml
+    output:
+      type: mapping
+      label: 'Output configuration'
+      description: 'What this processor modifies'
+      mapping:
+        form_array:
+          type: boolean
+          label: 'Modifies form array'
+          description: 'Processor modifies form array structure'
+          default_value: false
+        field_definition:
+          type: boolean
+          label: 'Modifies field definition'
+          description: 'Processor modifies field definition'
+          default_value: false
+        access_result:
+          type: boolean
+          label: 'Modifies access result'
+          description: 'Processor modifies AccessResult'
+          default_value: false
+        display_component:
+          type: boolean
+          label: 'Modifies display component'
+          description: 'Processor modifies display component configuration'
+          default_value: false
+        entity:
+          type: boolean
+          label: 'Modifies entity'
+          description: 'Processor modifies entity values'
+          default_value: false
+        custom:
+          type: mapping
+          label: 'Custom output types'
+          description: 'Additional output types this processor produces'
+          mapping:
+            [key]:
+              type: string
+              label: 'Output type name'
+        idempotent:
+          type: boolean
+          label: 'Processor is idempotent'
+          description: 'If true, processor can be safely run multiple times with same result. Enables safe re-execution and validation. Critical for Drupal configuration system integrity.'
+          default_value: false
+```
+
+**Explanation**: Explicitly declaring outputs enables dependency analysis, helps determine processing order, and documents processor behavior. Standard output types cover common Drupal operations. The `idempotent` flag indicates whether the processor can be safely re-executed multiple times with the same result, which is critical for Drupal's configuration system.
+
+#### 1.4 Conditional Execution Schema
+
+Defines when the processor runs:
+
+```yaml
+    conditions:
+      type: mapping
+      label: 'Conditional execution'
+      description: 'When to run this processor'
+      mapping:
+        context:
+          type: sequence
+          label: 'Display context conditions'
+          description: 'Contexts where processor should run (field, widget, formatter, form, view). Aligns with ConfigSchemaSubform condition.context evaluation. Field-level settings can appear in multiple contexts (field config form OR widget/formatter forms).'
+          sequence:
+            type: string
+        context_logic:
+          type: option
+          label: 'Context logic'
+          description: 'How to combine context conditions'
+          default_value: any
+          option:
+            plugin_id: static
+            plugin_config:
+              options:
+                any:
+                  label: 'Any - At least one context must match'
+                all:
+                  label: 'All - All contexts must match'
+                field_aware:
+                  label: 'Field-aware - Special handling for field-level settings (if field context matches, widget/formatter contexts are optional)'
+        entity_type:
+          type: mapping
+          label: 'Entity type conditions'
+          mapping:
+            include:
+              type: sequence
+              label: 'Include entity types'
+              sequence:
+                type: string
+            exclude:
+              type: sequence
+              label: 'Exclude entity types'
+              sequence:
+                type: string
+        bundle:
+          type: mapping
+          label: 'Bundle conditions'
+          mapping:
+            include:
+              type: sequence
+              label: 'Include bundles'
+              sequence:
+                type: string
+            exclude:
+              type: sequence
+              label: 'Exclude bundles'
+              sequence:
+                type: string
+        field_type:
+          type: mapping
+          label: 'Field type conditions'
+          mapping:
+            include:
+              type: sequence
+              label: 'Include field types'
+              sequence:
+                type: string
+            exclude:
+              type: sequence
+              label: 'Exclude field types'
+              sequence:
+                type: string
+        custom:
+          type: sequence
+          label: 'Custom condition plugins'
+          description: 'Condition plugins that must evaluate to true'
+          sequence:
+            type: plugin_instance
+            label: 'Condition'
+            plugin_type: condition
+            configurable: true
+        result_conditions:
+          type: sequence
+          label: 'Conditions based on previous processor results'
+          description: 'Evaluate conditions based on results from previous processors in the execution chain'
+          sequence:
+            type: mapping
+            mapping:
+              processor_id:
+                type: string
+                label: 'Processor ID to check'
+              result_path:
+                type: string
+                label: 'Dot-notation path to result value'
+              operator:
+                type: option
+                label: 'Comparison operator'
+                default_value: equals
+                option:
+                  plugin_id: static
+                  plugin_config:
+                    options:
+                      equals:
+                        label: 'Equals'
+                      not_equals:
+                        label: 'Not equals'
+                      exists:
+                        label: 'Property exists'
+                      not_exists:
+                        label: 'Property does not exist'
+                      greater_than:
+                        label: 'Greater than'
+                      less_than:
+                        label: 'Less than'
+                      contains:
+                        label: 'Contains (for arrays/strings)'
+                      matches:
+                        label: 'Matches regex pattern'
+              value:
+                type: any
+                label: 'Value to compare against'
+        condition_logic:
+          type: option
+          label: 'Condition logic'
+          description: 'How to combine multiple conditions'
+          default_value: AND
+          option:
+            plugin_id: static
+            plugin_config:
+              options:
+                AND:
+                  label: 'AND - All conditions must be met'
+                OR:
+                  label: 'OR - At least one condition must be met'
+                XOR:
+                  label: 'XOR - Exactly one condition must be met'
+```
+
+**Explanation**: Conditions control when processors run. Context conditions align with `ConfigSchemaSubform::shouldSkipProperty()` evaluation, supporting the same field-aware logic where field-level settings can appear in multiple contexts. Include/exclude patterns allow both positive and negative matching for entity types, bundles, and field types. Custom condition plugins enable complex evaluation logic. Result conditions enable dynamic processor execution based on previous processor outputs, allowing processors to depend on results from earlier processors in the execution chain. Condition logic determines how multiple conditions are combined: AND (all must be true), OR (at least one must be true), or XOR (exactly one must be true). XOR is particularly useful for mutually exclusive conditions, such as conditional field dependencies where only one dependency should be active at a time.
+
+**Access Evaluation Patterns**: Processors can evaluate access conditions using the same conditional logic patterns. For access control scenarios (e.g., `entity_operation.access_control`, `field_definition.field_access`), processors support access logic evaluation:
+
+```yaml
+conditions:
+  custom:
+    - plugin_id: user_role
+      plugin_config:
+        roles: [administrator, editor]
+  condition_logic: AND  # All access conditions must be met
+```
+
+Access evaluation follows the same AND/OR/XOR logic patterns, allowing complex access control scenarios where multiple conditions must be evaluated together.
+
+#### 1.5 Dependencies Schema
+
+Defines required modules, services, and plugins:
+
+```yaml
+    dependencies:
+      type: mapping
+      label: 'Dependencies'
+      description: 'Required modules, services, and plugins'
+      mapping:
+        modules:
+          type: sequence
+          label: 'Module dependencies'
+          description: 'Required Drupal modules'
+          sequence:
+            type: string
+        services:
+          type: sequence
+          label: 'Service dependencies'
+          description: 'Required service IDs'
+          sequence:
+            type: string
+        plugin_types:
+          type: sequence
+          label: 'Plugin type dependencies'
+          description: 'Required plugin types'
+          sequence:
+            type: mapping
+            mapping:
+              plugin_type:
+                type: string
+                label: 'Plugin type'
+              required_plugins:
+                type: sequence
+                label: 'Required plugin IDs (optional)'
+                sequence:
+                  type: string
+```
+
+**Explanation**: Declaring dependencies enables validation, error handling, and documentation. Missing dependencies can be detected before processor execution, providing clear error messages.
+
+#### 1.5.1 Condition and ValidationRule Plugin Types
+
+The schema processor system requires two additional plugin types to support conditional execution and validation:
+
+**Condition Plugin Type**:
+
+```yaml
+condition:
+  label: Condition
+  provider: bd
+  plugin_manager_service_id: plugin.manager.condition
+  plugin_definition_decorator_class: \Drupal\plugin\PluginDefinition\ArrayPluginDefinitionDecorator
+```
+
+**Note**: Drupal's plugin system automatically creates plugin manager services from `bd.plugin_type.yml` entries. When the `condition` plugin type is defined with `plugin_manager_service_id: plugin.manager.condition`, Drupal automatically registers the service `plugin.manager.condition` in the service container. No explicit service definition in `bd.services.yml` is required. The same applies to the `validation_rule` plugin type.
+
+```php
+<?php
+
+namespace Drupal\bd\Plugin\Condition;
+
+use Drupal\Component\Plugin\ConfigurableInterface;
+use Drupal\Component\Plugin\PluginInspectionInterface;
+use Drupal\Core\Form\FormStateInterface;
+use Drupal\Core\Plugin\ContainerFactoryPluginInterface;
+
+/**
+ * Interface for Condition plugins.
+ */
+interface ConditionInterface extends PluginInspectionInterface, ConfigurableInterface, ContainerFactoryPluginInterface {
+
+  /**
+   * Evaluates the condition.
+   *
+   * @param array $context
+   *   Context array containing relevant data for condition evaluation.
+   *
+   * @return bool
+   *   TRUE if the condition is met, FALSE otherwise.
+   */
+  public function evaluate(array $context = []): bool;
+
+  /**
+   * Builds the configuration form for the condition.
+   *
+   * @param array $form
+   *   An associative array containing the structure of the form.
+   * @param \Drupal\Core\Form\FormStateInterface $form_state
+   *   The current state of the form.
+   *
+   * @return array
+   *   The form structure.
+   */
+  public function buildConfigurationForm(array $form, FormStateInterface $form_state): array;
+
+  /**
+   * Submits the configuration form for the condition.
+   *
+   * @param array $form
+   *   An associative array containing the structure of the form.
+   * @param \Drupal\Core\Form\FormStateInterface $form_state
+   *   The current state of the form.
+   */
+  public function submitConfigurationForm(array &$form, FormStateInterface $form_state): void;
+
+  /**
+   * Gets the summary of the condition.
+   *
+   * @return string
+   *   A human-readable summary of the condition.
+   */
+  public function summary(): string;
+
+}
+```
+
+```php
+<?php
+
+namespace Drupal\bd\Plugin\Condition;
+
+use Drupal\Core\Plugin\PluginBase;
+use Symfony\Component\DependencyInjection\ContainerInterface;
+use Drupal\Core\Form\FormStateInterface;
+
+/**
+ * Base class for Condition plugins.
+ */
+abstract class ConditionBase extends PluginBase implements ConditionInterface {
+
+  /**
+   * The plugin configuration.
+   *
+   * @var array
+   */
+  protected $configuration;
+
+  /**
+   * {@inheritdoc}
+   */
+  public static function create(ContainerInterface $container, array $configuration, $plugin_id, $plugin_definition) {
+    return new static(
+      $configuration,
+      $plugin_id,
+      $plugin_definition
+    );
+  }
+
+  /**
+   * {@inheritdoc}
+   */
+  public function getConfiguration() {
+    return $this->configuration;
+  }
+
+  /**
+   * {@inheritdoc}
+   */
+  public function setConfiguration(array $configuration) {
+    $this->configuration = $configuration + $this->defaultConfiguration();
+    return $this;
+  }
+
+  /**
+   * {@inheritdoc}
+   */
+  public function defaultConfiguration() {
+    return [];
+  }
+
+  /**
+   * {@inheritdoc}
+   */
+  public function buildConfigurationForm(array $form, FormStateInterface $form_state): array {
+    return $form;
+  }
+
+  /**
+   * {@inheritdoc}
+   */
+  public function submitConfigurationForm(array &$form, FormStateInterface $form_state): void {
+    // No-op by default.
+  }
+
+  /**
+   * {@inheritdoc}
+   */
+  public function summary(): string {
+    return $this->t('No summary available.');
+  }
+
+}
+```
+
+**ValidationRule Plugin Type**:
+
+```yaml
+validation_rule:
+  label: Validation rule
+  provider: bd
+  plugin_manager_service_id: plugin.manager.validation_rule
+  plugin_definition_decorator_class: \Drupal\plugin\PluginDefinition\ArrayPluginDefinitionDecorator
+```
+
+```php
+<?php
+
+namespace Drupal\bd\Plugin\ValidationRule;
+
+use Drupal\Component\Plugin\ConfigurableInterface;
+use Drupal\Component\Plugin\PluginInspectionInterface;
+use Drupal\Core\Plugin\ContainerFactoryPluginInterface;
+use Symfony\Component\Validator\ConstraintViolationListInterface;
+
+/**
+ * Interface for Validation Rule plugins.
+ */
+interface ValidationRuleInterface extends PluginInspectionInterface, ConfigurableInterface, ContainerFactoryPluginInterface {
+
+  /**
+   * Validates the given data against the rule.
+   *
+   * @param mixed $data
+   *   The data to validate.
+   * @param \Symfony\Component\Validator\ConstraintViolationListInterface $violations
+   *   The violation list to add errors to.
+   * @param array $context
+   *   Additional context for validation (e.g., entity, field_definition).
+   */
+  public function validate($data, ConstraintViolationListInterface $violations, array $context = []): void;
+
+  /**
+   * Gets a human-readable description of the validation rule.
+   *
+   * @return string
+   *   The description.
+   */
+  public function getDescription(): string;
+
+}
+```
+
+```php
+<?php
+
+namespace Drupal\bd\Plugin\ValidationRule;
+
+use Drupal\Core\Plugin\PluginBase;
+use Symfony\Component\DependencyInjection\ContainerInterface;
+use Symfony\Component\Validator\ConstraintViolationListInterface;
+
+/**
+ * Base class for Validation Rule plugins.
+ */
+abstract class ValidationRuleBase extends PluginBase implements ValidationRuleInterface {
+
+  /**
+   * The plugin configuration.
+   *
+   * @var array
+   */
+  protected $configuration;
+
+  /**
+   * {@inheritdoc}
+   */
+  public static function create(ContainerInterface $container, array $configuration, $plugin_id, $plugin_definition) {
+    return new static(
+      $configuration,
+      $plugin_id,
+      $plugin_definition
+    );
+  }
+
+  /**
+   * {@inheritdoc}
+   */
+  public function getConfiguration() {
+    return $this->configuration;
+  }
+
+  /**
+   * {@inheritdoc}
+   */
+  public function setConfiguration(array $configuration) {
+    $this->configuration = $configuration + $this->defaultConfiguration();
+    return $this;
+  }
+
+  /**
+   * {@inheritdoc}
+   */
+  public function defaultConfiguration() {
+    return [];
+  }
+
+  /**
+   * {@inheritdoc}
+   */
+  public function getDescription(): string {
+    return $this->pluginDefinition['description'] ?? $this->t('No description available.');
+  }
+
+  /**
+   * {@inheritdoc}
+   */
+  abstract public function validate($data, ConstraintViolationListInterface $violations, array $context = []): void;
+
+}
+```
+
+**Explanation**: Condition and ValidationRule plugin types enable custom condition evaluation and validation logic for schema processors. These plugin types must be created as part of Phase 1 to support the conditional execution and validation features defined in the schema processor schema.
+
+#### 1.6 Processing Order Schema
+
+Defines execution order relative to other processors:
+
+```yaml
+    processing_order:
+      type: mapping
+      label: 'Processing order'
+      description: 'Control when this processor runs relative to others'
+      mapping:
+        weight:
+          type: integer
+          label: 'Weight'
+          description: 'Lower weights run first. Should align with schema property form.weight or weight to maintain consistency with form rendering order.'
+          default_value: 0
+        schema_weight_source:
+          type: option
+          label: 'Schema weight source'
+          description: 'Which schema weight to use for alignment with schema property processing order'
+          default_value: form_weight
+          option:
+            plugin_id: static
+            plugin_config:
+              options:
+                form_weight:
+                  label: 'form.weight (preferred) - Matches ConfigSchemaSubform property sorting'
+                weight:
+                  label: 'weight (fallback) - Used when form.weight not available'
+                none:
+                  label: 'None - Use explicit weight value only'
+        priority:
+          type: option
+          label: 'Priority level'
+          description: 'Priority category for grouping'
+          default_value: normal
+          option:
+            plugin_id: static
+            plugin_config:
+              options:
+                critical:
+                  label: 'Critical - Must run first'
+                high:
+                  label: 'High priority'
+                normal:
+                  label: 'Normal priority'
+                low:
+                  label: 'Low priority'
+        before:
+          type: sequence
+          label: 'Run before these processors'
+          description: 'Processor IDs that must run after this one'
+          sequence:
+            type: string
+        after:
+          type: sequence
+          label: 'Run after these processors'
+          description: 'Processor IDs that must run before this one'
+          sequence:
+            type: string
+        error_handling:
+          type: mapping
+          label: 'Error handling configuration'
+          mapping:
+            on_error:
+              type: option
+              label: 'Behavior on error'
+              default_value: log_and_continue
+              option:
+                plugin_id: static
+                plugin_config:
+                  options:
+                    log_and_continue:
+                      label: 'Log error and continue with next processor'
+                    stop_processing:
+                      label: 'Stop processing and return error'
+                    rollback:
+                      label: 'Rollback previous processors and stop'
+            error_context:
+              type: boolean
+              label: 'Include full context in error messages'
+              default_value: true
+            retry_on_error:
+              type: boolean
+              label: 'Retry processor on error'
+              default_value: false
+            max_retries:
+              type: integer
+              label: 'Maximum retry attempts'
+              default_value: 3
+```
+
+**Explanation**: Processing order is determined by weight (numeric sorting), priority (categorical grouping), and before/after relationships (explicit ordering). Weight can align with schema property weights (`form.weight` or `weight`) to ensure processors run in the same order as schema properties are processed in forms (see `ConfigSchemaSubform::recurseProcessConfigSchemaMapping()`). Processors with critical priority run before high, which run before normal, which run before low. Within the same priority, weight determines order. Before/after relationships override weight and priority when there are conflicts. Error handling configuration controls how processors respond to errors: log and continue (default), stop processing, or rollback previous processors. Retry logic enables automatic retry on transient errors.
+
+**Nested Sequence Processing**: Processors support processing sequences nested within mapping structures. This is essential for complex schemas like `bd.entity_operation.*`, `bd.entity_context.*`, and `field_definition.third_party_settings.*` that contain sequences of plugin instances, conditions, or other complex structures within mappings. When a processor's input includes a sequence path (e.g., `context_mapping.parameters`, `menu.items`, `pre_processors`), the processor can iterate over sequence items and apply processing to each item. The processor receives each sequence item as a separate input context, allowing it to process nested structures recursively.
+
+**Plugin Instance Chain Processing**: Processors support processing chains of plugin instances within sequences. This is critical for schemas that define sequences of plugin instances (e.g., `field_definition.field_access.view.condition_list`, `entity_operation.access_control.items`, `entity_context.processing.pre_processors`). When processing plugin instance chains, processors:
+1. Discover plugin instances from sequence items
+2. Instantiate each plugin with its configuration
+3. Execute plugins in sequence order
+4. Aggregate results from all plugins
+5. Apply conditional logic (AND/OR/XOR) to combine plugin results
+
+Plugin instance chain processing enables complex scenarios like:
+- Access control evaluation with multiple condition plugins
+- Pre-processing pipelines with multiple transformation plugins
+- Validation chains with multiple validation rule plugins
+- Conditional field dependencies with multiple handler plugins
+
+#### 1.7 Transformation Pipeline Schema
+
+Defines transformation processors to apply to input data before main processing (inspired by Tamper module's plugin-based transformation architecture):
+
+```yaml
+    transformations:
+      type: sequence
+      label: 'Transformation pipeline'
+      description: 'Chain of transformation processors to apply to input data before processing. Executes in weight order before main processor logic.'
+      sequence:
+        type: mapping
+        mapping:
+          processor_id:
+            type: string
+            label: 'Transformation processor plugin ID'
+            description: 'Plugin ID of transformation processor (e.g., remove_properties, rename_properties, normalize_format)'
+          config:
+            type: mapping
+            label: 'Transformation configuration'
+            description: 'Configuration specific to this transformation processor'
+          enabled:
+            type: boolean
+            label: 'Enable this transformation'
+            default_value: true
+          weight:
+            type: integer
+            label: 'Transformation order'
+            description: 'Lower weights execute first. Determines order within transformation pipeline.'
+            default_value: 0
+```
+
+**Built-in Transformation Types** (inspired by Zuplo's built-in processors and Tamper module patterns):
+- `remove_properties`: Remove specific config properties by dot-notation paths
+- `rename_properties`: Rename config keys using dot-notation mapping
+- `set_defaults`: Apply default values to missing properties
+- `normalize_format`: Normalize data formats (dates, strings, arrays, booleans)
+- `validate_required`: Validate required properties exist before processing
+- `filter_values`: Filter array values based on conditions
+- `merge_arrays`: Merge arrays from multiple sources with configurable merge strategy
+
+**Explanation**: Transformation pipeline executes before main processor logic, allowing data normalization and transformation. Transformations are chained in sequence (by weight), with each transformation receiving the output of the previous transformation. This pattern is inspired by Drupal's Tamper module, which provides plugin-based data transformations for feeds and data import workflows. Built-in transformation types reduce boilerplate for common operations.
+
+#### 1.8 Result Handling Schema
+
+Defines how processor results are stored, aggregated, and passed to subsequent processors (inspired by Zuplo's transformation pipelines):
+
+```yaml
+    result_handling:
+      type: mapping
+      label: 'Result handling configuration'
+      description: 'How processor results are stored, transformed, and made available to subsequent processors'
+      mapping:
+        store_result:
+          type: boolean
+          label: 'Store result in context'
+          description: 'If true, processor result is stored in context for subsequent processors'
+          default_value: true
+        result_key:
+          type: string
+          label: 'Key to store result in context'
+          description: 'Result will be available to subsequent processors via context[result_key]. Defaults to processor plugin ID if not specified.'
+        aggregate_with:
+          type: sequence
+          label: 'Aggregate results with these processors'
+          description: 'Processor IDs whose results should be aggregated with this processor result'
+          sequence:
+            type: string
+        pass_to:
+          type: sequence
+          label: 'Pass results to these processors'
+          description: 'Processor IDs that should receive this processor result as input'
+          sequence:
+            type: string
+        result_transformation:
+          type: mapping
+          label: 'Transform result before storing'
+          description: 'Apply transformation to result before storing in context'
+          mapping:
+            processor_id:
+              type: string
+              label: 'Transformation processor to apply'
+            config:
+              type: mapping
+              label: 'Transformation configuration'
+```
+
+**Explanation**: Result handling enables processors to pass data to subsequent processors in the execution chain. Results are stored in the processing context and can be accessed by later processors via `result_conditions` or direct context access. Result transformation allows post-processing of results before storage. Aggregation enables combining results from multiple processors. This pattern enables complex workflows where processors depend on previous processor outputs, similar to Zuplo's transformation pipeline architecture.
+
+#### 1.9 Validation Schema
+
+Defines validation rules to apply before and after processing (inspired by Ansible's validation patterns):
+
+```yaml
+    validation:
+      type: mapping
+      label: 'Validation configuration'
+      description: 'Validation rules to ensure input and output data integrity'
+      mapping:
+        validate_before:
+          type: boolean
+          label: 'Validate input before processing'
+          description: 'If true, validate input data against schema and required properties before processor execution'
+          default_value: false
+        validate_after:
+          type: boolean
+          label: 'Validate output after processing'
+          description: 'If true, validate output data against schema after processor execution'
+          default_value: false
+        validation_rules:
+          type: sequence
+          label: 'Custom validation rules'
+          description: 'Custom validation rule plugins to apply'
+          sequence:
+            type: plugin_instance
+            label: 'Validation rule'
+            plugin_type: validation_rule
+            configurable: true
+        required_properties:
+          type: sequence
+          label: 'Required input properties'
+          description: 'Dot-notation paths to properties that must exist in input data'
+          sequence:
+            type: string
+        schema_validation:
+          type: boolean
+          label: 'Validate against config schema'
+          description: 'If true, validate input/output against config schema definitions'
+          default_value: true
+```
+
+**Explanation**: Validation ensures data integrity before and after processing. Pre-processing validation catches invalid input early, while post-processing validation ensures processors produce valid output. Custom validation rules enable project-specific validation logic. Required properties validation ensures critical data is present. Schema validation leverages Drupal's typed config system to validate against schema definitions. This pattern aligns with Ansible's validation approach, ensuring system state consistency.
+
+#### 1.10 Built-in Processors Schema
+
+Defines shortcuts to common processor patterns without creating custom plugins (inspired by Zuplo's built-in processors):
+
+```yaml
+    built_in_processors:
+      type: sequence
+      label: 'Built-in processor shortcuts'
+      description: 'Reference common processor patterns without creating custom plugins. These are lightweight shortcuts to common transformations.'
+      sequence:
+        type: mapping
+        mapping:
+          processor_type:
+            type: option
+            label: 'Built-in processor type'
+            option:
+              plugin_id: static
+              plugin_config:
+                options:
+                  remove_properties:
+                    label: 'Remove specific properties'
+                  rename_properties:
+                    label: 'Rename property keys'
+                  set_defaults:
+                    label: 'Set default values'
+                  normalize_format:
+                    label: 'Normalize data format'
+                  validate_required:
+                    label: 'Validate required properties'
+                  filter_values:
+                    label: 'Filter array values'
+                  merge_arrays:
+                    label: 'Merge arrays'
+          config:
+            type: mapping
+            label: 'Processor-specific configuration'
+            description: 'Configuration for the built-in processor type'
+          enabled:
+            type: boolean
+            label: 'Enable this processor'
+            default_value: true
+          weight:
+            type: integer
+            label: 'Processor weight'
+            description: 'Execution order within built-in processors'
+            default_value: 0
+```
+
+**Explanation**: Built-in processors provide shortcuts to common transformation patterns, reducing boilerplate when simple transformations are needed. These are lightweight alternatives to creating full processor plugins for common operations. Built-in processors execute as part of the transformation pipeline (see Section 1.7) and can be combined with custom transformation processors. This pattern is inspired by Zuplo's built-in processors (`removeExtensions`, `removeParameters`, `removePaths`), which provide common transformations without requiring custom code.
+
+**Additional Built-in Processor Types** (for generic processor consolidation):
+- `extract_plugin_instance` - Extract plugin_id/config from plugin_instance format
+- `parse_id_segment` - Parse segment from ID string (e.g., field_name from entity.bundle.field_name)
+- `variable_replace` - Replace variables in strings (e.g., `{{ entity_type_id }}`)
+- `translation_wrap` - Wrap strings in TranslatableMarkup or PluralTranslation
+
+#### 1.11 Generic Processor Schema Types
+
+Generic processors provide flexible, configuration-driven alternatives to specialized processors, reducing the total plugin count while maintaining functionality through comprehensive configuration options.
+
+##### 1.11.1 Property Setter Processor Schema
+
+A generic processor for setting, extracting, wrapping, and transforming properties on target objects (forms, field definitions, entity types):
+
+```yaml
+plugin.plugin_configuration.schema_processor.property_setter:
+  type: mapping
+  label: 'Property setter processor configuration'
+  description: 'Generic processor for setting properties on target objects with extraction, wrapping, and transformation support'
+  mapping:
+    # ... standard execution/input/output config ...
+    property_operations:
+      type: sequence
+      label: 'Property operations'
+      description: 'Operations to perform on target object properties'
+      sequence:
+        type: mapping
+        mapping:
+          target_path:
+            type: string
+            label: 'Target property path (dot-notation)'
+            description: 'Path where property value will be set (e.g., label, #title, computed, handlers.storage)'
+          source_path:
+            type: string
+            label: 'Source config path (dot-notation, optional if value provided)'
+            description: 'Path in input config to read value from (e.g., label, general.form_display.form_title)'
+          value:
+            type: any
+            label: 'Direct value (if source_path not provided)'
+            description: 'Literal value to set (e.g., true for computed flag, class name for class property)'
+          operation:
+            type: option
+            label: 'Operation type'
+            default_value: set
+            option:
+              plugin_id: static
+              plugin_config:
+                options:
+                  set:
+                    label: 'Set property value'
+                  append:
+                    label: 'Append to array'
+                  merge:
+                    label: 'Merge with existing (deep merge)'
+                  wrap:
+                    label: 'Wrap value in TranslatableMarkup or PluralTranslation'
+          wrap_type:
+            type: option
+            label: 'Wrap type (for wrap operation)'
+            option:
+              plugin_id: static
+              plugin_config:
+                options:
+                  translatable:
+                    label: 'TranslatableMarkup'
+                  plural:
+                    label: 'PluralTranslation'
+            default_value: translatable
+          default_value:
+            type: any
+            label: 'Default value if source is empty'
+            description: 'Value to use if source_path is empty or not found'
+          transformation:
+            type: mapping
+            label: 'Value transformation before setting'
+            mapping:
+              type:
+                type: option
+                label: 'Transformation type'
+                option:
+                  plugin_id: static
+                  plugin_config:
+                    options:
+                      extract_plugin_id:
+                        label: 'Extract plugin_id from plugin_instance format'
+                      extract_plugin_config:
+                        label: 'Extract plugin_config from plugin_instance format'
+                      parse_id_segment:
+                        label: 'Parse segment from ID string (e.g., field_name from entity.bundle.field_name)'
+              segment_index:
+                type: integer
+                label: 'Segment index (0-based, e.g., 2 for third segment in parse_id_segment)'
+                description: 'Required for parse_id_segment transformation'
+```
+
+**Example: Form Title (replaces FormTitleProcessor)**:
+```yaml
+property_setter:
+  plugin_id: property_setter
+  execution:
+    hooks: [form_alter]
+  input:
+    schema_keys: [general.form_display.form_title]
+  property_operations:
+    - target_path: '#title'
+      source_path: general.form_display.form_title
+      operation: set
+```
+
+**Example: Computed Field Properties (replaces ComputedFieldPropertiesProcessor, ComputedFieldFlagProcessor)**:
+```yaml
+property_setter:
+  plugin_id: property_setter
+  execution:
+    hooks: [entity_bundle_field_info_alter]
+  property_operations:
+    - target_path: label
+      source_path: label
+      operation: wrap
+      wrap_type: translatable
+    - target_path: description
+      source_path: description
+      operation: wrap
+      wrap_type: translatable
+    - target_path: computed
+      value: true
+      operation: set
+    - target_path: displayConfigurable
+      value: [view]
+      operation: set
+```
+
+**Consolidation**: Replaces FormTitleProcessor, FormDescriptionProcessor, FormHelpTextProcessor, ComputedFieldPropertiesProcessor, ComputedFieldFlagProcessor, ComputedFieldDisplayConfigurableProcessor, ComputedFieldCardinalityProcessor, ComputedFieldIdentityProcessor, EntityTypeLabelWrapProcessor, EntityTypeEntityKeysProcessor (10 specialized processors → 1 generic processor)
+
+##### 1.11.2 Merge Processor Schema
+
+A generic processor for merging configuration from multiple sources (config, templates, alter configs):
+
+```yaml
+plugin.plugin_configuration.schema_processor.merge:
+  type: mapping
+  label: 'Merge processor configuration'
+  description: 'Generic processor for merging configuration from multiple sources with configurable merge strategies'
+  mapping:
+    # ... standard execution/input/output config ...
+    merge_config:
+      type: mapping
+      label: 'Merge configuration'
+      mapping:
+        source_path:
+          type: string
+          label: 'Source path in input config'
+          description: 'Path in input config to read source data from (e.g., settings.handlers, base)'
+        target_path:
+          type: string
+          label: 'Target path in output (defaults to same as source_path)'
+          description: 'Path in output where merged data will be written (e.g., handlers)'
+        merge_strategy:
+          type: option
+          label: 'Merge strategy'
+          default_value: recursive
+          option:
+            plugin_id: static
+            plugin_config:
+              options:
+                recursive:
+                  label: 'Recursive deep merge (array_merge_recursive)'
+                replace:
+                  label: 'Replace target with source'
+                append:
+                  label: 'Append source to target array'
+                merge_into:
+                  label: 'Merge source into parent target (e.g., settings.handlers → handlers)'
+        source_type:
+          type: option
+          label: 'Source data type'
+          default_value: config
+          option:
+            plugin_id: static
+            plugin_config:
+              options:
+                config:
+                  label: 'From input config path'
+                template:
+                  label: 'From template/context templates'
+                alter:
+                  label: 'From alter configs in context'
+        filter_condition:
+          type: mapping
+          label: 'Condition to filter source items'
+          description: 'Optional condition to filter which source items to merge'
+          mapping:
+            path:
+              type: string
+              label: 'Path to check in source item'
+            value:
+              type: any
+              label: 'Required value'
+            operator:
+              type: option
+              label: 'Comparison operator'
+              option:
+                plugin_id: static
+                plugin_config:
+                  options:
+                    equals:
+                      label: 'Equals'
+                    contains:
+                      label: 'Contains'
+                    exists:
+                      label: 'Property exists'
+```
+
+**Example: Handler Merge (replaces EntityTypeHandlerMergeProcessor)**:
+```yaml
+merge:
+  plugin_id: merge
+  execution:
+    service_methods:
+      - service: entity.helper
+        method: processEntityTypeDefinition
+  merge_config:
+    source_path: settings.handlers
+    target_path: handlers
+    merge_strategy: merge_into
+    source_type: config
+```
+
+**Example: Base Template Merge (replaces EntityTypeBaseMergeProcessor)**:
+```yaml
+merge:
+  plugin_id: merge
+  execution:
+    service_methods:
+      - service: entity.helper
+        method: processEntityTypeDefinition
+  merge_config:
+    source_path: base
+    merge_strategy: recursive
+    source_type: template
+```
+
+**Consolidation**: Replaces EntityTypeBaseMergeProcessor, EntityTypeHandlerMergeProcessor, EntityTypeAlterProcessor, FieldSettingsMergeProcessor, EntityTypeBundleCreationProcessor (5 specialized processors → 1 generic processor)
+
+##### 1.11.3 Plugin Instance Extractor Processor Schema
+
+A generic processor for extracting plugin_id and plugin_config from plugin_instance format:
+
+```yaml
+plugin.plugin_configuration.schema_processor.plugin_instance_extractor:
+  type: mapping
+  label: 'Plugin instance extractor processor configuration'
+  description: 'Generic processor for extracting plugin_id and plugin_config from plugin_instance format'
+  mapping:
+    # ... standard execution/input/output config ...
+    extraction_config:
+      type: mapping
+      label: 'Extraction configuration'
+      mapping:
+        source_path:
+          type: string
+          label: 'Path to plugin_instance in input'
+          description: 'Path in input config containing plugin_instance format (e.g., plugin_field_type, plugin_computed_field)'
+        extractions:
+          type: sequence
+          label: 'Properties to extract'
+          sequence:
+            type: mapping
+            mapping:
+              source_property:
+                type: string
+                label: 'Property in plugin_instance'
+                description: 'Property to extract: plugin_id or plugin_config'
+              target_path:
+                type: string
+                label: 'Target path in context/results'
+                description: 'Path in context where extracted value will be stored (e.g., field_type, plugin_config)'
+              required:
+                type: boolean
+                label: 'Required property'
+                default_value: true
+                description: 'If true, extraction fails if property is missing'
+```
+
+**Example: Field Type Extraction (replaces ComputedFieldPluginTypeExtractorProcessor)**:
+```yaml
+plugin_instance_extractor:
+  plugin_id: plugin_instance_extractor
+  execution:
+    hooks: [entity_bundle_field_info_alter]
+  extraction_config:
+    source_path: plugin_field_type
+    extractions:
+      - source_property: plugin_id
+        target_path: field_type
+        required: true
+```
+
+**Example: Computed Field Plugin Extraction (replaces ComputedFieldPluginExtractorProcessor)**:
+```yaml
+plugin_instance_extractor:
+  plugin_id: plugin_instance_extractor
+  execution:
+    hooks: [entity_bundle_field_info_alter]
+  extraction_config:
+    source_path: plugin_computed_field
+    extractions:
+      - source_property: plugin_id
+        target_path: computed_field_plugin_id
+        required: true
+      - source_property: plugin_config
+        target_path: computed_field_plugin_config
+        required: false
+```
+
+**Consolidation**: Replaces ComputedFieldPluginTypeExtractorProcessor, ComputedFieldPluginExtractorProcessor (2 specialized processors → 1 generic processor)
+
+##### 1.11.4 Field Definition Processor Schema
+
+A generic processor for creating BaseFieldDefinition objects from config or templates:
+
+```yaml
+plugin.plugin_configuration.schema_processor.field_definition:
+  type: mapping
+  label: 'Field definition processor configuration'
+  description: 'Generic processor for creating BaseFieldDefinition objects from config or templates'
+  mapping:
+    # ... standard execution/input/output config ...
+    field_definition_config:
+      type: mapping
+      label: 'Field definition configuration'
+      mapping:
+        field_type_source:
+          type: option
+          label: 'Field type source'
+          default_value: config_path
+          option:
+            plugin_id: static
+            plugin_config:
+              options:
+                config_path:
+                  label: 'From config path'
+                context:
+                  label: 'From context (e.g., extracted field_type)'
+        field_type_path:
+          type: string
+          label: 'Config path to field type (if source is config_path)'
+          description: 'Path in config containing field type string (e.g., type, field.definition.type)'
+        context_key:
+          type: string
+          label: 'Context key for field type (if source is context)'
+          description: 'Key in context containing field type string (e.g., field_type)'
+        template_source:
+          type: option
+          label: 'Template source (optional)'
+          option:
+            plugin_id: static
+            plugin_config:
+              options:
+                config:
+                  label: 'From config'
+                context:
+                  label: 'From context templates'
+        template_path:
+          type: string
+          label: 'Template config path'
+          description: 'Path in config containing template reference (e.g., field_template)'
+        merge_template:
+          type: boolean
+          label: 'Merge template properties'
+          default_value: false
+          description: 'If true, merge template properties into field definition'
+```
+
+**Example: Base Field Definition (replaces BaseFieldDefinitionProcessor)**:
+```yaml
+field_definition:
+  plugin_id: field_definition
+  execution:
+    hooks: [entity_base_field_info_alter]
+  field_definition_config:
+    field_type_source: config_path
+    field_type_path: field.definition.type
+```
+
+**Example: Computed Field Definition (replaces ComputedFieldDefinitionCreatorProcessor)**:
+```yaml
+field_definition:
+  plugin_id: field_definition
+  execution:
+    hooks: [entity_bundle_field_info_alter]
+  field_definition_config:
+    field_type_source: context
+    context_key: field_type
+```
+
+**Consolidation**: Replaces BaseFieldDefinitionProcessor, ComputedFieldDefinitionCreatorProcessor, FieldTemplateProcessor (3 specialized processors → 1 generic processor)
+
+##### 1.11.5 Cleanup Processor Schema
+
+A generic processor for cleaning up arrays (removing empty values, setting defaults):
+
+```yaml
+plugin.plugin_configuration.schema_processor.cleanup:
+  type: mapping
+  label: 'Cleanup processor configuration'
+  description: 'Generic processor for cleaning up arrays (removing empty values, setting defaults)'
+  mapping:
+    # ... standard execution/input/output config ...
+    cleanup_config:
+      type: mapping
+      label: 'Cleanup configuration'
+      mapping:
+        target_path:
+          type: string
+          label: 'Path to clean up'
+          description: 'Path in output config to clean up (e.g., handlers, entity_keys)'
+        operations:
+          type: sequence
+          label: 'Cleanup operations'
+          sequence:
+            type: option
+            option:
+              plugin_id: static
+              plugin_config:
+                options:
+                  remove_empty:
+                    label: 'Remove empty values (null, empty string, empty array)'
+                  remove_keys:
+                    label: 'Remove specific keys (requires keys_to_remove)'
+                  set_defaults:
+                    label: 'Set default values for missing keys (requires defaults)'
+        keys_to_remove:
+          type: sequence
+          label: 'Keys to remove (for remove_keys operation)'
+          sequence:
+            type: string
+        defaults:
+          type: mapping
+          label: 'Default values mapping (for set_defaults operation)'
+          description: 'Mapping of keys to default values'
+```
+
+**Example: Handler Cleanup (replaces EntityTypeHandlerCleanupProcessor)**:
+```yaml
+cleanup:
+  plugin_id: cleanup
+  execution:
+    service_methods:
+      - service: entity.helper
+        method: processEntityTypeDefinition
+  cleanup_config:
+    target_path: handlers
+    operations:
+      - remove_empty
+```
+
+**Example: Entity Keys Cleanup (replaces EntityTypeEntityKeysProcessor)**:
+```yaml
+cleanup:
+  plugin_id: cleanup
+  execution:
+    service_methods:
+      - service: entity.helper
+        method: processEntityTypeDefinition
+  cleanup_config:
+    target_path: entity_keys
+    operations:
+      - remove_empty
+      - set_defaults
+    defaults:
+      id: id
+      label: label
+```
+
+**Consolidation**: Replaces EntityTypeHandlerCleanupProcessor, EntityTypeEntityKeysProcessor (2 specialized processors → 1 generic processor)
+
+##### 1.11.6 Link Processor Schema
+
+A generic processor for processing entity type link/route configurations:
+
+```yaml
+plugin.plugin_configuration.schema_processor.link:
+  type: mapping
+  label: 'Link processor configuration'
+  description: 'Generic processor for processing entity type link/route configurations'
+  mapping:
+    # ... standard execution/input/output config ...
+    link_config:
+      type: mapping
+      label: 'Link configuration'
+      mapping:
+        operation:
+          type: option
+          label: 'Link operation'
+          option:
+            plugin_id: static
+            plugin_config:
+              options:
+                set_defaults:
+                  label: 'Set default canonical/collection paths'
+                set_bundle:
+                  label: 'Set bundle collection path relative to parent'
+                map_templates:
+                  label: 'Map link template sequences to links object'
+        template_source_path:
+          type: string
+          label: 'Path to link templates (for map_templates operation)'
+          description: 'Path in config containing link template sequences (e.g., route.link_templates_content)'
+        target_path:
+          type: string
+          label: 'Target links path'
+          default_value: links
+          description: 'Path in output where links will be written'
+```
+
+**Example: Link Defaults (replaces EntityTypeLinkDefaultProcessor)**:
+```yaml
+link:
+  plugin_id: link
+  execution:
+    service_methods:
+      - service: entity.helper
+        method: processEntityTypeDefinition
+  link_config:
+    operation: set_defaults
+```
+
+**Example: Link Template Mapping (replaces EntityTypeLinkTemplateProcessor)**:
+```yaml
+link:
+  plugin_id: link
+  execution:
+    service_methods:
+      - service: entity.helper
+        method: processEntityTypeDefinition
+  link_config:
+    operation: map_templates
+    template_source_path: route.link_templates_content
+    target_path: links
+```
+
+**Consolidation**: Replaces EntityTypeLinkDefaultProcessor, EntityTypeBundleLinkProcessor, EntityTypeLinkTemplateProcessor (3 specialized processors → 1 generic processor)
+
+##### 1.11.7 Tag Processor Schema
+
+A generic processor for processing entity type tags (attachment and derivation):
+
+```yaml
+plugin.plugin_configuration.schema_processor.tag:
+  type: mapping
+  label: 'Tag processor configuration'
+  description: 'Generic processor for processing entity type tags (attachment and derivation)'
+  mapping:
+    # ... standard execution/input/output config ...
+    tag_config:
+      type: mapping
+      label: 'Tag configuration'
+      mapping:
+        operation:
+          type: option
+          label: 'Tag operation'
+          option:
+            plugin_id: static
+            plugin_config:
+              options:
+                attach_standard:
+                  label: 'Attach standard tags based on entity properties'
+                derive_config:
+                  label: 'Derive config from tags (e.g., admin tag → routes)'
+        derivation_rules:
+          type: mapping
+          label: 'Tag-based derivation rules (for derive_config operation)'
+          description: 'Mapping of tag names to config to derive for that tag'
+          mapping:
+            [tag_name]:
+              type: mapping
+              label: 'Config to derive for this tag'
+```
+
+**Example: Tag Attachment (replaces EntityTypeTagProcessor)**:
+```yaml
+tag:
+  plugin_id: tag
+  execution:
+    service_methods:
+      - service: entity.helper
+        method: processEntityTypeDefinition
+  tag_config:
+    operation: attach_standard
+```
+
+**Example: Tag Derivation (replaces EntityTypeTagDerivationProcessor)**:
+```yaml
+tag:
+  plugin_id: tag
+  execution:
+    service_methods:
+      - service: entity.helper
+        method: processEntityTypeDefinition
+  tag_config:
+    operation: derive_config
+    derivation_rules:
+      admin:
+        links:
+          canonical: /admin/{entity_type_id}/{id}
+```
+
+**Consolidation**: Replaces EntityTypeTagProcessor, EntityTypeTagDerivationProcessor (2 specialized processors → 1 generic processor)
+
+#### 1.12 Schema-Attached Processors Schema
+
+Enables declaring processors directly in config schema files, making features fully declarative with structure, form rendering, and behavior co-located:
+
+```yaml
+# Schema type for processors declared in config schema files
+config_schema.processor:
+  type: mapping
+  label: 'Schema-attached processor'
+  description: 'Processor declared directly in a config schema file'
+  mapping:
+    plugin_id:
+      type: string
+      label: 'Processor plugin ID'
+      description: 'ID of the processor plugin class to instantiate. Must exist in Plugin/SchemaProcessor/'
+    execution:
+      type: mapping
+      label: 'Execution context'
+      description: 'Where and how this processor runs'
+      mapping:
+        hooks:
+          type: sequence
+          label: 'Drupal hooks'
+          description: 'Hook names this processor attaches to'
+          sequence:
+            type: string
+        events:
+          type: sequence
+          label: 'Event subscribers'
+          description: 'Symfony events this processor subscribes to'
+          sequence:
+            type: mapping
+            mapping:
+              event_name:
+                type: string
+                label: 'Event name'
+              priority:
+                type: integer
+                label: 'Event priority'
+                default_value: 0
+        service_methods:
+          type: sequence
+          label: 'Service method invocations'
+          description: 'Service methods this processor can be invoked from'
+          sequence:
+            type: mapping
+            mapping:
+              service:
+                type: string
+                label: 'Service name'
+              method:
+                type: string
+                label: 'Method name'
+              context_keys:
+                type: sequence
+                label: 'Context keys expected by method'
+                sequence:
+                  type: string
+    input:
+      type: mapping
+      label: 'Input configuration'
+      description: 'What configuration this processor reads'
+      mapping:
+        schema_keys:
+          type: sequence
+          label: 'Schema key paths'
+          description: 'Dot-notation paths to configuration. Auto-inferred from schema property path if auto_infer is true.'
+          sequence:
+            type: string
+        third_party_settings:
+          type: sequence
+          label: 'Third-party settings paths'
+          description: 'Paths to third-party settings'
+          sequence:
+            type: mapping
+            mapping:
+              module:
+                type: string
+                label: 'Module name'
+              path:
+                type: string
+                label: 'Path within third-party settings'
+        auto_infer:
+          type: boolean
+          label: 'Auto-infer input paths'
+          description: 'If true, automatically infer schema_keys from schema property location. Defaults to true for schema-attached processors.'
+          default_value: true
+        filters:
+          type: mapping
+          label: 'Input filters'
+          description: 'Filter which configurations this processor reads'
+          mapping:
+            entity_types:
+              type: sequence
+              label: 'Entity types'
+              sequence:
+                type: string
+            bundles:
+              type: sequence
+              label: 'Bundles'
+              sequence:
+                type: string
+            field_types:
+              type: sequence
+              label: 'Field types'
+              sequence:
+                type: string
+    output:
+      type: mapping
+      label: 'Output configuration'
+      description: 'What this processor modifies'
+      mapping:
+        form_array:
+          type: boolean
+          label: 'Modifies form array'
+        field_definition:
+          type: boolean
+          label: 'Modifies field definition'
+        access_result:
+          type: boolean
+          label: 'Modifies access result'
+        display_component:
+          type: boolean
+          label: 'Modifies display component'
+        entity:
+          type: boolean
+          label: 'Modifies entity'
+        custom:
+          type: mapping
+          label: 'Custom output types'
+          mapping:
+            [key]:
+              type: string
+              label: 'Output type name'
+        idempotent:
+          type: boolean
+          label: 'Processor is idempotent'
+          description: 'If true, processor can be safely run multiple times with same result'
+          default_value: false
+    conditions:
+      type: mapping
+      label: 'Conditional execution'
+      description: 'When to run this processor'
+      mapping:
+        context:
+          type: sequence
+          label: 'Display context conditions'
+          description: 'Contexts where processor should run (field, widget, formatter, form, view). Auto-inferred from schema property context if not specified.'
+          sequence:
+            type: string
+        entity_type:
+          type: mapping
+          label: 'Entity type conditions'
+          mapping:
+            include:
+              type: sequence
+              label: 'Include entity types'
+              sequence:
+                type: string
+            exclude:
+              type: sequence
+              label: 'Exclude entity types'
+              sequence:
+                type: string
+        bundle:
+          type: mapping
+          label: 'Bundle conditions'
+          mapping:
+            include:
+              type: sequence
+              label: 'Include bundles'
+              sequence:
+                type: string
+            exclude:
+              type: sequence
+              label: 'Exclude bundles'
+              sequence:
+                type: string
+        field_type:
+          type: mapping
+          label: 'Field type conditions'
+          mapping:
+            include:
+              type: sequence
+              label: 'Include field types'
+              sequence:
+                type: string
+            exclude:
+              type: sequence
+              label: 'Exclude field types'
+              sequence:
+                type: string
+        custom:
+          type: sequence
+          label: 'Custom condition plugins'
+          sequence:
+            type: plugin_instance
+            label: 'Condition'
+            plugin_type: condition
+            configurable: true
+        condition_logic:
+          type: option
+          label: 'Condition logic'
+          description: 'How to combine multiple conditions'
+          default_value: AND
+          option:
+            plugin_id: static
+            plugin_config:
+              options:
+                AND:
+                  label: 'AND - All conditions must be met'
+                OR:
+                  label: 'OR - At least one condition must be met'
+    processing_order:
+      type: mapping
+      label: 'Processing order'
+      description: 'Control when this processor runs relative to others'
+      mapping:
+        weight:
+          type: integer
+          label: 'Weight'
+          description: 'Lower weights run first. Auto-inferred from schema property weight if align_with_schema_weight is true.'
+          default_value: 0
+        align_with_schema_weight:
+          type: boolean
+          label: 'Align with schema property weight'
+          description: 'If true, use schema property form.weight or weight for processor weight. Defaults to true for schema-attached processors.'
+          default_value: true
+        priority:
+          type: option
+          label: 'Priority level'
+          description: 'Priority category for grouping'
+          default_value: normal
+          option:
+            plugin_id: static
+            plugin_config:
+              options:
+                critical:
+                  label: 'Critical - Must run first'
+                high:
+                  label: 'High priority'
+                normal:
+                  label: 'Normal priority'
+                low:
+                  label: 'Low priority'
+        before:
+          type: sequence
+          label: 'Run before these processors'
+          description: 'Processor IDs that must run after this one'
+          sequence:
+            type: string
+        after:
+          type: sequence
+          label: 'Run after these processors'
+          description: 'Processor IDs that must run before this one'
+          sequence:
+            type: string
+```
+
+**Config Schema Property Enhancement**: Add `processors` property to config schema property definitions:
+
+```yaml
+# In display.config.schema.yml or field.config.schema.yml
+entity_display.third_party_settings.design_system.general.form_display:
+  type: mapping
+  mapping:
+    form_title:
+      type: string
+      label: 'Form title'
+      description: 'Custom title displayed as an H2 heading above the form'
+      # ... existing schema properties ...
+      processors:
+        type: sequence
+        label: 'Processors'
+        description: 'Processors that handle this configuration property'
+        sequence:
+          type: config_schema.processor
+          label: 'Processor'
+```
+
+**Explanation**: Schema-attached processors enable fully declarative feature definitions where structure, form rendering, and behavior are all co-located in schema files. Processors declared in schemas are automatically discovered by `SchemaProcessorManager` and execute alongside plugin-based processors. Auto-inference reduces boilerplate by automatically inferring input paths from schema property locations, weights from schema property weights, and context from schema property context arrays. This pattern eliminates the need for separate processor plugin files for simple, configuration-driven behavior, while complex processors with custom logic should remain as plugin classes.
+
+## Implementation Algorithm Examples
+
+The following examples demonstrate key implementation algorithms in pseudocode or PHP-like syntax.
+
+### Example: Auto-Inference Path Stripping
+
+```php
+function inferInputPath(string $full_schema_path, string $schema_root): string {
+  // Identify schema root type
+  $root_patterns = [
+    'entity_display' => '/^entity_display\.third_party_settings\.([^\.]+)\.(.+)$/',
+    'field_definition' => '/^field_definition\.third_party_settings\.([^\.]+)\.(.+)$/',
+    'entity_type_config' => '/^bd\.entity_type\.([^\.]+)\.(.+)$/',
+  ];
+
+  // For entity_type_config: Remove bd.entity_type.{entity_type_id}. prefix
+  // Pattern: bd.entity_type.{entity_type_id}.{remaining_path}
+  // Extract {entity_type_id} and {remaining_path}, use {remaining_path} as inferred path
+  // Example: bd.entity_type.node.route.link_templates_content → route.link_templates_content
+  // Context: Entity type config processing during hook_entity_type_alter()
+
+  // Try each pattern
+  foreach ($root_patterns as $root_type => $pattern) {
+    if (preg_match($pattern, $full_schema_path, $matches)) {
+      // $matches[1] = module/entity_type_id, $matches[2] = remaining path
+      return $matches[2]; // Return remaining path as inferred schema_keys
+    }
+  }
+
+  // Fallback: strip schema root and first dot
+  $parts = explode('.', $full_schema_path);
+  array_shift($parts); // Remove schema root
+  return implode('.', $parts);
+}
+```
+
+### Example: Conflict Resolution Logic
+
+```php
+function resolveProcessorConflict(array $plugin_config, array $schema_config): array {
+  $resolved = $schema_config; // Schema-attached takes precedence
+
+  // Check for incompatible differences
+  if ($plugin_config['execution']['hooks'] !== $schema_config['execution']['hooks']) {
+    throw new \InvalidArgumentException(
+      "Incompatible hooks: plugin has " . implode(', ', $plugin_config['execution']['hooks']) .
+      ", schema has " . implode(', ', $schema_config['execution']['hooks'])
+    );
+  }
+
+  // Log warnings for compatible differences
+  if ($plugin_config['input']['schema_keys'] !== $schema_config['input']['schema_keys']) {
+    \Drupal::logger('schema_processor')->warning(
+      "Schema keys differ for processor {$plugin_config['plugin_id']}, using schema-attached values"
+    );
+  }
+
+  // Merge conditions with AND logic
+  if (isset($plugin_config['conditions']) && isset($schema_config['conditions'])) {
+    $resolved['conditions'] = array_merge_recursive(
+      $plugin_config['conditions'],
+      $schema_config['conditions']
+    );
+  }
+
+  return $resolved;
+}
+```
+
+### Example: Rollback State Tracking
+
+```php
+class ProcessorSnapshot {
+  public string $processor_id;
+  public array $config;
+  public array $input_snapshot;
+  public array $context_snapshot;
+  public array $output_declarations;
+  public int $execution_order;
+
+  public function __construct(string $processor_id, array $config, array $input, array $context, array $outputs, int $order) {
+    $this->processor_id = $processor_id;
+    $this->config = $config;
+    $this->input_snapshot = $this->deepCopy($input);
+    $this->context_snapshot = $this->deepCopy($context);
+    $this->output_declarations = $outputs;
+    $this->execution_order = $order;
+  }
+
+  private function deepCopy(array $data): array {
+    return unserialize(serialize($data)); // Simple deep copy
+  }
+}
+
+function executeWithRollback(array $processors, array $context): array {
+  $snapshots = [];
+
+  foreach ($processors as $order => $processor) {
+    // Create snapshot before execution
+    $snapshot = new ProcessorSnapshot(
+      $processor->getPluginId(),
+      $processor->getConfiguration(),
+      $context['input_data'] ?? [],
+      $context,
+      $processor->getOutputDeclarations(),
+      $order
+    );
+    $snapshots[] = $snapshot;
+
+    try {
+      $result = $processor->process($context);
+      $context['processor_results'][$processor->getPluginId()] = $result;
+    } catch (\Exception $e) {
+      if ($processor->getErrorHandling() === 'rollback') {
+        return rollbackProcessors($snapshots, $context, $order);
+      }
+      throw $e;
+    }
+  }
+
+  return $context;
+}
+
+function rollbackProcessors(array $snapshots, array $context, int $failed_order): array {
+  // Rollback in reverse order
+  for ($i = $failed_order - 1; $i >= 0; $i--) {
+    $snapshot = $snapshots[$i];
+    $processor = \Drupal::service('plugin.manager.schema_processor')->createInstance($snapshot->processor_id);
+
+    if ($processor->isIdempotent()) {
+      // Try custom rollback method
+      if (method_exists($processor, 'rollback')) {
+        $processor->rollback($snapshot, $context);
+      } else {
+        // Restore from snapshot
+        $context = array_merge($context, $snapshot->context_snapshot);
+      }
+    } else {
+      \Drupal::logger('schema_processor')->warning(
+        "Processor {$snapshot->processor_id} is not idempotent, attempting best-effort rollback"
+      );
+      // Best-effort: restore context
+      $context = array_merge($context, $snapshot->context_snapshot);
+    }
+  }
+
+  return $context;
+}
+```
+
+### Example: Cache Key Generation and Lookup
+
+```php
+function getSchemaAttachedProcessors(string $schema_id): array {
+  $typed_config_manager = \Drupal::service('config.typed');
+  $cache = \Drupal::cache('config');
+
+  // Get current schema definition
+  $schema_definition = $typed_config_manager->getDefinition($schema_id);
+  $current_hash = md5(serialize($schema_definition));
+
+  // Generate cache key
+  $cache_key = "schema_processor:schema_attached:{$schema_id}:{$current_hash}";
+
+  // Try cache lookup
+  if ($cached = $cache->get($cache_key)) {
+    $cached_data = $cached->data;
+    // Verify hash still matches (defense against hash collisions)
+    if ($cached_data['schema_hash'] === $current_hash) {
+      return $cached_data['processors'];
+    }
+  }
+
+  // Cache miss or hash mismatch: discover processors
+  $processors = discoverSchemaAttachedProcessors($schema_id, $schema_definition);
+
+  // Store in cache
+  $cache->set($cache_key, [
+    'processors' => $processors,
+    'schema_hash' => $current_hash,
+    'timestamp' => time(),
+    'schema_id' => $schema_id,
+  ], CacheBackendInterface::CACHE_PERMANENT);
+
+  return $processors;
+}
+```
+
+### Example: Result Condition Evaluation with Edge Cases
+
+```php
+function evaluateResultCondition(array $condition, array $context): bool {
+  $processor_id = $condition['processor_id'];
+  $result_path = $condition['result_path'];
+  $operator = $condition['operator'];
+  $value = $condition['value'];
+
+  // Check if processor result exists
+  if (!isset($context['processor_results'][$processor_id])) {
+    // Missing processor result
+    return handleMissingProcessorResult($operator);
+  }
+
+  $result = $context['processor_results'][$processor_id];
+
+  // Resolve nested path
+  $result_value = resolveResultPath($result, $result_path);
+
+  if ($result_value === null) {
+    // Missing result path
+    return handleMissingResultPath($operator);
+  }
+
+  // Handle type mismatches
+  if (gettype($result_value) !== gettype($value)) {
+    $coerced = attemptTypeCoercion($result_value, $value);
+    if ($coerced === null) {
+      \Drupal::logger('schema_processor')->warning(
+        "Type mismatch in result condition: expected " . gettype($value) .
+        ", got " . gettype($result_value) . " for path '{$result_path}'"
+      );
+      return false;
+    }
+    $result_value = $coerced;
+  }
+
+  // Perform comparison
+  return performComparison($result_value, $operator, $value);
+}
+
+function resolveResultPath($result, string $path) {
+  // Use ConfigFactory::getSubconfigFromData() for consistent path resolution
+  $config_factory = \Drupal::service('config.factory');
+  return $config_factory->getSubconfigFromData($result, $path, TRUE);
+}
+
+function handleMissingProcessorResult(string $operator): bool {
+  return match($operator) {
+    'exists' => false,
+    'not_exists' => true,
+    default => false, // Other operators cannot evaluate missing results
+  };
+}
+
+function handleMissingResultPath(string $operator): bool {
+  return match($operator) {
+    'exists' => false,
+    'not_exists' => true,
+    'equals' => (null === $value),
+    'not_equals' => (null !== $value),
+    default => false, // Comparison operators cannot evaluate null
+  };
+}
+```
+
+## Implementation Specifications
+
+This section provides detailed specifications for implementing the SchemaProcessorManager and related components, addressing gaps and ambiguities identified during the design phase.
+
+### Service Method Invocation Context
+
+**Specification**: Processors configured with `execution.service_methods` will be invoked directly by the `SchemaProcessorManager` when a corresponding service method is called. The `SchemaProcessorManager` will expose public methods for each major processing context (e.g., `processEntityDisplay`, `processFieldDefinition`, `processEntityForm`). These methods will:
+
+1. Accept the necessary context arguments (e.g., `$entity_form_display`, `$form`, `$form_state`, `$field_definition`).
+2. Identify processors that declare the specific service and method in their `execution.service_methods` configuration.
+3. Pass the provided context arguments to the processor's `process()` method.
+4. The `context_keys` in the `service_methods` definition will guide which parts of the incoming context are relevant to the processor.
+
+**Example Invocation Pattern in `SchemaProcessorManager`**:
+```php
+public function processEntityDisplay(string $method_name, EntityFormDisplayInterface $display, array $context = []): void {
+  // ... discovery, filtering, sorting ...
+  foreach ($processors as $processor) {
+    // Check if this processor is configured for the specific service method.
+    if ($processor->appliesToServiceMethod('entity.display_processor_service', $method_name)) {
+      $processor->process($config_data, $context);
+    }
+  }
+}
+```
+
+### Transformation Pipeline Execution Order
+
+**Specification**: The `transformations` pipeline (Section 1.7) and `built_in_processors` (Section 1.10) are integrated into a single, ordered pipeline that executes *before* the main `process()` logic of the `SchemaProcessor` plugin.
+
+1. **Order of Execution**:
+   - All transformations (both custom `processor_id` and `built_in_processors`) will be collected.
+   - They will be sorted by their `weight` property (lower weights run first).
+   - The output of one transformation becomes the input for the next.
+2. **Built-in Processors**: These are essentially pre-defined, lightweight transformation plugins. When a `built_in_processor` is encountered, the `SchemaProcessorManager` will instantiate an internal, dedicated transformation handler for that type (e.g., `RemovePropertiesTransformer`, `SetDefaultsTransformer`) and execute it.
+3. **Input Data Flow**: The original input configuration for the main `SchemaProcessor` will first pass through this combined transformation pipeline. The final output of the pipeline will be the `config` array passed to the `SchemaProcessorInterface::process(array $config, array $context)` method.
+
+**Execution Flow**:
+```php
+// 1. Execute transformation pipeline (includes built-in processors)
+$transformed_data = $this->executeTransformationPipeline($input_data, $processor_config);
+
+// 2. Execute main processor logic
+$result = $processor->process($transformed_data, $context);
+
+// 3. Apply result transformation if configured
+if (!empty($processor_config['result_handling']['result_transformation'])) {
+  $result = $this->applyResultTransformation($result, $processor_config['result_handling']['result_transformation']);
+}
+```
+
+### Auto-Inference Algorithm Edge Cases
+
+**Specification**: The `inferInputPath` algorithm (Example: Auto-Inference Path Stripping) will be enhanced with explicit fallback rules:
+
+1. **Known Patterns**: Prioritize matching against predefined patterns for `entity_display`, `field_definition`, and `entity_type_config`.
+2. **Generic Fallback**: If no known pattern matches, the algorithm will attempt a generic stripping:
+   - It will identify the first segment of the `full_schema_path` as the "root".
+   - It will then return the `full_schema_path` with this root and the subsequent dot removed.
+   - Example: `unknown_root.some_property.nested_key` would infer `some_property.nested_key`.
+3. **Logging**: A `warning` will be logged if the generic fallback is used, indicating an "Unexpected schema path structure for auto-inference: {$full_schema_path}". This allows developers to review and potentially add a new specific pattern if needed.
+4. **Invalid Path Characters**: If the path contains characters other than alphanumeric, dots, and underscores, an `InvalidArgumentException` will be thrown, requiring explicit `schema_keys` configuration.
+
+**Fallback Algorithm**:
+```php
+function inferInputPath(string $full_schema_path, string $schema_root): string {
+  // Try known patterns first
+  $patterns = [
+    'entity_display' => '/^entity_display\.third_party_settings\.([^\.]+)\.(.+)$/',
+    'field_definition' => '/^field_definition\.third_party_settings\.([^\.]+)\.(.+)$/',
+    'entity_type_config' => '/^bd\.entity_type\.([^\.]+)\.(.+)$/',
+  ];
+
+  foreach ($patterns as $root_type => $pattern) {
+    if (preg_match($pattern, $full_schema_path, $matches)) {
+      return $matches[2]; // Return remaining path
+    }
+  }
+
+  // Fallback: strip first segment
+  $parts = explode('.', $full_schema_path);
+  array_shift($parts);
+  $fallback = implode('.', $parts);
+  $this->logger->warning("Unexpected schema path structure for auto-inference: {$full_schema_path}, using fallback: {$fallback}");
+  return $fallback;
+}
+```
+
+### Processor Conflict Resolution Validation
+
+**Specification**: Processor conflicts (same `plugin_id` from both plugin-based and schema-attached sources) will be detected and resolved at **discovery time** within the `SchemaProcessorManager::getAllProcessorsForHook()` method.
+
+1. **Detection Point**: When `getAllProcessorsForHook()` is called, it will first gather all plugin-based processors and then all schema-attached processors. Before merging, it will compare the `plugin_id`s.
+2. **Resolution Logic**: The `resolveProcessorConflict()` method will be invoked for each detected conflict.
+3. **Logging/Exceptions**:
+   - **Incompatible Conflicts**: If `resolveProcessorConflict()` throws an `InvalidArgumentException` (e.g., different hooks, different output types), `getAllProcessorsForHook()` will catch it and re-throw, preventing the system from starting with an unresolvable conflict.
+   - **Compatible Conflicts**: For compatible differences (e.g., different weights, conditions), a `warning` will be logged, and the schema-attached configuration will take precedence as per the PRD.
+4. **Caching**: The results of conflict resolution (the merged processor configurations) will be cached along with the discovered schema-attached processors to avoid repeated resolution on subsequent requests.
+
+**Conflict Detection Structure**:
+```php
+public function getAllProcessorsForHook(string $hook): array {
+  $plugin_processors = $this->getProcessorsForHook($hook);
+  $schema_processors = $this->getSchemaAttachedProcessors($schema_id);
+
+  // 1. Detect conflicts
+  $conflicts = $this->detectProcessorConflicts($plugin_processors, $schema_processors);
+
+  // 2. Resolve conflicts (schema-attached takes precedence)
+  $merged = $this->resolveProcessorConflicts($plugin_processors, $schema_processors, $conflicts);
+
+  // 3. Sort and return
+  return $this->sortProcessors($merged);
+}
+```
+
+### Dry-Run Mode Detection
+
+**Specification**: Dry-run mode will be determined by checking a specific context flag passed during processor invocation.
+
+1. **Context Flag**: The `SchemaProcessorManager`'s processing methods (e.g., `processEntityDisplay`, `processFieldDefinition`, `processEntityForm`) will accept an optional `$is_dry_run` boolean parameter, defaulting to `false`.
+2. **Global Context**: This `$is_dry_run` flag will be propagated into the `$context` array passed to individual processors.
+3. **Detection Logic**: Inside `SchemaProcessorManager`, before invoking a processor, it will check `if ($context['is_dry_run'] && !$processor->isDryRunSafe())`. If true, the processor will be skipped, and a `debug` log message will be recorded.
+4. **Integration Points**: The calling code (e.g., `DesignSystemHooks`, `BdHooks`) will be responsible for setting this `$is_dry_run` flag based on the current request context (e.g., preview routes, specific form states).
+
+**Context Structure**:
+```php
+$context = [
+  'is_dry_run' => $is_dry_run ?? FALSE,
+  // ... other context
+];
+```
+
+### Error Logging Format
+
+**Specification**: Error log messages will follow a structured format to aid debugging.
+
+1. **Format**: `SchemaProcessor Error: [Processor ID] - [Error Type] - [Message] - Context: [JSON representation of relevant context]`
+2. **Context Inclusion**: If `error_context: true` is set in the processor's `error_handling` configuration, a JSON-encoded subset of the `$context` array (e.g., `hook`, `entity_type`, `bundle`, `field_name`, `input_data_snapshot`) will be appended to the log message. Sensitive data will be filtered out.
+3. **Logger Channel**: Errors will be logged to the `logger.channel.schema_processor` service.
+
+**Example Log Message**:
+```
+Processor 'form_title' failed on hook 'form_alter': Failed to add form title.
+Context: {"hook":"form_alter","entity_type":"node","bundle":"article","input_data_snapshot":{"form_title":"My Title"}}
+```
+
+**Code Pattern**:
+```php
+$message = sprintf(
+  "Processor '%s' failed on hook '%s': %s\nContext: %s\nConfiguration: %s",
+  $processor_id,
+  $hook,
+  $error->getMessage(),
+  json_encode($context_summary, JSON_PRETTY_PRINT),
+  json_encode($config_summary, JSON_PRETTY_PRINT)
+);
+$this->logger->error($message);
+```
+
+### Result Aggregation Algorithm
+
+**Specification**: Result aggregation will be a configurable process, allowing different strategies for combining results from multiple processors.
+
+1. **Default Strategy**: If `aggregate_with` is specified, the default aggregation strategy will be a **deep merge** of the results. The results from the current processor will be deeply merged into the results of the processors specified in `aggregate_with`.
+2. **Configurable Strategy**: The `aggregate_with` entry in `result_handling` can be extended to include an optional `strategy` property (e.g., `merge`, `append`, `replace`).
+   - `merge` (default): Deep merge associative arrays, append non-associative arrays.
+   - `append`: Always append results (for sequences).
+   - `replace`: The current processor's result completely replaces the aggregated result.
+3. **Order of Aggregation**: Aggregation will occur in the order specified in the `aggregate_with` sequence.
+4. **Missing Results**: If a processor specified in `aggregate_with` did not produce a result, it will be skipped from aggregation, and a `debug` log message will be recorded.
+
+**Code Pattern**:
+```php
+if (!empty($processor_config['result_handling']['aggregate_with'])) {
+  $aggregated = [];
+  foreach ($processor_config['result_handling']['aggregate_with'] as $other_id) {
+    if (isset($results[$other_id])) {
+      $aggregated = array_merge_recursive($aggregated, $results[$other_id]);
+    }
+  }
+  $aggregated = array_merge_recursive($aggregated, $result);
+  $result = $aggregated;
+}
+```
+
+### Schema Hash Calculation
+
+**Specification**: The schema hash for caching `schema-attached processors` will be calculated using `md5(serialize($schema_definition))`.
+
+1. **Method**: `md5()` will be used for its balance of speed and collision resistance for this purpose.
+2. **Input**: The entire schema definition array (obtained via `TypedConfigManager::getDefinition($schema_id)`) will be `serialize()`d before hashing to ensure all structural and value changes are captured.
+3. **Cache Key**: The cache key will include this hash: `schema_processor:schema_attached:{schema_id}:{schema_hash}`.
+
+**Code Pattern**:
+```php
+$schema_definition = $typed_config_manager->getDefinition($schema_id);
+$schema_hash = md5(serialize($schema_definition));
+$cache_key = "schema_processor:schema_attached:{$schema_id}:{$schema_hash}";
+```
+
+### Result Condition Evaluation Type Coercion
+
+**Specification**: Type coercion will follow a defined hierarchy to ensure robust comparisons.
+
+1. **Hierarchy**:
+   - `string` -> `int` (if numeric)
+   - `string` -> `float` (if numeric)
+   - `string` -> `bool` (for "true", "false", "1", "0")
+   - `int` -> `float`
+2. **Attempt Order**: When comparing `$result_value` and `$value` of different types, the system will attempt to coerce `$result_value` to the type of `$value`. If that fails, it will attempt to coerce `$value` to the type of `$result_value`.
+3. **Failure**: If coercion fails in both directions, the comparison will evaluate to `false`, and a `warning` will be logged: "Type mismatch in result condition: cannot coerce '{$actual_type}' to '{$expected_type}' for path '{$result_path}'".
+4. **Strict Comparison**: For `equals` and `not_equals` operators, after successful coercion, strict comparison (`===` or `!==`) will be used.
+
+**Coercion Function**:
+```php
+function attemptTypeCoercion($result_value, $comparison_value) {
+  $result_type = gettype($result_value);
+  $comparison_type = gettype($comparison_value);
+
+  // String → Integer
+  if ($result_type === 'string' && $comparison_type === 'integer' && is_numeric($result_value)) {
+    return (int) $result_value;
+  }
+  // String → Float
+  if ($result_type === 'string' && $comparison_type === 'float' && is_numeric($result_value)) {
+    return (float) $result_value;
+  }
+  // Integer → Float
+  if ($result_type === 'integer' && $comparison_type === 'float') {
+    return (float) $result_value;
+  }
+  // String → Boolean
+  if ($result_type === 'string' && $comparison_type === 'boolean') {
+    if ($result_value === 'true' || $result_value === '1') {
+      return TRUE;
+    }
+    if ($result_value === 'false' || $result_value === '0') {
+      return FALSE;
+    }
+  }
+  // Array/object → String (for contains/matches)
+  if (($result_type === 'array' || $result_type === 'object') && $comparison_type === 'string') {
+    return (string) $result_value;
+  }
+
+  return null; // Coercion failed
+}
+```
+
+### ConfigSchemaSubform::normalizeValues() Usage
+
+**Specification**: The `SchemaProcessorManager` will utilize the existing public static method `ConfigSchemaSubform::normalizeValues()` for config data normalization.
+
+1. **Method**: `ConfigSchemaSubform::normalizeValues($data, array $options = [])` is a public static method that provides the necessary normalization logic.
+2. **Usage**: The `SchemaProcessorManager` will call this static method directly before passing config data to processors, ensuring consistency with how `ConfigSchemaSubform` handles data.
+3. **Options**: The `reindex_sequences` option will be set to `FALSE` during normalization for processors to avoid breaking mapping between config keys and sequence deltas.
+
+**Code Reference**:
+```php
+// In SchemaProcessorManager
+$normalized_data = ConfigSchemaSubform::normalizeValues($config_data, ['reindex_sequences' => FALSE]);
+```
+
+### TypedConfigManager::getDefinitionsByPattern() Verification
+
+
+1. **Verification**: The implementation confirms `fnmatch($pattern, $name)` is used.
+2. **No Change Required**: The PRD's assumption is correct, and no changes are needed for this method's behavior.
+
+### Rollback Mechanism Scope and Limitations
+
+**Specification**: The rollback mechanism will be implemented with clear scope and limitations, as detailed in the PRD (Section 3, "Rollback Mechanism Implementation").
+
+1. **State Tracking**: `ProcessorSnapshot` class will track processor ID, config, input data snapshot (deep copy), context snapshot (relevant portions), output declarations, and execution order.
+2. **Rollback Execution**: Iterate snapshots in reverse.
+   - **Idempotent Processors**: If `idempotent: true`, call `rollback()` method if implemented, or restore from snapshot.
+   - **Non-Idempotent Processors**: Log warning, attempt best-effort rollback (restore context from snapshot).
+3. **Limitations**: Document that processors modifying external systems cannot be fully rolled back. Log warnings for non-idempotent processors during rollback.
+4. **Interface/Base Class**: Add optional `rollback(array $snapshot, array $context): void` method to `SchemaProcessorInterface` and `SchemaProcessorBase`.
+5. **`executeWithRollback()`**: Implement this wrapper method in `SchemaProcessorManager`.
+
+**Rollback Code Pattern**:
+```php
+if (!$processor->isIdempotent()) {
+  $this->logger->warning(
+    "Processor {$snapshot->processor_id} is not idempotent, " .
+    "attempting best-effort rollback. External system state may not be restored."
+  );
+}
+```
+
+### Schema-Attached Processor Discovery Performance
+
+**Specification**: The caching strategy outlined in the PRD (Section 3, "Caching Strategy") will be fully implemented.
+
+1. **Cache Key**: `schema_processor:schema_attached:{schema_id}:{cache_version}` where `cache_version` is `md5(serialize($schema_definition))`.
+2. **Cache Storage**: Use Drupal's `cache.config` bin (or a custom `schema_processor` bin).
+3. **Cache Invalidation**:
+   - On schema definition changes (detected by hash mismatch).
+   - On `drush cr`.
+   - On module install/uninstall.
+   - Manual invalidation methods: `clearSchemaCache(string $schema_id)` and `clearAllSchemaCaches()`.
+4. **Lazy Loading**: Processors will only be discovered for schemas that are actually used.
+
+### SchemaProcessor Annotation Class Update
+
+**Specification**: The `SchemaProcessor` annotation class will be updated to include properties corresponding to the new schema properties.
+
+1. **Properties**: Add public properties for `execution`, `input`, `output`, `conditions`, `dependencies`, `processing_order`, `transformations`, `result_handling`, `validation`, and `built_in_processors`.
+2. **Type Hints**: Use appropriate type hints (e.g., `array`, `string`, `int`, `bool`).
+3. **Documentation**: Update docblocks to reference the new schema sections.
+
+### SchemaProcessorInterface and SchemaProcessorBase Update
+
+**Specification**: `SchemaProcessorInterface` and `SchemaProcessorBase` will be updated to include methods for accessing and evaluating the new schema properties.
+
+1. **Interface Methods**: Add methods like `getExecutionConfig()`, `getInputConfig()`, `getOutputDeclarations()`, `getConditions()`, `getDependencies()`, `getProcessingOrder()`, `getTransformations()`, `getResultHandling()`, `getValidationConfig()`, `getBuiltInProcessors()`, `isDryRunSafe()`, `isIdempotent()`, `appliesToServiceMethod()`, and `rollback()` (optional).
+
+**Complete Method Signatures**:
+
+```php
+// Execution context methods
+public function getExecutionConfig(): array;
+public function getHooks(): array;
+public function getEvents(): array;
+public function getServiceMethods(): array;
+public function appliesToServiceMethod(string $service_id, string $method_name): bool;
+
+// Input configuration methods
+public function getInputConfig(): array;
+public function getSchemaKeys(): array;
+public function getSchemaPatterns(): array;
+public function getThirdPartySettings(): array;
+
+// Output configuration methods
+public function getOutputDeclarations(): array;
+
+// Condition methods
+public function getConditions(): array;
+public function evaluateConditions(array $context): bool;
+
+// Dependency methods
+public function getDependencies(): array;
+public function validateDependencies(): bool;
+
+// Processing order methods
+public function getProcessingOrder(): array;
+public function getWeight(): int;
+public function getPriority(): string;
+public function getBefore(): array;
+public function getAfter(): array;
+
+// Transformation methods
+public function getTransformations(): array;
+
+// Result handling methods
+public function getResultHandling(): array;
+
+// Validation methods
+public function getValidationConfig(): array;
+
+// Built-in processor methods
+public function getBuiltInProcessors(): array;
+
+// Feature flags
+public function isDryRunSafe(): bool;
+public function isIdempotent(): bool;
+
+// Optional rollback method
+public function rollback(array $snapshot, array $context): void;
+```
+
+2. **Base Class Implementation**: Provide default implementations in `SchemaProcessorBase` that read from `pluginDefinition` or `configuration`.
+3. **Helper Methods**: Add helper methods for condition evaluation, dependency validation, and processing order calculation.
+
+### SchemaProcessorManager Update
+
+**Specification**: The manager needs to read and apply all new schema properties.
+
+1. **New Methods**: Implement `processEntityDisplay()`, `processFieldDefinition()`, `processEntityForm()`, `getAllProcessorsForHook()`, `discoverSchemaAttachedProcessors()`, `getSchemaAttachedProcessors()`.
+2. **Filtering**: Implement filtering by execution context, input filters, and conditional execution.
+3. **Path Resolution**: Use `ConfigFactory::getSubconfigFromData()` for input path resolution.
+4. **Normalization**: Use `ConfigSchemaSubform::normalizeValues()` for config data normalization.
+5. **Schema Pattern Resolution**: Use `TypedConfigManager::getDefinitionsByPattern()`.
+6. **Condition Evaluation**: Implement context evaluation (including field-aware logic) and result condition evaluation.
+7. **Dependency Validation**: Check module, service, and plugin dependencies.
+8. **Sorting**: Implement sorting by priority, weight (with schema alignment), and `before`/`after` relationships.
+9. **Transformation Pipeline**: Execute the transformation pipeline (including built-in processors) before main processing.
+10. **Error Handling**: Implement `log_and_continue`, `stop_processing`, `rollback` strategies, and retry logic.
+11. **Result Handling**: Store, transform, aggregate, and pass results.
+12. **Validation**: Implement pre- and post-processing validation.
+13. **Dry-Run Safety**: Check `dry_run_safe` flag.
+14. **Idempotency**: Respect `idempotent` flag.
+15. **Schema-Attached Discovery**: Implement `discoverSchemaAttachedProcessors()` with auto-inference and caching.
+16. **Conflict Resolution**: Implement `detectProcessorConflicts()` and `resolveProcessorConflict()`.
+17. **Circular Dependency Detection**: Implement DFS-based cycle detection for `before`/`after` relationships.
+
+**Helper Method Signatures**:
+
+```php
+// Transformation pipeline methods
+protected function executeTransformationPipeline(array $input_data, array $processor_config): array;
+protected function applyResultTransformation(mixed $result, array $transformation_config): mixed;
+
+// Conflict resolution methods
+protected function detectProcessorConflicts(array $plugin_processors, array $schema_processors): array;
+protected function resolveProcessorConflict(array $plugin_config, array $schema_config): array;
+protected function resolveProcessorConflicts(array $plugin_processors, array $schema_processors, array $conflicts): array;
+
+// Dependency graph methods
+protected function buildDependencyGraph(array $processors): array;
+protected function detectCircularDependencies(array $dependency_graph): array|null;
+protected function dfsCycleDetection(string $processor_id, array $graph, array &$visited, array &$recursion_stack): array|null;
+
+// Sorting methods
+protected function sortProcessors(array $processors): array;
+
+// Condition evaluation methods
+protected function evaluateContextConditions(array $conditions, array $context): bool;
+protected function evaluateResultConditions(array $conditions, array $results): bool;
+protected function evaluateEntityTypeFilters(array $filters, string $entity_type, string $bundle): bool;
+protected function evaluateFieldTypeFilters(array $filters, string $field_type): bool;
+protected function evaluateCustomConditions(array $conditions, array $context): bool;
+
+// Validation methods
+protected function validateDependencies(array $dependencies): bool;
+protected function validateInputData(array $data, array $required_properties): bool;
+protected function validateOutputData(mixed $output, array $validation_config): bool;
+
+// Rollback methods
+protected function rollbackProcessors(array $snapshots, array $context): array;
+```
+
+## Schema Examples
+
+The following examples demonstrate how the enhanced schema structure is used in practice for different types of processors.
+
+### Example 1: FormTitleProcessor
+
+A simple hook-based processor that adds a form title to entity forms:
+
+```yaml
+plugin.plugin_configuration.schema_processor.form_title:
+  type: mapping
+  mapping:
+    execution:
+      type: mapping
+      mapping:
+        hooks:
+          type: sequence
+          sequence:
+            - form_alter
+    input:
+      type: mapping
+      mapping:
+        schema_keys:
+          type: sequence
+          sequence:
+            - general.form_display.form_title
+        third_party_settings:
+          type: sequence
+          sequence:
+            - module: design_system
+              path: general.form_display.form_title
+    output:
+      type: mapping
+      mapping:
+        form_array: true
+    processing_order:
+      type: mapping
+      mapping:
+        weight: -10
+        priority: high
+```
+
+**Explanation**: This processor attaches to the `form_alter` hook, reads the form title from either a schema key or third-party settings, modifies the form array by adding a title element, and runs early (high priority, negative weight) to ensure the title appears before other form modifications.
+
+### Example 2: FieldAccessProcessor
+
+A complex processor with conditions, dependencies, and explicit ordering:
+
+```yaml
+plugin.plugin_configuration.schema_processor.field_access:
+  type: mapping
+  mapping:
+    execution:
+      type: mapping
+      mapping:
+        hooks:
+          type: sequence
+          sequence:
+            - entity_field_access
+    input:
+      type: mapping
+      mapping:
+        schema_keys:
+          type: sequence
+          sequence:
+            - field_access
+            - access
+        filters:
+          type: mapping
+          mapping:
+            entity_types:
+              type: sequence
+              sequence:
+                - node
+                - user
+    conditions:
+      type: mapping
+      mapping:
+        context:
+          type: sequence
+          sequence:
+            - field
+        context_logic:
+          plugin_id: static
+          plugin_config:
+            value: field_aware
+        custom:
+          type: sequence
+          sequence:
+            - plugin_id: user_has_role
+              plugin_config:
+                roles: [administrator]
+    output:
+      type: mapping
+      mapping:
+        access_result: true
+    dependencies:
+      type: mapping
+      mapping:
+        modules:
+          type: sequence
+          sequence:
+            - user
+    processing_order:
+      type: mapping
+      mapping:
+        weight: 0
+        schema_weight_source:
+          plugin_id: static
+          plugin_config:
+            value: form_weight
+        before:
+          type: sequence
+          sequence:
+            - field_access_custom
+```
+
+**Explanation**: This processor handles field access control. It only runs for `node` and `user` entity types (filters), requires `field` context with field-aware logic (can appear in field config form or widget/formatter forms), requires a custom condition (user has administrator role), depends on the `user` module, modifies access results, aligns weight with schema property `form.weight`, and must run before the `field_access_custom` processor to establish base access rules.
+
+### Example 3: FormHandlerProcessor
+
+An event-based processor that executes form handlers after entity save:
+
+```yaml
+plugin.plugin_configuration.schema_processor.form_handler:
+  type: mapping
+  mapping:
+    execution:
+      type: mapping
+      mapping:
+        hooks:
+          type: sequence
+          sequence:
+            - form_submit
+        events:
+          type: sequence
+          sequence:
+            - event_name: entity.insert
+              priority: 100
+            - event_name: entity.update
+              priority: 100
+    input:
+      type: mapping
+      mapping:
+        schema_keys:
+          type: sequence
+          sequence:
+            - handlers
+        third_party_settings:
+          type: sequence
+          sequence:
+            - module: design_system
+              path: handlers
+    output:
+      type: mapping
+      mapping:
+        entity: true
+    processing_order:
+      type: mapping
+      mapping:
+        weight: 10
+        priority: normal
+```
+
+**Explanation**: This processor executes form handler plugins after entity save. It subscribes to both `entity.insert` and `entity.update` events with high priority (100) to run after the entity is saved, reads handler configuration, and modifies the entity by executing handler plugins.
+
+### Example 4: Field Definition Processor (Generic)
+
+A generic processor that builds field definitions from config or templates:
+
+```yaml
+plugin.plugin_configuration.schema_processor.field_definition:
+  type: mapping
+  mapping:
+    execution:
+      type: mapping
+      mapping:
+        hooks:
+          type: sequence
+          sequence:
+            - entity_base_field_info_alter
+        service_methods:
+          type: sequence
+          sequence:
+            - service: entity.field_helper
+              method: buildFieldDefinitionFromTemplate
+              context_keys:
+                - entity_type
+                - field_name
+                - template_config
+    input:
+      type: mapping
+      mapping:
+        schema_keys:
+          type: sequence
+          sequence:
+            - field.definition
+        pattern_resolution:
+          type: mapping
+          mapping:
+            flatten: false
+            module_mapping: false
+    output:
+      type: mapping
+      mapping:
+        field_definition: true
+    dependencies:
+      type: mapping
+      mapping:
+        services:
+          type: sequence
+          sequence:
+            - entity.field_helper
+        plugin_types:
+          type: sequence
+          sequence:
+            - plugin_type: field_type
+              required_plugins: []
+    processing_order:
+      type: mapping
+      mapping:
+        weight: -5
+        priority: critical
+        schema_weight_source:
+          plugin_id: static
+          plugin_config:
+            value: none
+```
+
+**Explanation**: This generic Field Definition Processor replaces the specialized BaseFieldDefinitionProcessor. It builds base field definitions from entity type configuration using `field_definition_config` to specify the field type source and path. The processor runs early (critical priority) to establish field structure before other processors. This generic processor can also be configured for template-based field definition creation and computed field definition creation (see Section 1.11.4 for more examples).
+
+### Example 5: Pattern-Based Third-Party Settings Processor
+
+A processor that uses schema pattern discovery for multi-module third-party settings:
+
+```yaml
+plugin.plugin_configuration.schema_processor.third_party_settings:
+  type: mapping
+  mapping:
+    execution:
+      type: mapping
+      mapping:
+        hooks:
+          type: sequence
+          sequence:
+            - entity_form_display_alter
+            - entity_view_display_alter
+    input:
+      type: mapping
+      mapping:
+        schema_patterns:
+          type: sequence
+          sequence:
+            - field_definition.third_party_settings.*
+        third_party_settings:
+          type: sequence
+          sequence:
+            - path: third_party_settings.*
+              pattern: true
+        pattern_resolution:
+          type: mapping
+          mapping:
+            flatten: true
+            module_mapping: true
+    conditions:
+      type: mapping
+      mapping:
+        context:
+          type: sequence
+          sequence:
+            - field
+            - widget
+            - formatter
+        context_logic:
+          plugin_id: static
+          plugin_config:
+            value: field_aware
+    output:
+      type: mapping
+      mapping:
+        display_component: true
+    processing_order:
+      type: mapping
+      mapping:
+        weight: 10
+        schema_weight_source:
+          plugin_id: static
+          plugin_config:
+            value: form_weight
+```
+
+**Explanation**: This processor discovers and processes third-party settings from multiple modules using pattern matching. It uses `field_definition.third_party_settings.*` pattern to discover all module schemas, flattens them into a single structure, builds module property mapping for input reorganization, supports field-aware context (can appear in field, widget, or formatter contexts), and aligns weight with schema property `form.weight` to maintain processing order consistency.
+
+### Example 6: Transformation Pipeline Processor
+
+A processor that uses transformation pipeline to normalize and prepare data before processing (inspired by Tamper module's chained transformations):
+
+```yaml
+plugin.plugin_configuration.schema_processor.data_normalizer:
+  type: mapping
+  mapping:
+    execution:
+      type: mapping
+      mapping:
+        hooks:
+          type: sequence
+          sequence:
+            - entity_form_display_alter
+        dry_run_safe: true
+    input:
+      type: mapping
+      mapping:
+        schema_keys:
+          type: sequence
+          sequence:
+            - widget.settings
+    transformations:
+      type: sequence
+      sequence:
+        - processor_id: normalize_format
+          config:
+            date_format: Y-m-d
+            boolean_values: [true, false]
+          enabled: true
+          weight: -10
+        - processor_id: set_defaults
+          config:
+            defaults:
+              placeholder: ''
+              size: 60
+          enabled: true
+          weight: -5
+        - processor_id: validate_required
+          config:
+            required: [field_name, widget_type]
+          enabled: true
+          weight: 0
+    output:
+      type: mapping
+      mapping:
+        display_component: true
+        idempotent: true
+    processing_order:
+      type: mapping
+      mapping:
+        weight: -20
+        priority: high
+```
+
+**Explanation**: This processor uses a transformation pipeline to normalize data formats, set defaults, and validate required properties before main processing. Transformations execute in weight order (-10, -5, 0), with each transformation receiving the output of the previous one. The processor is idempotent (can be safely re-executed) and safe for dry-run mode. This pattern is inspired by Drupal's Tamper module, which chains transformations in sequence.
+
+### Example 7: Error Handling Processor
+
+A processor with comprehensive error handling and rollback capabilities (inspired by Ansible's error handling):
+
+```yaml
+plugin.plugin_configuration.schema_processor.critical_operation:
+  type: mapping
+  mapping:
+    execution:
+      type: mapping
+      mapping:
+        hooks:
+          type: sequence
+          sequence:
+            - entity_save
+        dry_run_safe: false
+    input:
+      type: mapping
+      mapping:
+        schema_keys:
+          type: sequence
+          sequence:
+            - external_api.sync
+    validation:
+      type: mapping
+      mapping:
+        validate_before: true
+        validate_after: true
+        required_properties:
+          type: sequence
+          sequence:
+            - external_api.endpoint
+            - external_api.api_key
+        schema_validation: true
+    output:
+      type: mapping
+      mapping:
+        entity: true
+        idempotent: false
+    processing_order:
+      type: mapping
+      mapping:
+        weight: 0
+        priority: critical
+        error_handling:
+          type: mapping
+          mapping:
+            on_error:
+              plugin_id: static
+              plugin_config:
+                value: rollback
+            error_context: true
+            retry_on_error: true
+            max_retries: 3
+```
+
+**Explanation**: This processor performs a critical operation (external API sync) with comprehensive error handling. It validates input before processing and output after processing, requires critical properties, and uses schema validation. On error, it rolls back previous processors (requires result tracking), includes full context in error messages, and retries up to 3 times before applying rollback. The processor is not idempotent (external API calls may have side effects) and not safe for dry-run mode. This pattern aligns with Ansible's error handling approach.
+
+### Example 8: Result-Based Conditional Processor
+
+A processor that conditionally executes based on previous processor results:
+
+```yaml
+plugin.plugin_configuration.schema_processor.conditional_formatter:
+  type: mapping
+  mapping:
+    execution:
+      type: mapping
+      mapping:
+        hooks:
+          type: sequence
+          sequence:
+            - entity_view_display_alter
+    input:
+      type: mapping
+      mapping:
+        schema_keys:
+          type: sequence
+          sequence:
+            - formatter.conditional
+    conditions:
+      type: mapping
+      mapping:
+        result_conditions:
+          type: sequence
+          sequence:
+            - processor_id: field_access_processor
+              result_path: access_granted
+              operator:
+                plugin_id: static
+                plugin_config:
+                  value: equals
+              value: true
+            - processor_id: field_type_processor
+              result_path: field_type
+              operator:
+                plugin_id: static
+                plugin_config:
+                  value: contains
+              value: text
+        condition_logic:
+          plugin_id: static
+          plugin_config:
+            value: AND
+    output:
+      type: mapping
+      mapping:
+        display_component: true
+    processing_order:
+      type: mapping
+      mapping:
+        after:
+          type: sequence
+          sequence:
+            - field_access_processor
+            - field_type_processor
+        weight: 10
+```
+
+**Explanation**: This processor conditionally applies formatter settings based on results from previous processors. It requires that `field_access_processor` granted access (`access_granted: true`) AND that `field_type_processor` detected a text field type (`field_type` contains "text"). The processor runs after both dependency processors (via `after` relationship) and evaluates result conditions using dot-notation paths to access nested result values. This enables dynamic processor execution based on runtime results.
+
+### Example 9: Built-in Processors Example
+
+A processor using built-in processor shortcuts for common transformations (inspired by Zuplo's built-in processors):
+
+```yaml
+plugin.plugin_configuration.schema_processor.cleanup_config:
+  type: mapping
+  mapping:
+    execution:
+      type: mapping
+      mapping:
+        hooks:
+          type: sequence
+          sequence:
+            - entity_form_display_alter
+        dry_run_safe: true
+    input:
+      type: mapping
+      mapping:
+        schema_keys:
+          type: sequence
+          sequence:
+            - widget.settings
+    built_in_processors:
+      type: sequence
+      sequence:
+        - processor_type:
+            plugin_id: static
+            plugin_config:
+              value: remove_properties
+          config:
+            properties:
+              - widget.settings.debug
+              - widget.settings.temp_data
+          enabled: true
+          weight: -10
+        - processor_type:
+            plugin_id: static
+            plugin_config:
+              value: rename_properties
+          config:
+            mappings:
+              widget.settings.old_name: widget.settings.new_name
+          enabled: true
+          weight: -5
+        - processor_type:
+            plugin_id: static
+            plugin_config:
+              value: set_defaults
+          config:
+            defaults:
+              widget.settings.size: 60
+              widget.settings.placeholder: ''
+          enabled: true
+          weight: 0
+    output:
+      type: mapping
+      mapping:
+        display_component: true
+        idempotent: true
+    processing_order:
+      type: mapping
+      mapping:
+        weight: 5
+        priority: normal
+```
+
+**Explanation**: This processor uses built-in processor shortcuts to remove debug properties, rename configuration keys, and set default values. Built-in processors execute as part of the transformation pipeline in weight order (-10, -5, 0), providing lightweight alternatives to creating full processor plugins for common operations. This pattern is inspired by Zuplo's built-in processors (`removeExtensions`, `removeParameters`, `removePaths`), which provide common transformations without requiring custom code.
+
+### Example 10: Validation Processor
+
+A processor with comprehensive validation before and after processing:
+
+```yaml
+plugin.plugin_configuration.schema_processor.validated_processor:
+  type: mapping
+  mapping:
+    execution:
+      type: mapping
+      mapping:
+        hooks:
+          type: sequence
+          sequence:
+            - entity_form_display_alter
+        dry_run_safe: true
+    input:
+      type: mapping
+      mapping:
+        schema_keys:
+          type: sequence
+          sequence:
+            - validation.rules
+    validation:
+      type: mapping
+      mapping:
+        validate_before: true
+        validate_after: true
+        required_properties:
+          type: sequence
+          sequence:
+            - validation.rules.rule_type
+            - validation.rules.message
+        validation_rules:
+          type: sequence
+          sequence:
+            - plugin_id: custom_validation
+              plugin_config:
+                max_length: 255
+                pattern: '^[a-zA-Z0-9_]+$'
+        schema_validation: true
+    output:
+      type: mapping
+      mapping:
+        form_array: true
+        idempotent: true
+    result_handling:
+      type: mapping
+      mapping:
+        store_result: true
+        result_key: validation_result
+        result_transformation:
+          type: mapping
+          mapping:
+            processor_id: normalize_format
+            config:
+              boolean_values: [true, false]
+    processing_order:
+      type: mapping
+      mapping:
+        weight: 0
+        priority: normal
+```
+
+**Explanation**: This processor validates input before processing and output after processing. It requires critical properties (`rule_type`, `message`), applies custom validation rules (max length, pattern matching), and uses schema validation. Results are stored in context with key `validation_result` and transformed (normalized boolean values) before storage. The processor is idempotent and safe for dry-run mode. This pattern aligns with Ansible's validation approach, ensuring data integrity throughout the processing pipeline.
+
+### Example 11: Schema-Attached Form Title Processor
+
+A schema-attached processor that replaces custom code in `EntityDisplay.php`:
+
+**Before** (custom code in `EntityDisplay.php`):
+```php
+public function processGeneralSettings($form, $form_state, $display) {
+  $config = $display->getThirdPartySetting('design_system', 'general');
+  if (!empty($config['form_display']['form_title'])) {
+    $form['#title'] = $config['form_display']['form_title'];
+  }
+}
+```
+
+**After** (schema-attached processor using Property Setter Processor in `display.config.schema.yml`):
+```yaml
+entity_display.third_party_settings.design_system.general.form_display:
+  type: mapping
+  mapping:
+    form_title:
+      type: string
+      label: 'Form title'
+      description: 'Custom title displayed as an H2 heading above the form. Supports tokens like [node:title]. Applied at form render time.'
+      default_value: ''
+      processors:
+        - plugin_id: property_setter
+          execution:
+            hooks: [form_alter]
+          input:
+            auto_infer: true
+            # Inferred: schema_keys: [form_title]
+          output:
+            form_array: true
+          property_operations:
+            - target_path: '#title'
+              source_path: form_title
+              operation: set
+          processing_order:
+            weight: -100
+            align_with_schema_weight: true
+```
+
+**Explanation**: This schema-attached processor uses the generic Property Setter Processor instead of a specialized FormTitleProcessor. The processor is declared directly in the config schema where the configuration property is defined. The Property Setter Processor handles setting the form title via `target_path: '#title'` and `source_path: form_title`. Auto-inference automatically determines the input path from the schema property location, and weight alignment ensures the processor runs in the same order as the schema property appears in forms. This pattern makes features fully declarative with structure, form rendering, and behavior all co-located, while using generic processors reduces the total plugin count.
+
+### Example 12: Schema-Attached Field Access Processor
+
+A schema-attached processor that replaces custom code in `FieldSchemaProcessor.php`:
+
+**Before** (custom code in `FieldSchemaProcessor.php`):
+```php
+public function checkFieldAccess($operation, $account, $field_definition) {
+  $access_config = $field_definition->getThirdPartySetting('bd', 'access');
+  if (empty($access_config)) {
+    return AccessResult::neutral();
+  }
+
+  $roles = $access_config['roles'] ?? [];
+  if (!empty($roles) && !in_array($account->getRoles(), $roles)) {
+    return AccessResult::forbidden();
+  }
+
+  return AccessResult::allowed();
+}
+```
+
+**After** (schema-attached processor in `field.config.schema.yml`):
+```yaml
+field_definition.third_party_settings.bd.access:
+  type: mapping
+  label: 'Field access control'
+  description: 'Control field access based on roles, permissions, and conditions'
+  mapping:
+    roles:
+      type: sequence
+      label: 'Allowed roles'
+      description: 'Roles that can access this field'
+      sequence:
+        type: string
+      processors:
+        - plugin_id: field_access
+          execution:
+            hooks: [entity_field_access]
+          input:
+            auto_infer: true
+            # Inferred: schema_keys: [access.roles]
+          conditions:
+            context: [field, widget, formatter]
+            context_logic: field_aware
+          output:
+            access_result: true
+          processing_order:
+            weight: 0
+            align_with_schema_weight: true
+```
+
+**Explanation**: This schema-attached processor handles field access control with auto-inferred input paths and context-aware execution. The processor automatically infers the input path (`access.roles`) from the schema property location, and context conditions are inferred from the schema property's context array. This eliminates the need for custom service methods while maintaining the same functionality.
+
+### Example 13: Schema-Attached Field Definition Processor
+
+A schema-attached processor that replaces custom code in `EntityFieldHelper.php`:
+
+**Before** (custom code in `EntityFieldHelper.php`):
+```php
+public function buildFieldDefinitionFromTemplate($field_name, $template_config, $entity_type) {
+  $field_definition = BaseFieldDefinition::create($template_config['type']);
+  // ... merge settings from template ...
+  return $field_definition;
+}
+```
+
+**After** (schema-attached processor in entity type config schema):
+```yaml
+bd.entity_type.*.field.definition.*:
+  type: mapping
+  label: 'Field definition'
+  description: 'Base field definition configuration'
+  mapping:
+    field_template:
+      type: string
+      label: 'Field template'
+      description: 'Template to use for field definition'
+      processors:
+        - plugin_id: field_template
+          execution:
+            hooks: [entity_base_field_info_alter]
+          input:
+            auto_infer: true
+            # Inferred: schema_keys: [field_template]
+          output:
+            field_definition: true
+          processing_order:
+            weight: -10
+            priority: critical
+```
+
+**Explanation**: This schema-attached processor builds field definitions from entity type configuration. The processor runs early (critical priority) to establish field structure before other processors. Auto-inference determines the input path from the schema property location, eliminating boilerplate configuration. This pattern enables fully declarative field definition building without custom service methods.
+
+### Example 14: Entity Type Config Schema-Attached Processors
+
+**Required Schema Changes to `entity.types.schema.yml`**:
+
+Add `processors` property to `bd.entity_type.*` root mapping and key properties:
+
+```yaml
+bd.entity_type.*:
+  type: mapping
+  label: "Entity type"
+  # ... existing properties ...
+  mapping:
+    # ... existing mappings ...
+    processors:
+      type: mapping
+      label: 'Processors'
+      description: 'Schema processor plugins attached to this entity type definition'
+      mapping:
+        # Processor declarations follow plugin.schema-processor.schema.yml structure
+```
+
+**Add `processors` property to key schema properties**:
+
+- `base` - For `EntityTypeBaseMergeProcessor`
+- `settings.handlers` - For `EntityTypeHandlerMergeProcessor`
+- `tag` - For `EntityTypeTagProcessor`, `EntityTypeTagDerivationProcessor`
+- `route.link_templates_content` - For `EntityTypeLinkTemplateProcessor`
+- `route.link_templates_bundle` - For `EntityTypeLinkTemplateProcessor`
+- `links` - For `EntityTypeLinkDefaultProcessor`, `EntityTypeBundleLinkProcessor`
+- `label`, `label_plural`, `label_collection`, `label_singular`, `label_count` - For `EntityTypeLabelWrapProcessor`
+- `handlers` - For `EntityTypeHandlerCleanupProcessor`, `EntityTypeStorageHandlerProcessor`
+- `entity_keys` - For `EntityTypeEntityKeysProcessor`
+- `bundle_entity_type` - For `EntityTypeBundleCreationProcessor`
+- `bundle_of` - For `EntityTypeBundleLinkProcessor`
+- `type` - For `EntityTypeDefinitionAdditionProcessor`
+- `alter` - For `EntityTypeAlterProcessor`
+
+**Schema Pattern** (for each property):
+```yaml
+{property_name}:
+  type: {existing_type}
+  label: '{existing_label}'
+  # ... existing properties ...
+  processors:
+    type: mapping
+    label: 'Processors'
+    description: 'Schema processor plugins for this property'
+    mapping:
+      {processor_id}:
+        type: schema_processor_config
+        # Follows plugin.schema-processor.schema.yml structure
+```
+
+**Example: Link Template Processor in Schema**:
+
+```yaml
+bd.entity_type.*.route.link_templates_content:
+  type: sequence
+  label: 'Link templates (content)'
+  processors:
+    link_template_mapper:
+      plugin_id: entity_type_link_template
+      execution:
+        service_methods:
+          - service: entity.helper
+            method: processEntityTypeDefinition
+      input:
+        schema_keys:
+          - route.link_templates_content
+      output:
+        target_property: links
+      processing_order:
+        weight: 35
+```
+
+**Example: Base Merge Processor in Schema**:
+
+```yaml
+bd.entity_type.*.base:
+  type: option
+  label: "Base type"
+  processors:
+    base_merger:
+      plugin_id: entity_type_base_merge
+      execution:
+        service_methods:
+          - service: entity.helper
+            method: processEntityTypeDefinition
+      input:
+        schema_keys:
+          - base
+      processing_order:
+        weight: 5
+      dependencies:
+        modules:
+          - bd
+```
+
+**Example: Tag Derivation Processor in Schema**:
+
+```yaml
+bd.entity_type.*.tag:
+  type: sequence
+  label: 'Tags'
+  processors:
+    tag_derivation:
+      plugin_id: entity_type_tag_derivation
+      execution:
+        service_methods:
+          - service: entity.helper
+            method: processEntityTypeDefinition
+      input:
+        schema_keys:
+          - tag
+      processing_order:
+        weight: 28
+      conditions:
+        context:
+          - entity_type_config
+```
+
+**Explanation**: These processors enable declarative entity type config processing directly in the schema. Processors are discovered recursively from schema properties, auto-inference works for entity_type config schema paths (e.g., `bd.entity_type.node.route.link_templates_content` → `route.link_templates_content`), and processor weights can align with schema property weights (`form.weight`).
+
+### Example 15: Computed Field Schema-Attached Processors
+
+**Required Schema Changes to `field.config.schema.yml`**:
+
+Add `processors` property to computed_field entity schema properties:
+
+**Current Schema Location**: Lines 1565-1577 in `field.config.schema.yml`
+
+```yaml
+computed_field.*:
+  type: mapping
+  label: "Computed field"
+  mapping:
+    # ... existing mappings ...
+    plugin_field_type:
+      type: plugin_instance
+      plugin_type: field_type
+      label: "Field type"
+      description: "Select the field type plugin that defines the data structure for this computed field"
+      configurable: true
+      group: plugins
+      processors:
+        type: mapping
+        label: 'Processors'
+        description: 'Schema processor plugins for plugin_field_type'
+        mapping:
+          plugin_type_extractor:
+            type: schema_processor_config
+            # Processor configuration
+    plugin_computed_field:
+      type: plugin_instance
+      plugin_type: computed_field
+      label: "Computed field plugin"
+      description: "Select a plugin that determines how this field's value is computed"
+      group: plugins
+      processors:
+        type: mapping
+        label: 'Processors'
+        description: 'Schema processor plugins for plugin_computed_field'
+        mapping:
+          plugin_extractor:
+            type: schema_processor_config
+            # Processor configuration
+    label:
+      type: string
+      label: "Label"
+      processors:
+        type: mapping
+        label: 'Processors'
+        mapping:
+          properties_setter:
+            type: schema_processor_config
+    description:
+      type: string
+      label: "Description"
+      processors:
+        type: mapping
+        label: 'Processors'
+        mapping:
+          properties_setter:
+            type: schema_processor_config
+    cardinality:
+      type: integer
+      label: "Cardinality"
+      processors:
+        type: mapping
+        label: 'Processors'
+        mapping:
+          cardinality_setter:
+            type: schema_processor_config
+    id:
+      type: string
+      label: "ID"
+      processors:
+        type: mapping
+        label: 'Processors'
+        mapping:
+          name_extractor:
+            type: schema_processor_config
+```
+
+**Example: Plugin Field Type Extractor Processor in Schema**:
+
+```yaml
+computed_field.*.plugin_field_type:
+  type: plugin_instance
+  plugin_type: field_type
+  label: "Field type"
+  processors:
+    plugin_type_extractor:
+      plugin_id: computed_field_plugin_type_extractor
+      execution:
+        hooks:
+          - entity_bundle_field_info_alter
+      input:
+        schema_keys:
+          - plugin_field_type
+      output:
+        field_definition: true
+      processing_order:
+        weight: 1
+```
+
+**Example: Settings Configuration Processor in Schema**:
+
+```yaml
+computed_field.*.plugin_computed_field:
+  type: plugin_instance
+  plugin_type: computed_field
+  label: "Computed field plugin"
+  processors:
+    settings_configurator:
+      plugin_id: computed_field_settings
+      execution:
+        hooks:
+          - entity_bundle_field_info_alter
+      input:
+        schema_keys:
+          - plugin_computed_field
+      output:
+        field_definition: true
+      processing_order:
+        weight: 15
+```
+
+**Explanation**: These processors enable declarative computed_field config processing directly in the schema. Processors are discovered recursively from schema properties, auto-inference works for computed_field config schema paths, and processor weights control execution order during field definition building.
+
+## Schema Design Patterns
+
+Best practices and patterns for designing schema processor schemas.
+
+### Execution Context Selection
+
+**When to use hooks**: Use Drupal hooks for standard Drupal integration points (form alterations, entity operations, field operations). Hooks are the most common execution context.
+
+**When to use events**: Use Symfony events when you need fine-grained control over execution order via priority, or when integrating with event-driven systems. Events are useful for cross-cutting concerns.
+
+**When to use service methods**: Use service method invocations when processors are called programmatically from other services, or when you need explicit control over when processors run. Service methods enable direct processor invocation.
+
+**Pattern**: Start with hooks for standard integration, add events for cross-cutting concerns, and use service methods for programmatic invocation.
+
+### Input Configuration Patterns
+
+**Schema keys vs schema patterns vs third-party settings**:
+- Use schema keys when configuration is part of the primary entity/field configuration structure and you know the exact path.
+- Use schema patterns when you need to discover multiple schemas dynamically (e.g., `field_definition.third_party_settings.*` discovers all module schemas).
+- Use third-party settings when configuration is module-specific and stored separately, with optional pattern matching for multi-module discovery.
+
+**Pattern resolution**: When using schema patterns:
+- Set `flatten: true` for `config_schema_set` type schemas that should be merged into a single structure.
+- Set `module_mapping: true` for third-party settings patterns to build dynamic module-to-property mapping.
+- Patterns use `TypedConfigManager::getDefinitionsByPattern()` with `fnmatch()` matching.
+
+**Path resolution**: All path resolution uses `ConfigFactory::getSubconfigFromData()` which supports:
+- Dot-notation paths with wildcard fallback (`*` key)
+- Consistent behavior with `ConfigSchemaSubform` and rest of codebase
+- Automatic normalization of config data before path resolution
+
+**Filtering strategy**: Use entity type/bundle/field type filters when processors should only run for specific contexts. Empty filter arrays mean "run for all". Prefer positive filters (include) over negative filters (exclude) for clarity.
+
+**Custom conditions**: Use custom condition plugins for complex evaluation logic that can't be expressed with simple filters. Conditions enable reusable evaluation logic across processors.
+
+**Pattern**: Prefer schema keys for primary configuration, use schema patterns for dynamic discovery, use third-party settings for module-specific extensions, and use filters to limit processor scope.
+
+### Conditional Execution Patterns
+
+**Context conditions**: Use context arrays (`[field, widget, formatter]`) to specify where processors should run. This aligns with `ConfigSchemaSubform` property visibility:
+- `field`: Field configuration form
+- `widget`: Widget settings form
+- `formatter`: Formatter settings form
+- `form`: Entity form display
+- `view`: Entity view display
+
+**Context logic**:
+- `any`: At least one context must match (default, most flexible)
+- `all`: All specified contexts must match (strict)
+- `field_aware`: Special handling where if `field` context matches, widget/formatter contexts are optional (matches `ConfigSchemaSubform::shouldSkipProperty()` behavior)
+
+**Include vs exclude**: Use include lists when processors apply to a small, well-defined set of contexts. Use exclude lists when processors apply to most contexts except a few exceptions. Prefer include for clarity.
+
+**Custom conditions**: Use custom condition plugins for complex logic (user roles, entity state, relationships). Conditions are evaluated at runtime and can access full context.
+
+**Condition logic**: Use AND logic when all conditions must be met (default). Use OR logic when any condition is sufficient. AND is safer and more predictable.
+
+**Pattern**: Start with context conditions for display visibility, use simple include/exclude filters for entity/field type matching, add custom conditions only when needed, and prefer AND logic for predictable behavior.
+
+### Dependency Management
+
+**Module dependencies**: Always declare module dependencies. Missing modules should prevent processor execution with clear error messages.
+
+**Service dependencies**: Declare service dependencies when processors require specific services. Enables dependency injection validation.
+
+**Plugin type dependencies**: Declare plugin type dependencies when processors require specific plugin types. Optionally specify required plugin IDs for stricter validation.
+
+**Pattern**: Declare all dependencies explicitly. Missing dependencies should fail fast with clear error messages rather than causing runtime errors.
+
+### Processing Order Strategies
+
+**Weight-based ordering**: Use weight for simple numeric ordering within the same priority level. Lower weights run first. Useful for fine-tuning order.
+
+**Schema weight alignment**: Set `schema_weight_source` to `form_weight` or `weight` to align processor execution order with schema property processing order. This ensures processors run in the same order as properties appear in forms (see `ConfigSchemaSubform::recurseProcessConfigSchemaMapping()` weight sorting). Use `none` for explicit weight values that don't align with schema.
+
+**Priority-based grouping**: Use priority to group processors into categories (critical, high, normal, low). Critical processors always run before high, which run before normal, which run before low.
+
+**Before/after relationships**: Use before/after for explicit ordering requirements that override weight and priority. Useful when processors have hard dependencies on execution order.
+
+**Combining strategies**: Priority determines major grouping, weight fine-tunes within priority (optionally aligned with schema property weights), and before/after overrides both when needed.
+
+**Pattern**: Use priority for major grouping, weight for fine-tuning (with schema alignment when appropriate), and before/after only when explicit ordering is required. Avoid circular dependencies in before/after relationships.
+
+### Transformation Pipeline Patterns
+
+**When to use transformation pipelines**: Use transformation pipelines (Section 1.7) when input data needs normalization, cleanup, or preparation before main processor logic. Transformations execute before main processing, allowing data to be standardized.
+
+**Transformation ordering**: Transformations execute in weight order. Use negative weights for early transformations (normalization, cleanup), zero weight for validation, and positive weights for final transformations.
+
+**Built-in vs custom transformations**: Use built-in processors (Section 1.10) for common operations (remove properties, rename keys, set defaults). Create custom transformation processors for complex, project-specific transformations.
+
+**Chaining transformations**: Each transformation receives the output of the previous transformation. Design transformations to be composable and independent when possible.
+
+**Pattern**: Use transformation pipelines for data preparation, built-in processors for common operations, and custom processors for complex transformations. Order transformations logically (normalize → validate → transform).
+
+### Error Handling Strategies
+
+**Error handling strategies**: Three strategies provide flexibility (Section 1.6):
+- `log_and_continue`: Use for non-critical processors where errors don't break the workflow
+- `stop_processing`: Use for critical processors where errors should halt execution
+- `rollback`: Use for processors that modify state and need to undo changes on error
+
+**Retry logic**: Enable retry for transient errors (network timeouts, temporary service unavailability). Set `max_retries` based on error characteristics (3 retries is usually sufficient).
+
+**Error context**: Include full context in error messages (`error_context: true`) for debugging. Context helps identify which processor failed and why.
+
+**Pattern**: Use `log_and_continue` for non-critical operations, `stop_processing` for critical failures, and `rollback` for state-modifying operations. Enable retry for transient errors only.
+
+### Result Chaining Patterns
+
+**Result storage**: Store results in context (`store_result: true`) when subsequent processors need access to processor outputs. Use descriptive `result_key` values for clarity.
+
+**Result transformation**: Apply result transformations (Section 1.8) to normalize or format results before storage. Useful for ensuring consistent result formats.
+
+**Result aggregation**: Use `aggregate_with` to combine results from multiple processors. Aggregation enables processors to work together on complex workflows.
+
+**Result passing**: Use `pass_to` to explicitly pass results to specific processors. More explicit than relying on context access.
+
+**Pattern**: Store results when needed by subsequent processors, transform results for consistency, aggregate results for complex workflows, and use explicit result passing for clarity.
+
+### Validation Best Practices
+
+**Pre-processing validation**: Validate input before processing (`validate_before: true`) to catch invalid data early. Reduces wasted processing on invalid inputs.
+
+**Post-processing validation**: Validate output after processing (`validate_after: true`) to ensure processors produce valid results. Critical for data integrity.
+
+**Required properties**: Declare required properties explicitly. Missing required properties should fail fast with clear error messages.
+
+**Schema validation**: Use schema validation (`schema_validation: true`) to leverage Drupal's typed config system. Validates against schema definitions automatically.
+
+**Custom validation rules**: Use custom validation rules for project-specific validation logic. Reusable across processors.
+
+**Pattern**: Validate input before processing, validate output after processing, declare required properties explicitly, use schema validation when possible, and add custom rules for project-specific logic.
+
+### Built-in Processor Usage
+
+**When to use built-in processors**: Use built-in processors (Section 1.10) for simple, common transformations. Reduces boilerplate and avoids creating custom processor plugins for trivial operations.
+
+**Built-in processor types**: Common types include `remove_properties`, `rename_properties`, `set_defaults`, `normalize_format`, `validate_required`, `filter_values`, `merge_arrays`. These cover most common transformation needs.
+
+**Combining built-in processors**: Built-in processors can be combined in sequence. Each processor receives the output of the previous one, enabling complex transformations through composition.
+
+**Weight ordering**: Built-in processors execute in weight order within the transformation pipeline. Use weights to control execution order.
+
+**Pattern**: Use built-in processors for common transformations, combine them for complex operations, and create custom processors only when built-in processors are insufficient.
+
+### Schema-Attached Processors Patterns
+
+**When to use schema-attached processors**: Use schema-attached processors (Section 1.11) when behavior is straightforward and configuration-driven. Schema-attached processors eliminate the need for separate processor plugin files by declaring processors directly in config schemas where configuration properties are defined. Ideal for replacing custom service methods with declarative configuration.
+
+**When to use plugin-based processors**: Use plugin-based processors when behavior requires complex logic, transformations, or external dependencies. Plugin-based processors provide full PHP class capabilities for complex scenarios that can't be expressed declaratively.
+
+**Auto-inference benefits**: Schema-attached processors support auto-inference for input paths (from schema property location), weights (from schema property weights), and context (from schema property context arrays). This reduces boilerplate and ensures processors align with schema structure. Auto-inference is enabled by default (`auto_infer: true`, `align_with_schema_weight: true`).
+
+**Migration strategy**: When migrating custom service methods to processors:
+1. Start with schema-attached processors for simple cases (see Examples 11-13)
+2. Use plugin-based processors only when schema-attached processors are insufficient
+3. Both approaches work together seamlessly
+
+**Pattern**: Use schema-attached processors for simple, declarative behavior. Use plugin-based processors for complex logic. Both approaches can coexist in the same system, enabling gradual migration from custom code to fully declarative features.
+
+### Common Anti-Patterns
+
+**Over-specifying conditions**: Don't add conditions that are already handled by filters. Use filters for simple type matching, conditions for complex logic.
+
+**Circular dependencies**: Avoid circular before/after relationships. If processor A runs before B, and B runs before A, the system should detect and error.
+
+**Missing output declarations**: Always declare what processors modify. Undeclared outputs make dependency analysis impossible and can cause ordering issues.
+
+**Ignoring dependencies**: Don't skip dependency declarations. Missing dependencies cause runtime errors that are hard to debug.
+
+**Pattern**: Keep schemas simple and explicit. Use the minimum configuration needed for correct behavior.
+
+## Execution Context Reference
+
+### Execution Context Categories
+
+Execution contexts are categorized by type to help processors select appropriate integration points:
+
+**1. Drupal Hooks** (`hooks`):
+- Standard Drupal hook system integration
+- Examples: `form_alter`, `entity_field_access`, `entity_operation_definition`, `entity_context_build`
+- Use when: Integrating with Drupal's hook system for entity, form, field, or display processing
+
+**2. Symfony Events** (`events`):
+- Symfony event dispatcher integration
+- Examples: `kernel.request`, `kernel.response`, `kernel.finish_request`
+- Use when: Integrating with Symfony kernel lifecycle or custom events
+
+**3. Service Methods** (`service_methods`):
+- Direct service method invocation
+- Examples: `entity.helper::processEntityTypeDefinition()`
+- Use when: Integrating with custom service methods for complex processing workflows
+
+**4. ECA (Rules Engine)** (`hooks`):
+- Event-Condition-Action rules engine integration
+- Examples: `eca_rule_execute`, `eca_event_trigger`, `eca_condition_evaluate`
+- Use when: Integrating with ECA rules for config-driven rule execution
+
+**5. Webhooks** (`hooks`):
+- Webhook processing integration
+- Examples: `webhook_receive`, `webhook_process`, `webhook_response`
+- Use when: Processing webhook config and modifying webhook behavior
+
+**6. Queue Processing** (`hooks`):
+- Queue and cron processing integration
+- Examples: `hook_queue_info`, `hook_cron`, `hook_queue_worker`
+- Use when: Processing queue config and modifying queue/cron behavior
+
+**7. Batch Operations** (`hooks`):
+- Batch processing integration
+- Examples: `hook_batch_alter`
+- Use when: Processing batch config and modifying batch behavior
+
+**8. REST/JSON:API** (`hooks`):
+- REST and JSON:API integration
+- Examples: `hook_rest_resource_alter`, `hook_jsonapi_resource_type_build`, `hook_jsonapi_entity_filter_access`
+- Use when: Processing API config and modifying API behavior
+
+### Execution Context Patterns
+
+**Pattern 1: Hook Alter Pattern** (`hook_*_alter`):
+- Common pattern: `{entity_type}_alter`, `{form_id}_form_alter`, `{field_type}_field_alter`
+- Use for: Modifying existing structures (entities, forms, fields, displays)
+- Example: `entity_form_display_alter`, `field_definition_alter`
+
+**Pattern 2: Hook Build Pattern** (`hook_*_build`):
+- Common pattern: `{entity_type}_build`, `{context}_build`
+- Use for: Building new structures or context data
+- Example: `entity_context_build`, `entity_display_build`
+
+**Pattern 3: Hook Info Pattern** (`hook_*_info`):
+- Common pattern: `{entity_type}_info`, `{plugin_type}_info`
+- Use for: Providing information about entities, plugins, or resources
+- Example: `hook_queue_info`, `hook_rest_resource_alter`
+
+**Pattern 4: Event Subscription Pattern**:
+- Common pattern: Subscribe to Symfony events with priority
+- Use for: Reacting to kernel lifecycle or custom events
+- Example: `kernel.request`, `kernel.response`, `kernel.finish_request`
+
+**Pattern 5: Service Method Invocation Pattern**:
+- Common pattern: Invoke service methods with context keys
+- Use for: Complex processing workflows that require service integration
+- Example: `entity.helper::processEntityTypeDefinition()`
+
+### Execution Context Selection Guidelines
+
+1. **Use Hooks** when:
+   - Integrating with Drupal's standard hook system
+   - Processing entity, form, field, or display config
+   - Modifying existing structures
+
+2. **Use Events** when:
+   - Integrating with Symfony kernel lifecycle
+   - Reacting to custom events
+   - Need priority-based execution control
+
+3. **Use Service Methods** when:
+   - Complex processing workflows
+   - Need direct service integration
+   - Processing requires multiple service dependencies
+
+4. **Use ECA/Webhooks/Queue/Batch/REST** when:
+   - Integrating with specific Drupal subsystems
+   - Processing subsystem-specific config
+   - Modifying subsystem behavior
+
+### Execution Context Metadata
+
+Each execution context should document:
+- **Description**: What the context is used for
+- **Parameters**: What parameters are available in the context
+- **Return Types**: What the processor should return (if applicable)
+- **When to Use**: Guidance on when to select this context
+- **Examples**: Code examples showing processor execution in this context
+
+## Implementation Phases
+
+### Phase 1: Schema Expansion
+
+**Goal**: Expand schema_processor plugin schema to support all execution contexts, inputs, outputs, conditions, dependencies, and processing order as defined in the enhanced schema structure (see section "1. Expand Schema Processor Plugin Schema").
+
+**Tasks**:
+- TASK-101: Expand `plugin.schema-processor.schema.yml` with execution context schema (see section 1.1)
+  - Define hooks sequence for Drupal hook attachment
+  - Define events sequence with event_name and priority for Symfony event subscription
+  - Define service_methods sequence with service, method, and context_keys for service method invocation
+- TASK-102: Add input configuration schema (see section 1.2)
+  - Define schema_keys sequence for dot-notation configuration paths
+  - Define schema_patterns sequence for wildcard pattern-based schema discovery
+  - Define third_party_settings sequence with module, path, and pattern option mappings
+  - Define pattern_resolution mapping with flatten and module_mapping options
+  - Define filters mapping with entity_types, bundles, field_types, and custom_conditions sequences
+  - Integrate ConfigFactory::getSubconfigFromData() for path resolution with wildcard support
+- TASK-103: Add output configuration schema (see section 1.3)
+  - Define boolean flags for form_array, field_definition, access_result, display_component, entity
+  - Define custom mapping for additional output types
+- TASK-104: Add conditional execution schema (see section 1.4)
+  - Define context sequence for display context conditions (field, widget, formatter, form, view)
+  - Define context_logic option (any, all, field_aware) matching ConfigSchemaSubform behavior
+  - Define entity_type, bundle, and field_type mappings with include/exclude sequences
+  - Define custom sequence for condition plugin instances
+  - Define condition_logic option (AND/OR) for combining conditions
+  - Implement context evaluation logic matching ConfigSchemaSubform::shouldSkipProperty()
+- TASK-105: Add dependencies schema (see section 1.5)
+  - Define modules sequence for Drupal module dependencies
+  - Define services sequence for service ID dependencies
+  - Define plugin_types sequence with plugin_type and optional required_plugins
+- TASK-105.1: Create condition and validation_rule plugin types (see section 1.5.1)
+  - Add `condition` plugin type to `bd.plugin_type.yml` with plugin manager `plugin.manager.condition`
+  - Add `validation_rule` plugin type to `bd.plugin_type.yml` with plugin manager `plugin.manager.validation_rule`
+- TASK-106: Add processing order schema (see section 1.6)
+  - Define weight integer for numeric sorting
+  - Define schema_weight_source option (form_weight, weight, none) for schema alignment
+  - Define priority option (critical, high, normal, low) for categorical grouping
+  - Define before and after sequences for explicit ordering relationships
+  - Implement weight reading from schema properties when schema_weight_source is set
+- TASK-107: Update `SchemaProcessor` annotation class to support new schema properties
+  - Add properties corresponding to execution, input, output, conditions, dependencies, processing_order
+  - Update annotation documentation to reference schema sections
+- TASK-108: Update `SchemaProcessorInterface` and `SchemaProcessorBase` if needed
+  - Add methods for accessing new schema properties
+  - Add helper methods for condition evaluation, dependency validation, processing order calculation
+  - Reference schema examples (see "Schema Examples" section) for implementation patterns
+- TASK-109: Update `SchemaProcessorManager` to read and apply new schema properties
+  - Filter processors by execution context (hooks, events, service methods)
+  - Filter by input configuration (entity type, bundle, field type filters)
+  - Resolve schema patterns using TypedConfigManager::getDefinitionsByPattern() with fnmatch()
+  - Resolve input paths using ConfigFactory::getSubconfigFromData() with wildcard support
+  - Normalize config data using ConfigSchemaSubform::normalizeValues() before passing to processors
+  - Evaluate conditional execution (context conditions with field-aware logic, include/exclude, custom conditions)
+  - Validate dependencies (modules, services, plugins)
+  - Sort by processing order (priority, weight with optional schema alignment, before/after relationships)
+  - Reference schema design patterns (see "Schema Design Patterns" section) for implementation guidance
+- TASK-110: Add transformation pipeline schema (see section 1.7)
+  - Define transformations sequence with processor_id, config, enabled, and weight mappings
+  - Implement transformation pipeline execution before main processing
+  - Support built-in transformation types (remove_properties, rename_properties, set_defaults, normalize_format, validate_required, filter_values, merge_arrays)
+  - Execute transformations in weight order with result chaining
+- TASK-111: Add error handling schema (see section 1.6 enhancement)
+  - Define error_handling mapping with on_error option (log_and_continue, stop_processing, rollback)
+  - Define error_context boolean for full context in error messages
+  - Define retry_on_error boolean and max_retries integer for retry logic
+  - Implement error handling strategies in SchemaProcessorManager
+  - Implement rollback mechanism with result tracking
+- TASK-112: Add idempotency declaration (see section 1.3 enhancement)
+  - Define idempotent boolean in output configuration schema
+  - Document idempotency requirements for safe re-execution
+  - Respect idempotency flag during processor re-execution
+- TASK-113: Add result handling schema (see section 1.8)
+  - Define result_handling mapping with store_result, result_key, aggregate_with, pass_to, and result_transformation
+  - Implement result storage in context for subsequent processors
+  - Implement result transformation before storage
+  - Implement result aggregation for processors that specify aggregate_with
+- TASK-114: Add validation schema (see section 1.9)
+  - Define validation mapping with validate_before, validate_after, validation_rules, required_properties, and schema_validation
+  - Implement pre-processing validation hooks
+  - Implement post-processing validation hooks
+  - Integrate with Drupal validation plugin system
+- TASK-115: Add built-in processors schema (see section 1.10)
+  - Define built_in_processors sequence with processor_type option, config, enabled, and weight
+  - Implement built-in processor execution as part of transformation pipeline
+  - Support all built-in processor types with appropriate configuration
+- TASK-116: Add result-based conditions (see section 1.4 enhancement)
+  - Define result_conditions sequence with processor_id, result_path, operator, and value mappings
+  - Implement result condition evaluation using dot-notation paths
+  - Support all comparison operators (equals, not_equals, exists, not_exists, greater_than, less_than, contains, matches)
+- TASK-117: Add dry-run mode support (see section 1.1 enhancement)
+  - Define dry_run_safe boolean in execution context schema
+  - Implement dry-run mode checking in SchemaProcessorManager
+  - Skip processors with dry_run_safe: false in dry-run mode
+  - Log skipped processors for visibility
+
+**Acceptance Criteria**:
+- Schema file includes all eleven schema sections as defined in sections 1.1 through 1.11 (including schema-attached processors)
+- Schema-attached processors can be declared in config schema files via `processors` property
+- `SchemaProcessorManager` discovers schema-attached processors automatically via `discoverSchemaAttachedProcessors()`
+- Schema-attached processors execute alongside plugin-based processors with proper merging and sorting
+- Auto-inference works for input paths (from schema property location), weights (from schema property weights), and context (from schema property context arrays)
+- Migration examples (Examples 11-13) demonstrate replacing custom code with schema declarations
+- Schema supports all execution contexts (hooks, events, service methods) with complete configuration options including dry_run_safe
+- Schema supports all input types (schema keys, schema patterns with pattern resolution, third-party settings with pattern matching, filters with entity type/bundle/field type and custom conditions)
+- Schema supports all output types (form array, field definition, access result, display component, entity, custom) with idempotency declaration
+- Schema supports comprehensive conditional execution (context arrays with field-aware logic, entity type, bundle, field type with include/exclude, custom conditions with AND/OR logic, result-based conditions)
+- Schema supports complete dependency management (modules, services, plugin types with optional required plugins)
+- Schema supports sophisticated processing order (weight with optional schema alignment, priority levels, before/after relationships, error handling configuration)
+- Schema supports transformation pipeline with built-in and custom transformation processors
+- Schema supports result handling with storage, transformation, aggregation, and passing
+- Schema supports validation with pre-processing, post-processing, custom rules, required properties, and schema validation
+- Schema supports built-in processors for common transformation patterns
+- Annotation class validates all new properties and provides appropriate defaults
+- Interface and base class provide methods for accessing and evaluating all schema properties
+- Manager uses ConfigFactory::getSubconfigFromData() for path resolution with wildcard support
+- Manager normalizes config data using ConfigSchemaSubform::normalizeValues() before passing to processors
+- Manager resolves schema patterns using TypedConfigManager::getDefinitionsByPattern()
+- Manager evaluates context conditions using same logic as ConfigSchemaSubform::shouldSkipProperty()
+- Manager evaluates result conditions using dot-notation paths and comparison operators
+- Manager executes transformation pipeline before main processing with weight ordering
+- Manager executes built-in processors as part of transformation pipeline
+- Manager handles errors according to error handling configuration (log_and_continue, stop_processing, rollback)
+- Manager implements retry logic for transient errors
+- Manager stores results in context for subsequent processors
+- Manager applies result transformations before storage
+- Manager aggregates results from multiple processors
+- Manager validates input before processing and output after processing
+- Manager checks dry-run mode safety and skips unsafe processors
+- Manager respects idempotency flag during re-execution
+- Manager can filter processors by execution context, input filters, and conditional execution
+- Manager can validate dependencies and detect missing requirements
+- Manager can sort processors using priority, weight (with optional schema alignment), and before/after relationships, handling conflicts appropriately
+- Auto-inference algorithm correctly strips prefixes for all known schema root types (entity_display, field_definition, entity_type_config)
+- Auto-inference handles nested mappings and sequences correctly (preserves structure, handles sequence parents)
+- Processor conflicts are detected and resolved according to strategy (schema-attached takes precedence, incompatible configs throw exceptions)
+- Rollback mechanism tracks processor state (snapshots with input, context, output declarations) and can restore previous state
+- Caching strategy prevents redundant schema discovery (cache by schema ID with hash-based invalidation)
+- Cache invalidation works correctly on schema changes (hash comparison detects changes, manual invalidation methods available)
+- Result condition evaluation handles all edge cases gracefully (missing processors, missing paths, type mismatches, nested paths)
+- Circular dependencies are detected and reported with clear errors (DFS cycle detection with cycle path in error message)
+- Invalid schema paths are handled with appropriate fallbacks (warnings logged, fallback to full path minus root)
+- Condition and validation_rule plugin types are created with interfaces and base classes as specified in section 1.5.1
+- All implementation specifications are documented in the PRD "Implementation Specifications" section (see section after "Implementation Algorithm Examples")
+

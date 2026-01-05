@@ -1,0 +1,422 @@
+---
+# Dev-Loop PRD Metadata v1.2
+prd:
+  id: schema_processor_integration_1
+  version: 1.0.0
+  status: ready
+  parentPrd: schema_processor_refactoring
+  prdSequence: 3
+
+execution:
+  strategy: phased
+  mode: autonomous  # Test-driven: fix failures as they appear
+  intervention:
+    mode: autonomous
+    pauseOn: []
+    autoApprove:
+      - test-only
+      - documentation
+      - code-comments
+      - test-fixes
+
+  parallelism:
+    testGeneration: 4
+    testExecution: 4
+    taskExecution: 1
+
+  maxIterations: 100
+  timeoutMinutes: 180
+
+dependencies:
+  externalModules: []
+  prds:
+    - schema_processor_core_processors  # Requires core processors complete
+  codeRequirements:
+    - Core processors from PRD 2 must be complete
+    - All processor plugins created and functional
+
+requirements:
+  idPattern: "TASK-{id}"
+  phases:
+    - id: 6
+      name: "Integration & Testing"
+      parallel: false
+      tasks:
+        - id: "TASK-501"
+          testSpec:
+            type: "playwright"
+            file: "tests/playwright/bd/entity-display-features.spec.ts"
+            describe: "Cross-Processor Interaction Tests"
+            cases:
+              - name: "should execute multiple processors in chain"
+                steps:
+                  - action: "execute-php"
+                    command: "ddev exec bash -c 'drush ev \"...cross-processor chain test...\"'"
+                  - action: "assert"
+                    type: "processor-chain-complete"
+              - name: "should handle processor dependencies correctly"
+                steps:
+                  - action: "execute-php"
+                    command: "ddev exec bash -c 'drush ev \"...processor dependency test...\"'"
+                  - action: "assert"
+                    type: "processor-dependencies-valid"
+            dataSetup:
+              - type: "config"
+                path: "test-cross-processor.yml"
+        - id: "TASK-502"
+          testSpec:
+            type: "playwright"
+            file: "tests/playwright/bd/entity-display-features.spec.ts"
+            describe: "Performance Regression Tests"
+            cases:
+              - name: "should not degrade performance compared to baseline"
+                steps:
+                  - action: "execute-php"
+                    command: "ddev exec bash -c 'drush ev \"...performance baseline test...\"'"
+                  - action: "assert"
+                    type: "performance-within-threshold"
+                    threshold: 1.2
+            dataSetup: []
+        - id: "TASK-503"
+          testSpec:
+            type: "playwright"
+            file: "tests/playwright/bd/field-features.spec.ts"
+            describe: "Error Handling Validation Tests"
+            cases:
+              - name: "should handle processor errors gracefully"
+                steps:
+                  - action: "execute-php"
+                    command: "ddev exec bash -c 'drush ev \"...error handling test...\"'"
+                  - action: "assert"
+                    type: "errors-handled-gracefully"
+            dataSetup: []
+        - id: "TASK-504"
+          testSpec:
+            type: "playwright"
+            file: "tests/playwright/bd/entity-operation.spec.ts"
+            describe: "Entity Operation Processor Integration Tests"
+            cases:
+              - name: "should execute entity operation processor chains"
+                steps:
+                  - action: "execute-php"
+                    command: "ddev exec bash -c 'drush ev \"...entity operation chain test...\"'"
+                  - action: "assert"
+                    type: "processor-chain-complete"
+              - name: "should handle nested sequence processing"
+                steps:
+                  - action: "execute-php"
+                    command: "ddev exec bash -c 'drush ev \"...nested sequence test...\"'"
+                  - action: "assert"
+                    type: "nested-sequences-processed"
+              - name: "should evaluate access conditions with AND/OR/XOR logic"
+                steps:
+                  - action: "execute-php"
+                    command: "ddev exec bash -c 'drush ev \"...access logic test...\"'"
+                  - action: "assert"
+                    type: "access-logic-evaluated"
+            dataSetup: []
+        - id: "TASK-505"
+          testSpec:
+            type: "playwright"
+            file: "tests/playwright/bd/entity-context.spec.ts"
+            describe: "Entity Context Processor Integration Tests"
+            cases:
+              - name: "should execute entity context processor chains"
+                steps:
+                  - action: "execute-php"
+                    command: "ddev exec bash -c 'drush ev \"...entity context chain test...\"'"
+                  - action: "assert"
+                    type: "processor-chain-complete"
+              - name: "should handle pre-processing pipeline"
+                steps:
+                  - action: "execute-php"
+                    command: "ddev exec bash -c 'drush ev \"...pre-processing pipeline test...\"'"
+                  - action: "assert"
+                    type: "pipeline-executed"
+              - name: "should aggregate contexts from multiple sources"
+                steps:
+                  - action: "execute-php"
+                    command: "ddev exec bash -c 'drush ev \"...context aggregation test...\"'"
+                  - action: "assert"
+                    type: "contexts-aggregated"
+            dataSetup: []
+        - id: "TASK-506"
+          testSpec:
+            type: "playwright"
+            file: "tests/playwright/bd/field-definition-processors.spec.ts"
+            describe: "Field Definition Processor Integration Tests"
+            cases:
+              - name: "should execute field definition processor chains"
+                steps:
+                  - action: "execute-php"
+                    command: "ddev exec bash -c 'drush ev \"...field definition chain test...\"'"
+                  - action: "assert"
+                    type: "processor-chain-complete"
+              - name: "should handle context-aware processing (field/widget/formatter)"
+                steps:
+                  - action: "execute-php"
+                    command: "ddev exec bash -c 'drush ev \"...context-aware test...\"'"
+                  - action: "assert"
+                    type: "context-aware-processed"
+              - name: "should process plugin instance chains"
+                steps:
+                  - action: "execute-php"
+                    command: "ddev exec bash -c 'drush ev \"...plugin instance chain test...\"'"
+                  - action: "assert"
+                    type: "plugin-chains-processed"
+              - name: "should evaluate conditional logic (AND/OR/XOR)"
+                steps:
+                  - action: "execute-php"
+                    command: "ddev exec bash -c 'drush ev \"...conditional logic test...\"'"
+                  - action: "assert"
+                    type: "conditional-logic-evaluated"
+            dataSetup: []
+        - id: "TASK-507"
+          testSpec:
+            type: "playwright"
+            file: "tests/playwright/bd/entity-display-processors.spec.ts"
+            describe: "Entity Display Processor Integration Tests"
+            cases:
+              - name: "should execute entity display processor chains"
+                steps:
+                  - action: "execute-php"
+                    command: "ddev exec bash -c 'drush ev \"...entity display chain test...\"'"
+                  - action: "assert"
+                    type: "processor-chain-complete"
+              - name: "should handle config_schema_set pattern processing"
+                steps:
+                  - action: "execute-php"
+                    command: "ddev exec bash -c 'drush ev \"...config schema set test...\"'"
+                  - action: "assert"
+                    type: "schema-set-processed"
+              - name: "should process component settings correctly"
+                steps:
+                  - action: "execute-php"
+                    command: "ddev exec bash -c 'drush ev \"...component settings test...\"'"
+                  - action: "assert"
+                    type: "component-settings-processed"
+            dataSetup: []
+        - id: "TASK-508"
+          testSpec:
+            type: "playwright"
+            file: "tests/playwright/bd/integration.spec.ts"
+            describe: "Cross-Schema Processor Integration Tests"
+            cases:
+              - name: "should execute processors across all 4 schema sets"
+                steps:
+                  - action: "execute-php"
+                    command: "ddev exec bash -c 'drush ev \"...cross-schema integration test...\"'"
+                  - action: "assert"
+                    type: "all-schemas-processed"
+              - name: "should validate processor integration with existing functionality"
+                steps:
+                  - action: "execute-php"
+                    command: "ddev exec bash -c 'drush ev \"...integration validation test...\"'"
+                  - action: "assert"
+                    type: "integration-validated"
+            dataSetup: []
+
+testing:
+  directory: tests/playwright/bd/
+  framework: playwright
+  parallel: true
+  workers: 4
+  bundledTests: true
+  cleanupArtifacts: true
+  timeout: 300000
+  retries: 2
+
+validation:
+  globalRules:
+    - rule: no_php_errors
+      description: "No PHP fatal errors in logs"
+      test: "ddev logs -s web | grep -i 'PHP Fatal' | wc -l == 0"
+    - rule: all_tests_pass
+      description: "All test suites pass"
+      test: "npm test -- entity-display-features.spec.ts field-features.spec.ts field-definition.spec.ts"
+
+config:
+  validation:
+    gates:
+      - phase: 6
+        name: "integration-test-gate"
+        tests:
+          - command: "npm test -- entity-display-features.spec.ts"
+            description: "Entity display features tests"
+          - command: "npm test -- field-features.spec.ts"
+            description: "Field features tests"
+          - command: "npm test -- field-definition.spec.ts"
+            description: "Field definition tests"
+          - command: "ddev logs -s web | grep -i 'PHP Fatal' | wc -l"
+            expected: "0"
+            description: "No PHP fatal errors"
+        assertions:
+          - all-tests-pass
+          - no-regressions
+          - no-php-errors
+      - phase: 6
+        name: "cross-processor-interaction-gate"
+        tests:
+          - command: "npm test -- entity-display-features.spec.ts --grep 'cross-processor'"
+            description: "Cross-processor interaction tests"
+        assertions:
+          - cross-processor-interactions-valid
+      - phase: 6
+        name: "performance-regression-gate"
+        tests:
+          - command: "npm test -- entity-display-features.spec.ts --grep 'performance'"
+            description: "Performance regression tests"
+        assertions:
+          - performance-acceptable
+
+  testCoverage:
+    required: true
+    thresholds:
+      lines: 85
+      functions: 80
+      branches: 75
+    perPhase:
+      - phase: 6
+        minTests: 15
+        requiredScenarios:
+          - cross-processor-interactions
+          - performance-regression
+          - error-handling-validation
+          - all-existing-tests-pass
+
+  testData:
+    setup:
+      - type: "config"
+        path: "docroot/modules/share/bd/config/install/bd.schema_processor_test.yml"
+        createIfMissing: true
+      - type: "config"
+        path: "docroot/modules/share/bd/config/install/bd.schema_processor_test.yml"
+        createIfMissing: true
+    setup:
+      - type: "config"
+        createIfMissing: true
+      - type: "entity"
+        entityType: "node_type"
+        bundle: "article"
+        count: 1
+      - type: "entity"
+        entityType: "node"
+        bundle: "article"
+        count: 10
+    cleanup:
+      - type: "config"
+        after: "test-completion"
+
+  testArtifacts:
+    collect:
+      - type: "screenshots"
+        on: "failure"
+        path: ".devloop/artifacts/screenshots/{taskId}/{timestamp}"
+      - type: "video"
+        on: "failure"
+        path: ".devloop/artifacts/videos/{taskId}/{timestamp}"
+      - type: "logs"
+        on: "always"
+        sources:
+          - "ddev logs -s web"
+          - "playwright-report"
+        path: ".devloop/artifacts/logs/{taskId}/{timestamp}"
+      - type: "performance-metrics"
+        on: "always"
+        sources:
+          - "playwright-report"
+        path: ".devloop/artifacts/performance/{taskId}/{timestamp}"
+
+  testExecution:
+    order: "phase-sequential"
+    parallelWithinPhase: true
+    dependencies:
+      - test: "entity-display-features.spec.ts"
+        dependsOn:
+          - phase: 6
+            tasks: ["TASK-501", "TASK-502"]
+      - test: "field-features.spec.ts"
+        dependsOn:
+          - phase: 6
+            tasks: ["TASK-501", "TASK-502"]
+      - test: "field-definition.spec.ts"
+        dependsOn:
+          - phase: 6
+            tasks: ["TASK-501", "TASK-502"]
+
+  errorHandling:
+    strategies:
+      - type: test-failure
+        action: diagnose-and-fix
+        useRootCauseAnalysis: true
+      - type: test-regression
+        action: create-fix-task
+        priority: high
+    testFailure:
+      strategies:
+        - type: "playwright-timeout"
+          action: "retry-with-timeout-increase"
+          maxRetries: 2
+          timeoutMultiplier: 1.5
+        - type: "test-flaky"
+          action: "mark-flaky-and-continue"
+          threshold: 3
+        - type: "test-regression"
+          action: "create-fix-task"
+          priority: "high"
+          assignTo: "current-task"
+        - type: "performance-degradation"
+          action: "investigate-and-fix"
+          threshold: 1.2
+          escalation: manual-review
+
+  integration:
+    coordination:
+      blockingPrds: []
+      blockedBy: [schema_processor_core_processors]
+      parallelWith: []
+    communication:
+      outputs:
+        - test-results: "All three Playwright test suites passing"
+        - regression-fixes: "Fixed regressions from processor refactoring"
+        - performance-validation: "Performance testing results"
+        - documentation-updates: "Updated documentation"
+      inputs:
+        - core-processors: "Core processors from schema_processor_core_processors"
+
+---
+# Schema Processor Integration Testing PRD (Round 1)
+
+> **Note**: This PRD depends on the [Core Processors PRD](./2-core-processors.md.yml) which must be completed first.
+
+This PRD covers Phase 6: Integration testing for the core processors created in Phases 2-5. This includes running all Playwright test suites, fixing regressions, performance testing, and documentation updates.
+
+## Overview
+
+Validate all changes from Phases 2-4 by running comprehensive test suites and fixing any regressions. This round focuses on entity display, field feature, and field definition processors.
+
+### Phase 6: Integration & Testing
+
+**Goal**: Validate all changes, fix regressions, and clean up deprecated code.
+
+**Tasks**:
+- TASK-501: Run all three Playwright test suites (entity-display-features, field-features, field-definition)
+- TASK-502: Fix any test failures or regressions
+- TASK-503: Verify no PHP errors in logs
+- TASK-504: Integration tests for entity operation processors (nested sequences, plugin chains, access logic)
+- TASK-505: Integration tests for entity context processors (pre-processing pipeline, context aggregation)
+- TASK-506: Integration tests for field definition processors (context-aware, plugin chains, conditional logic)
+- TASK-507: Integration tests for entity display processors (config_schema_set, component settings)
+- TASK-508: Cross-schema processor integration validation
+- TASK-509: Mark deprecated service methods with @deprecated tags
+- TASK-510: Update documentation (CLAUDE.md, module READMEs)
+- TASK-511: Performance testing (ensure plugin overhead is acceptable)
+- TASK-512: Code review and cleanup
+
+**Acceptance Criteria**:
+- All three Playwright test suites pass
+- No PHP errors in logs
+- No functional regressions
+- Documentation updated
+- Performance is acceptable (no significant degradation)
+
