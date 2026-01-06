@@ -104,8 +104,10 @@ function logMcp(type: 'REQUEST' | 'RESPONSE' | 'ERROR', toolName: string, data: 
   }
 
   // Also output to stderr for debug visibility (MCP uses stdout for protocol)
+  // Use INFO prefix for REQUEST/RESPONSE, ERROR only for actual errors
   if (process.env.MCP_DEBUG === 'true') {
-    console.error(`[MCP ${type}] ${toolName}:`, JSON.stringify(data, null, 2));
+    const prefix = type === 'ERROR' ? '[ERROR]' : '[INFO]';
+    process.stderr.write(`${prefix} [MCP ${type}] ${toolName}: ${JSON.stringify(data, null, 2)}\n`);
   }
 }
 
@@ -120,10 +122,13 @@ process.env.DEV_LOOP_MCP_MODE = 'true';
 
 // CRITICAL: Redirect console.log to stderr to prevent breaking MCP JSON-RPC protocol
 // MCP uses stdout for JSON-RPC, so any console.log breaks the protocol
+// Use a clear prefix to distinguish from actual errors
 const originalConsoleLog = console.log;
 console.log = (...args: any[]) => {
-  // Redirect to stderr instead of stdout
-  console.error('[LOG]', ...args);
+  // Redirect to stderr with INFO prefix (not ERROR) so MCP clients don't misinterpret
+  // Format: [INFO] prefix makes it clear this is informational, not an error
+  const message = args.map(arg => typeof arg === 'string' ? arg : JSON.stringify(arg)).join(' ');
+  process.stderr.write(`[INFO] ${message}\n`);
 };
 
 // Configure logger for MCP mode (suppress stdout to avoid breaking JSON-RPC protocol)
