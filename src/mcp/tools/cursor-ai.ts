@@ -29,8 +29,8 @@ interface DirectRequest {
 // Map of request ID to pending request
 const pendingRequests = new Map<string, DirectRequest>();
 
-// Maximum wait time for direct requests (2 minutes)
-const MAX_WAIT_TIME = 120000;
+// Maximum wait time for direct requests (10 minutes for contribution mode)
+const MAX_WAIT_TIME = 600000;
 
 // Configurable path for Cursor AI files (can be set via setCursorAIPath or config)
 let cursorAIPath: string | null = null;
@@ -150,8 +150,10 @@ function writePendingRequestsToFile(): void {
     const agentName = getCursorAgentName();
     const requests = Array.from(pendingRequests.values()).map(req => ({
       id: req.id,
+      prompt: req.prompt,
       task: req.task,
       model: req.model || getCursorModel(),
+      codebaseContext: req.codebaseContext,
       agent: agentName,
       timestamp: req.timestamp,
       // Don't include resolve/reject functions
@@ -305,9 +307,23 @@ export async function executeCursorGenerateCode(
 export function completeCursorRequest(requestId: string, codeChanges: CodeChanges): void {
   const request = pendingRequests.get(requestId);
   if (request) {
+    // In-memory request - resolve directly
     pendingRequests.delete(requestId);
     removeRequestFromFile(requestId);
     request.resolve(codeChanges);
+  } else {
+    // File-based request - write completion file
+    try {
+      const completedDir = getCompletedRequestsDir();
+      if (!fs.existsSync(completedDir)) {
+        fs.mkdirSync(completedDir, { recursive: true });
+      }
+      const completionFile = path.join(completedDir, `${requestId}.json`);
+      fs.writeFileSync(completionFile, JSON.stringify({ codeChanges }, null, 2));
+      removeRequestFromFile(requestId);
+    } catch (error) {
+      console.error(`[CursorProvider] Error writing completion file for ${requestId}:`, error);
+    }
   }
 }
 
@@ -318,22 +334,85 @@ export function completeCursorRequest(requestId: string, codeChanges: CodeChange
 export function failCursorRequest(requestId: string, error: string): void {
   const request = pendingRequests.get(requestId);
   if (request) {
+    // In-memory request - reject directly
     pendingRequests.delete(requestId);
     removeRequestFromFile(requestId);
     request.reject(new Error(error));
+  } else {
+    // File-based request - write error completion file
+    try {
+      const completedDir = getCompletedRequestsDir();
+      if (!fs.existsSync(completedDir)) {
+        fs.mkdirSync(completedDir, { recursive: true });
+      }
+      const completionFile = path.join(completedDir, `${requestId}.json`);
+      fs.writeFileSync(completionFile, JSON.stringify({ error }, null, 2));
+      removeRequestFromFile(requestId);
+    } catch (writeError) {
+      console.error(`[CursorProvider] Error writing error completion file for ${requestId}:`, writeError);
+    }
   }
+}
+
+/**
+ * Read pending requests from file (for cross-process access)
+ */
+function readPendingRequestsFromFile(): Array<DirectRequest> {
+  try {
+    const pendingFile = getPendingRequestsFile();
+    if (!fs.existsSync(pendingFile)) {
+      return [];
+    }
+
+    const fileContent = fs.readFileSync(pendingFile, 'utf-8');
+    if (!fileContent || fileContent.trim().length === 0) {
+      return [];
+    }
+
+    const data = JSON.parse(fileContent);
+
+    // File format is an array of requests (from writePendingRequestsToFile)
+    if (Array.isArray(data)) {
+      return data.map((req: any) => ({
+        id: req.id,
+        prompt: req.prompt || '', // May not be in file, will need to get from request
+        task: req.task,
+        model: req.model || req.agent || getCursorModel(),
+        codebaseContext: req.codebaseContext,
+        resolve: () => {}, // No-op for file-based requests
+        reject: () => {}, // No-op for file-based requests
+        timestamp: req.timestamp || Date.now(),
+      }));
+    }
+  } catch (error) {
+    // Ignore file read errors
+  }
+  return [];
 }
 
 /**
  * Get list of pending requests
  * Used by Cursor agent to discover requests that need processing
+ * Checks both in-memory Map and file system for cross-process compatibility
  */
 export function getPendingRequests(): Array<{ id: string; task: { title: string }; timestamp: number }> {
-  return Array.from(pendingRequests.values()).map(req => ({
+  // Get from in-memory Map first
+  const inMemoryRequests = Array.from(pendingRequests.values()).map(req => ({
     id: req.id,
     task: { title: req.task.title },
     timestamp: req.timestamp,
   }));
+
+  // Also check file system for requests from other processes
+  const fileRequests = readPendingRequestsFromFile()
+    .filter(req => !pendingRequests.has(req.id)) // Don't duplicate in-memory requests
+    .map(req => ({
+      id: req.id,
+      task: { title: req.task.title },
+      timestamp: req.timestamp,
+    }));
+
+  return [...inMemoryRequests, ...fileRequests];
 }
 
 export function registerCursorAITools(mcp: FastMCPType): void {
@@ -365,7 +444,14 @@ export function registerCursorAITools(mcp: FastMCPType): void {
       requestId: z.string().describe('Request ID from the pending request (use cursor_list_pending_requests to find pending requests)'),
     }),
     execute: async (args: { requestId: string }, context: any) => {
-      const request = pendingRequests.get(args.requestId);
+      // Check in-memory Map first
+      let request = pendingRequests.get(args.requestId);
+
+      // If not in memory, try reading from file (cross-process access)
+      if (!request) {
+        const fileRequests = readPendingRequestsFromFile();
+        request = fileRequests.find(req => req.id === args.requestId);
+      }
 
       if (!request) {
         return JSON.stringify({
