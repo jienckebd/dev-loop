@@ -17,6 +17,11 @@ import { CodeContextProvider } from './code-context-provider';
 import { ValidationGate } from './validation-gate';
 import { PatternLearningSystem } from './pattern-learner';
 import { DebugMetrics } from './debug-metrics';
+import { PrdMetrics } from './prd-metrics';
+import { PhaseMetrics } from './phase-metrics';
+import { PrdMetadata } from './hierarchical-metrics';
+import { FeatureTracker } from './feature-tracker';
+import { SchemaTracker } from './schema-tracker';
 import { logger } from './logger';
 import { PrdContextManager, PrdContext, Requirement } from './prd-context';
 import { PrdParser } from './prd-parser';
@@ -53,6 +58,10 @@ export class WorkflowEngine {
   private validationGate: ValidationGate;
   private patternLearner: PatternLearningSystem;
   private debugMetrics?: DebugMetrics;
+  private prdMetrics?: PrdMetrics;
+  private phaseMetrics?: PhaseMetrics;
+  private featureTracker?: FeatureTracker;
+  private schemaTracker?: SchemaTracker;
   private observationTracker?: any; // ObservationTracker
   private improvementSuggester?: any; // ImprovementSuggester
   private frameworkPatternLibrary?: any; // FrameworkPatternLibrary
@@ -147,6 +156,16 @@ export class WorkflowEngine {
       const metricsPath = (config as any).metrics?.path || '.devloop/metrics.json';
       this.debugMetrics = new DebugMetrics(metricsPath);
     }
+
+    // Initialize hierarchical metrics
+    const prdMetricsPath = (config as any).metrics?.prdMetricsPath || '.devloop/prd-metrics.json';
+    const phaseMetricsPath = (config as any).metrics?.phaseMetricsPath || '.devloop/phase-metrics.json';
+    const featureMetricsPath = (config as any).metrics?.featureMetricsPath || '.devloop/feature-metrics.json';
+    const schemaMetricsPath = (config as any).metrics?.schemaMetricsPath || '.devloop/schema-metrics.json';
+    this.prdMetrics = new PrdMetrics(prdMetricsPath);
+    this.phaseMetrics = new PhaseMetrics(phaseMetricsPath);
+    this.featureTracker = new FeatureTracker(featureMetricsPath);
+    this.schemaTracker = new SchemaTracker(schemaMetricsPath);
 
     // Initialize observation tracking if enabled (for evolution mode)
     if ((config as any).evolution?.enabled !== false) {
@@ -1038,18 +1057,18 @@ export class WorkflowEngine {
           const fileName = file.split('/').pop() || file;
           const baseName = fileName.replace(/\.[^.]*$/, ''); // Remove extension
           // Check if test output mentions this file or its base name
-          return testResult.output.includes(fileName) || 
+          return testResult.output.includes(fileName) ||
                  testResult.output.includes(baseName) ||
                  testResult.output.includes(file.replace(/^.*\//, '')); // Just the filename part
         });
-        
+
         // Also check if failure is from a test file that was created/modified
         const testFileRelatesToTask = modifiedFiles.some((file: string) => {
           return file.includes('test') || file.includes('spec');
         });
-        
+
         relevantTestFailure = failureRelatesToTask || testFileRelatesToTask;
-        
+
         // If no modified files or failure doesn't relate, it's likely a pre-existing failure
         if (modifiedFiles.length > 0 && !relevantTestFailure) {
           console.log(`[WorkflowEngine] Test failure appears unrelated to task (no mention of modified files). Ignoring.`);
@@ -2628,6 +2647,37 @@ export class WorkflowEngine {
     const prdConfigOverlay = await configParser.parsePrdConfig(prdPath);
     const prdMetadata = await configParser.parsePrdMetadata(prdPath);
 
+    // Extract PRD ID and version for metrics tracking
+    const prdId = prdMetadata?.prd?.id || path.basename(prdPath, path.extname(prdPath));
+    const prdVersion = prdMetadata?.prd?.version || '1.0.0';
+    const prdSetId = (prdMetadata as any)?.prdSetId;
+
+    // Start PRD metrics tracking
+    if (this.prdMetrics && prdMetadata) {
+      const prdMetadataForMetrics: PrdMetadata = {
+        prdId,
+        prdVersion,
+        prdPath,
+        phases: prdMetadata.requirements?.phases?.map((p: any, idx: number) => ({
+          id: p.id || idx + 1,
+          name: p.name || `Phase ${p.id || idx + 1}`,
+        })),
+        features: (prdMetadata as any).features || [],
+      };
+      this.prdMetrics.startPrdExecution(prdId, prdSetId, prdMetadataForMetrics);
+    }
+
+    // Start feature tracking
+    if (this.featureTracker && prdMetadata) {
+      const features = (prdMetadata as any).features || [];
+      this.featureTracker.startPrdTracking(prdId, features);
+    }
+
+    // Start schema tracking
+    if (this.schemaTracker) {
+      this.schemaTracker.startPrdTracking(prdId);
+    }
+
     let effectiveConfig = this.config;
     if (prdConfigOverlay) {
       console.log('[WorkflowEngine] PRD config overlay detected, merging with base config...');
@@ -3011,6 +3061,12 @@ export class WorkflowEngine {
         await contextManager.save(context);
         break;
       }
+    }
+
+    // Complete PRD metrics tracking
+    if (this.prdMetrics) {
+      const finalStatus = context.status === 'complete' ? 'completed' : 'failed';
+      this.prdMetrics.completePrdExecution(prdId, finalStatus);
     }
 
     return {

@@ -8,7 +8,14 @@ import { PrerequisiteValidator } from './prerequisite-validator';
 import { ValidationScriptExecutor } from './validation-script-executor';
 import { PrdSetProgressTracker } from './prd-set-progress-tracker';
 import { PrdSetErrorHandler } from './prd-set-error-handler';
+import { PrdSetMetrics } from './prd-set-metrics';
 import { logger } from './logger';
+
+export interface PrdSetMetadata {
+  setId: string;
+  prdPaths: string[];
+  startTime?: string;
+}
 
 export interface PrdSetExecutionOptions {
   parallel?: boolean;
@@ -35,6 +42,7 @@ export class PrdSetOrchestrator {
   private prerequisiteValidator: PrerequisiteValidator;
   private progressTracker: PrdSetProgressTracker;
   private errorHandler: PrdSetErrorHandler;
+  private prdSetMetrics: PrdSetMetrics;
   private debug: boolean;
 
   constructor(config: Config, debug: boolean = false) {
@@ -47,6 +55,7 @@ export class PrdSetOrchestrator {
     );
     this.progressTracker = new PrdSetProgressTracker(this.coordinator, '.devloop/prd-set-metrics.json', debug);
     this.errorHandler = new PrdSetErrorHandler(this.coordinator, debug);
+    this.prdSetMetrics = new PrdSetMetrics('.devloop/prd-set-metrics.json');
     this.debug = debug;
   }
 
@@ -95,6 +104,14 @@ export class PrdSetOrchestrator {
     // Track start time
     const startTime = new Date();
     result.executionLevels = executionLevels;
+
+    // Start PRD set metrics tracking
+    const prdSetMetadata: PrdSetMetadata = {
+      setId: discoveredSet.setId,
+      prdPaths: discoveredSet.prdSet.prds.map(p => p.path),
+      startTime: startTime.toISOString(),
+    };
+    this.prdSetMetrics.startPrdSetExecution(discoveredSet.setId, prdSetMetadata);
 
     // Execute PRDs level by level
     for (const level of executionLevels) {
@@ -176,6 +193,15 @@ export class PrdSetOrchestrator {
             }
 
             const prdResult = await this.workflowEngine.runAutonomousPrd(prd.path);
+
+            // Record PRD completion in metrics
+            const workflowPrdMetrics = (this.workflowEngine as any).prdMetrics;
+            if (workflowPrdMetrics) {
+              const prdMetricsData = workflowPrdMetrics.getPrdMetrics(prdResult.prdId);
+              if (prdMetricsData) {
+                this.prdSetMetrics.recordPrdCompletion(prdId, prdMetricsData);
+              }
+            }
 
             if (prdResult.status === 'complete') {
               await this.coordinator.updatePrdState(prdId, {
@@ -259,6 +285,11 @@ export class PrdSetOrchestrator {
     } else {
       result.status = 'blocked';
     }
+
+    // Complete PRD set metrics tracking
+    const finalStatus = result.status === 'complete' ? 'completed' :
+                       result.status === 'failed' ? 'failed' : 'blocked';
+    this.prdSetMetrics.completePrdSetExecution(discoveredSet.setId, finalStatus);
 
     return result;
   }

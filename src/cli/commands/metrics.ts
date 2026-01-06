@@ -2,6 +2,12 @@ import chalk from 'chalk';
 import * as path from 'path';
 import { loadConfig } from '../../config/loader';
 import { DebugMetrics } from '../../core/debug-metrics';
+import { PrdSetMetrics } from '../../core/prd-set-metrics';
+import { PrdMetrics } from '../../core/prd-metrics';
+import { PhaseMetrics } from '../../core/phase-metrics';
+import { FeatureTracker } from '../../core/feature-tracker';
+import { SchemaTracker } from '../../core/schema-tracker';
+import { CostCalculator } from '../../core/cost-calculator';
 
 export async function metricsCommand(options: {
   config?: string;
@@ -10,9 +16,64 @@ export async function metricsCommand(options: {
   summary?: boolean;
   json?: boolean;
   clear?: boolean;
+  prdSet?: string;
+  prd?: string;
+  phase?: string; // Format: "prdId:phaseId"
+  compare?: string; // Format: "id1:id2"
+  trends?: boolean;
+  features?: boolean;
+  schema?: boolean;
 }): Promise<void> {
   try {
     const config = await loadConfig(options.config);
+
+    // Handle hierarchical metrics
+    if (options.prdSet) {
+      await showPrdSetMetrics(options.prdSet, options.json);
+      return;
+    }
+
+    if (options.prd) {
+      await showPrdMetrics(options.prd, options.json);
+      return;
+    }
+
+    if (options.phase) {
+      const [prdId, phaseId] = options.phase.split(':');
+      if (!prdId || !phaseId) {
+        console.error(chalk.red('Phase format must be "prdId:phaseId"'));
+        process.exit(1);
+      }
+      await showPhaseMetrics(prdId, parseInt(phaseId, 10), options.json);
+      return;
+    }
+
+    if (options.compare) {
+      const [id1, id2] = options.compare.split(':');
+      if (!id1 || !id2) {
+        console.error(chalk.red('Compare format must be "id1:id2"'));
+        process.exit(1);
+      }
+      await compareMetrics(id1, id2, options.json);
+      return;
+    }
+
+    if (options.trends) {
+      await showTrends(options.json);
+      return;
+    }
+
+    if (options.features) {
+      await showFeatureMetrics(options.json);
+      return;
+    }
+
+    if (options.schema) {
+      await showSchemaMetrics(options.json);
+      return;
+    }
+
+    // Original metrics command
     const metricsPath = (config as any).metrics?.path || '.devloop/metrics.json';
     const metrics = new DebugMetrics(metricsPath);
 
@@ -152,4 +213,157 @@ function formatDuration(ms: number): string {
   if (ms < 1000) return `${ms.toFixed(0)}ms`;
   if (ms < 60000) return `${(ms / 1000).toFixed(1)}s`;
   return `${(ms / 60000).toFixed(1)}m`;
+}
+
+// Hierarchical metrics display functions
+async function showPrdSetMetrics(setId: string, json: boolean = false): Promise<void> {
+  const prdSetMetrics = new PrdSetMetrics();
+  const metrics = prdSetMetrics.getPrdSetMetrics(setId);
+
+  if (!metrics) {
+    console.error(chalk.red(`PRD Set metrics not found: ${setId}`));
+    process.exit(1);
+  }
+
+  if (json) {
+    console.log(JSON.stringify(metrics, null, 2));
+    return;
+  }
+
+  console.log(chalk.cyan.bold(`📊 PRD Set Metrics: ${setId}`));
+  console.log(chalk.gray('='.repeat(60)));
+  console.log(`Status: ${metrics.status}`);
+  console.log(`Duration: ${metrics.duration ? formatDuration(metrics.duration) : 'N/A'}`);
+  console.log(`PRDs: ${metrics.prds.completed}/${metrics.prds.total} completed (${(metrics.prds.successRate * 100).toFixed(1)}% success)`);
+  console.log(`Tests: ${metrics.tests.passing}/${metrics.tests.total} passing (${(metrics.tests.passRate * 100).toFixed(1)}% pass rate)`);
+  if (metrics.tokens.totalCost) {
+    console.log(`Cost: ${CostCalculator.formatCost(metrics.tokens.totalCost)}`);
+  }
+}
+
+async function showPrdMetrics(prdId: string, json: boolean = false): Promise<void> {
+  const prdMetrics = new PrdMetrics();
+  const metrics = prdMetrics.getPrdMetrics(prdId);
+
+  if (!metrics) {
+    console.error(chalk.red(`PRD metrics not found: ${prdId}`));
+    process.exit(1);
+  }
+
+  if (json) {
+    console.log(JSON.stringify(metrics, null, 2));
+    return;
+  }
+
+  console.log(chalk.cyan.bold(`📊 PRD Metrics: ${prdId}`));
+  console.log(chalk.gray('='.repeat(60)));
+  console.log(`Status: ${metrics.status}`);
+  console.log(`Duration: ${metrics.duration ? formatDuration(metrics.duration) : 'N/A'}`);
+  console.log(`Phases: ${metrics.phases.completed}/${metrics.phases.total} completed`);
+  console.log(`Tasks: ${metrics.tasks.completed}/${metrics.tasks.total} completed`);
+  console.log(`Tests: ${metrics.tests.passing}/${metrics.tests.total} passing`);
+  if (metrics.tokens.totalCost) {
+    console.log(`Cost: ${CostCalculator.formatCost(metrics.tokens.totalCost)}`);
+  }
+}
+
+async function showPhaseMetrics(prdId: string, phaseId: number, json: boolean = false): Promise<void> {
+  const phaseMetrics = new PhaseMetrics();
+  const metrics = phaseMetrics.getPhaseMetrics(phaseId, prdId);
+
+  if (!metrics) {
+    console.error(chalk.red(`Phase metrics not found: ${prdId}-${phaseId}`));
+    process.exit(1);
+  }
+
+  if (json) {
+    console.log(JSON.stringify(metrics, null, 2));
+    return;
+  }
+
+  console.log(chalk.cyan.bold(`📊 Phase Metrics: ${metrics.phaseName} (${prdId})`));
+  console.log(chalk.gray('='.repeat(60)));
+  console.log(`Status: ${metrics.status}`);
+  console.log(`Duration: ${metrics.duration ? formatDuration(metrics.duration) : 'N/A'}`);
+  console.log(`Tasks: ${metrics.tasks.completed}/${metrics.tasks.total} completed`);
+  console.log(`Tests: ${metrics.tests.passing}/${metrics.tests.failing} passing/failing`);
+}
+
+async function compareMetrics(id1: string, id2: string, json: boolean = false): Promise<void> {
+  // Try PRD set first, then PRD
+  const prdSetMetrics = new PrdSetMetrics();
+  const prdMetrics = new PrdMetrics();
+
+  const set1 = prdSetMetrics.getPrdSetMetrics(id1);
+  const set2 = prdSetMetrics.getPrdSetMetrics(id2);
+  const prd1 = prdMetrics.getPrdMetrics(id1);
+  const prd2 = prdMetrics.getPrdMetrics(id2);
+
+  if (!set1 && !prd1) {
+    console.error(chalk.red(`Metrics not found for: ${id1}`));
+    process.exit(1);
+  }
+  if (!set2 && !prd2) {
+    console.error(chalk.red(`Metrics not found for: ${id2}`));
+    process.exit(1);
+  }
+
+  if (json) {
+    console.log(JSON.stringify({ id1: set1 || prd1, id2: set2 || prd2 }, null, 2));
+    return;
+  }
+
+  console.log(chalk.cyan.bold('📊 Metrics Comparison'));
+  console.log(chalk.gray('='.repeat(60)));
+  // Simplified comparison - in production, add detailed comparison table
+  console.log(`Comparing ${id1} vs ${id2}`);
+}
+
+async function showTrends(json: boolean = false): Promise<void> {
+  const prdMetrics = new PrdMetrics();
+  const allMetrics = prdMetrics.getAllPrdMetrics();
+
+  if (json) {
+    console.log(JSON.stringify(allMetrics, null, 2));
+    return;
+  }
+
+  console.log(chalk.cyan.bold('📊 Trends Over Time'));
+  console.log(chalk.gray('='.repeat(60)));
+  console.log(`Total PRDs executed: ${allMetrics.length}`);
+  // In production, add trend analysis
+}
+
+async function showFeatureMetrics(json: boolean = false): Promise<void> {
+  const featureTracker = new FeatureTracker();
+  const allMetrics = featureTracker.getAllFeatureMetrics();
+
+  if (json) {
+    console.log(JSON.stringify(allMetrics, null, 2));
+    return;
+  }
+
+  console.log(chalk.cyan.bold('📊 Feature Usage Metrics'));
+  console.log(chalk.gray('='.repeat(60)));
+  const mostUsed = featureTracker.getMostUsedFeatures(10);
+  for (const feature of mostUsed) {
+    const successRate = feature.usageCount > 0 ? (feature.successCount / feature.usageCount * 100).toFixed(1) : '0';
+    console.log(`${feature.featureName}: ${feature.usageCount} uses, ${successRate}% success`);
+  }
+}
+
+async function showSchemaMetrics(json: boolean = false): Promise<void> {
+  const schemaTracker = new SchemaTracker();
+  const metrics = schemaTracker.getMetrics();
+
+  if (json) {
+    console.log(JSON.stringify(metrics, null, 2));
+    return;
+  }
+
+  console.log(chalk.cyan.bold('📊 Schema Operation Metrics'));
+  console.log(chalk.gray('='.repeat(60)));
+  console.log(`Total Operations: ${metrics.totalOperations}`);
+  console.log(`Success Rate: ${(metrics.successRate * 100).toFixed(1)}%`);
+  console.log(`Average Duration: ${formatDuration(metrics.avgDuration)}`);
 }

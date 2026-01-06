@@ -20,6 +20,7 @@ Complete user guide for dev-loop - the autonomous development orchestrator that 
 - [Quick Start](#quick-start)
 - [Configuration](#configuration)
 - [CLI Reference](#cli-reference)
+- [Metrics and Reporting](#metrics-and-reporting)
 - [MCP Integration](#mcp-integration)
 - [Architecture](#architecture)
 - [Framework Plugins](#framework-plugins)
@@ -91,7 +92,29 @@ module.exports = {
     tasksPath: '.taskmaster/tasks/tasks.json',
   },
   debug: false,
-  metrics: { enabled: true, path: '.devloop/metrics.json' },
+  metrics: {
+    enabled: true,
+    path: '.devloop/metrics.json',
+    prdSetMetricsPath: '.devloop/prd-set-metrics.json',
+    prdMetricsPath: '.devloop/prd-metrics.json',
+    phaseMetricsPath: '.devloop/phase-metrics.json',
+    featureMetricsPath: '.devloop/feature-metrics.json',
+    schemaMetricsPath: '.devloop/schema-metrics.json',
+    observationMetricsPath: '.devloop/observation-metrics.json',
+    patternMetricsPath: '.devloop/pattern-metrics.json',
+    testResultsPath: '.devloop/test-results',
+    reportsPath: '.devloop/reports',
+    costTracking: {
+      enabled: true,
+      provider: 'anthropic',
+    },
+  },
+  archive: {
+    enabled: true,
+    defaultPath: '.devloop/archive',
+    compress: false,
+    preserveStructure: true,
+  },
   patternLearning: { enabled: true, patternsPath: '.devloop/patterns.json' },
 };
 ```
@@ -129,6 +152,22 @@ module.exports = {
 | `dev-loop metrics [--summary]` | Debug metrics |
 | `dev-loop validate` | Check config/environment |
 | `dev-loop validate-prd <prd-path>` | Validate PRD frontmatter |
+
+### Metrics and Reporting Commands
+
+| Command | Description |
+|---------|-------------|
+| `dev-loop metrics [--prd-set <id>] [--prd <id>] [--phase <prdId:phaseId>]` | View hierarchical metrics |
+| `dev-loop metrics --compare <id1>:<id2>` | Compare two PRDs or PRD sets |
+| `dev-loop metrics --trends` | Show trends over time |
+| `dev-loop metrics --features` | Show feature usage metrics |
+| `dev-loop metrics --schema` | Show schema operation metrics |
+| `dev-loop report [--prd <id>] [--prd-set <id>] [--phase <prdId:phaseId>]` | Generate execution reports |
+| `dev-loop report --latest` | Generate report for most recent PRD |
+| `dev-loop report --all` | Generate reports for all PRDs |
+| `dev-loop archive [--prd-name <name>] [--compress]` | Archive state files |
+
+See [METRICS.md](./METRICS.md) for detailed metrics guide, [REPORTS.md](./REPORTS.md) for report generation, and [ARCHIVE.md](./ARCHIVE.md) for archiving.
 
 ### Code Quality & AI Commands
 
@@ -389,6 +428,27 @@ project/
 | Form not advancing | Wait for button text/URL change |
 | Flaky tests | Add explicit waits, retry logic |
 | PRD validation errors | Check frontmatter against schema |
+
+## Metrics and Reporting
+
+Dev-loop collects comprehensive metrics at multiple hierarchical levels (PRD Set → PRD → Phase → Task) and generates detailed execution reports.
+
+### Key Features
+
+- **Hierarchical Metrics**: Track metrics at PRD Set, PRD, Phase, and Task levels
+- **Cost Tracking**: Automatic cost calculation based on provider and token usage
+- **Feature Tracking**: Monitor which PRD features are used and their performance
+- **Schema Tracking**: Track schema operations (create, update, delete, validate, parse)
+- **Test Results**: Track test pass/fail rates and identify flaky tests
+- **Error Analysis**: Categorize errors and identify common patterns
+- **Reports**: Generate comprehensive reports in JSON, Markdown, or HTML formats
+- **Archive**: Archive state files for long-term storage
+
+### Documentation
+
+- **[METRICS.md](./METRICS.md)** - Comprehensive metrics guide with CLI commands
+- **[REPORTS.md](./REPORTS.md)** - Report generation guide
+- **[ARCHIVE.md](./ARCHIVE.md)** - Archive command guide
 
 ## See Also
 

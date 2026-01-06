@@ -29,6 +29,8 @@ import { prdSetExecuteCommand, prdSetStatusCommand, prdSetListCommand, prdSetVal
 import { scanCommand } from './cli/commands/scan';
 import { recommendCommand } from './cli/commands/recommend';
 import { feedbackCommand } from './cli/commands/feedback';
+import { archiveCommand } from './cli/commands/archive';
+import { reportCommand } from './cli/commands/report';
 
 const program = new Command();
 
@@ -93,6 +95,13 @@ program
   .option('--summary', 'Show summary only')
   .option('--json', 'Output as JSON')
   .option('--clear', 'Clear all metrics')
+  .option('--prd-set <id>', 'Show metrics for PRD set')
+  .option('--prd <id>', 'Show metrics for PRD')
+  .option('--phase <prdId:phaseId>', 'Show metrics for phase (format: prdId:phaseId)')
+  .option('--compare <id1:id2>', 'Compare two PRDs or PRD sets (format: id1:id2)')
+  .option('--trends', 'Show trends over time')
+  .option('--features', 'Show feature usage metrics')
+  .option('--schema', 'Show schema operation metrics')
   .action(metricsCommand);
 
 program
@@ -456,6 +465,48 @@ program
       notes: options.notes,
       implementation: options.implementation,
       config: options.config,
+    });
+  });
+
+program
+  .command('archive')
+  .description('Archive Task Master and dev-loop JSON state files')
+  .option('-c, --config <path>', 'Path to config file', 'devloop.config.js')
+  .option('--prd-name <name>', 'PRD name for archive directory (default: "default")')
+  .option('--archive-path <path>', 'Custom archive path (default: .devloop/archive)')
+  .option('--compress', 'Compress archive as .tar.gz')
+  .action(async (options) => {
+    await archiveCommand({
+      config: options.config,
+      prdName: options.prdName,
+      archivePath: options.archivePath,
+      compress: options.compress,
+    });
+  });
+
+program
+  .command('report')
+  .description('Generate comprehensive execution reports')
+  .option('-c, --config <path>', 'Path to config file', 'devloop.config.js')
+  .option('--prd <id>', 'Generate report for PRD')
+  .option('--prd-set <id>', 'Generate report for PRD set')
+  .option('--phase <prdId:phaseId>', 'Generate report for phase (format: prdId:phaseId)')
+  .option('--latest', 'Generate report for most recent PRD')
+  .option('--all', 'Generate reports for all PRDs')
+  .option('--format <format>', 'Report format: json, markdown, html', 'markdown')
+  .option('--output <path>', 'Output file path')
+  .option('--compare <id>', 'Compare with another PRD/PRD set')
+  .action(async (options) => {
+    await reportCommand({
+      config: options.config,
+      prd: options.prd,
+      prdSet: options.prdSet,
+      phase: options.phase,
+      latest: options.latest,
+      all: options.all,
+      format: options.format as 'json' | 'markdown' | 'html',
+      output: options.output,
+      compare: options.compare,
     });
   });
 

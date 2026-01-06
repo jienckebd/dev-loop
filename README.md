@@ -24,6 +24,8 @@ Autonomous development orchestrator that transforms PRDs into validated code thr
 
 **For Users:** See [`docs/users/README.md`](docs/users/README.md) - Complete user documentation, CLI reference, and configuration guide.
 
+**Metrics & Reporting:** See [`docs/users/METRICS.md`](docs/users/METRICS.md), [`docs/users/REPORTS.md`](docs/users/REPORTS.md), and [`docs/users/ARCHIVE.md`](docs/users/ARCHIVE.md) - Comprehensive guides for metrics, reports, and archiving.
+
 **For AI Agents:** See [`docs/ai/README.md`](docs/ai/README.md) - AI agent onboarding guide for creating PRDs and leveraging dev-loop features.
 
 **For Contributors:** See [`docs/contributing/README.md`](docs/contributing/README.md) - Contribution guide, architecture, and development workflow.
@@ -237,6 +239,22 @@ module.exports = {
 | `task-master add-task --prompt="..."` | Add single task |
 | `task-master set-status --id=<id> --status=done` | Update status |
 
+### Metrics and Reporting Commands
+
+| Command | Description |
+|---------|-------------|
+| `dev-loop metrics [--prd-set <id>] [--prd <id>] [--phase <prdId:phaseId>]` | View hierarchical metrics |
+| `dev-loop metrics --compare <id1>:<id2>` | Compare two PRDs or PRD sets |
+| `dev-loop metrics --trends` | Show trends over time |
+| `dev-loop metrics --features` | Show feature usage metrics |
+| `dev-loop metrics --schema` | Show schema operation metrics |
+| `dev-loop report [--prd <id>] [--prd-set <id>] [--phase <prdId:phaseId>]` | Generate execution reports |
+| `dev-loop report --latest` | Generate report for most recent PRD |
+| `dev-loop report --all` | Generate reports for all PRDs |
+| `dev-loop archive [--prd-name <name>] [--compress]` | Archive state files |
+
+See [`docs/users/METRICS.md`](docs/users/METRICS.md), [`docs/users/REPORTS.md`](docs/users/REPORTS.md), and [`docs/users/ARCHIVE.md`](docs/users/ARCHIVE.md) for detailed guides.
+
 ### Debugging Commands
 
 | Command | Description |
@@ -244,7 +262,7 @@ module.exports = {
 | `dev-loop diagnose [<id>]` | Analyze failures |
 | `dev-loop trace <id>` | Execution trace |
 | `dev-loop logs [--follow]` | View logs |
-| `dev-loop metrics [--summary]` | Debug metrics |
+| `dev-loop metrics [--summary]` | Debug metrics (task-level) |
 | `dev-loop validate` | Check config/environment |
 | `dev-loop validate-prd <prd-path>` | Validate PRD frontmatter against schema |
 
