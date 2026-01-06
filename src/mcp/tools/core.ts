@@ -153,7 +153,7 @@ export function registerCoreTools(mcp: FastMCPType, getConfig: ConfigLoader): vo
       }
 
       // Check for PRD config overlay
-      const { PrdConfigParser } = await import('../../core/prd-config-parser');
+      const { PrdConfigParser } = await import('../../core/prd-config-parser.js');
       const configParser = new PrdConfigParser(args.debug || false);
       const prdConfigOverlay = await configParser.parsePrdConfig(args.prdPath);
       const prdConfigInfo = prdConfigOverlay
@@ -166,7 +166,7 @@ export function registerCoreTools(mcp: FastMCPType, getConfig: ConfigLoader): vo
           };
 
       // Import the PRD command handler
-      const { prdCommand } = await import('../../cli/commands/prd');
+      const { prdCommand } = await import('../../cli/commands/prd.js');
 
       try {
         await prdCommand({
@@ -203,7 +203,7 @@ export function registerCoreTools(mcp: FastMCPType, getConfig: ConfigLoader): vo
       maxConcurrent: z.number().optional().describe('Maximum concurrent PRD executions'),
     }),
     execute: async (args: { path: string; config?: string; debug?: boolean; parallel?: boolean; maxConcurrent?: number }, context: any) => {
-      const { prdSetExecuteCommand } = await import('../../cli/commands/prd-set');
+      const { prdSetExecuteCommand } = await import('../../cli/commands/prd-set.js');
 
       try {
         await prdSetExecuteCommand({
@@ -236,7 +236,7 @@ export function registerCoreTools(mcp: FastMCPType, getConfig: ConfigLoader): vo
       debug: z.boolean().optional().describe('Enable debug mode'),
     }),
     execute: async (args: { path: string; debug?: boolean }, context: any) => {
-      const { prdSetStatusCommand } = await import('../../cli/commands/prd-set');
+      const { prdSetStatusCommand } = await import('../../cli/commands/prd-set.js');
 
       try {
         await prdSetStatusCommand({
@@ -266,7 +266,7 @@ export function registerCoreTools(mcp: FastMCPType, getConfig: ConfigLoader): vo
       debug: z.boolean().optional().describe('Enable debug mode'),
     }),
     execute: async (args: { planningDir?: string; debug?: boolean }, context: any) => {
-      const { prdSetListCommand } = await import('../../cli/commands/prd-set');
+      const { prdSetListCommand } = await import('../../cli/commands/prd-set.js');
 
       try {
         await prdSetListCommand({
@@ -296,7 +296,7 @@ export function registerCoreTools(mcp: FastMCPType, getConfig: ConfigLoader): vo
       debug: z.boolean().optional().describe('Enable debug mode'),
     }),
     execute: async (args: { path: string; debug?: boolean }, context: any) => {
-      const { prdSetValidateCommand } = await import('../../cli/commands/prd-set');
+      const { prdSetValidateCommand } = await import('../../cli/commands/prd-set.js');
 
       try {
         await prdSetValidateCommand({

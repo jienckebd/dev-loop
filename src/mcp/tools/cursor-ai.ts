@@ -1,67 +1,293 @@
 /**
  * Cursor AI Tools for MCP
  *
- * Tools that allow dev-loop to use Cursor's AI capabilities via file-based communication
+ * Tools that allow dev-loop to use Cursor's AI capabilities via direct MCP invocation
  */
 
 import { z } from 'zod';
+import { FastMCPType } from './index';
+import { CodeChanges } from '../../types';
 import * as fs from 'fs';
 import * as path from 'path';
-import { FastMCPType } from './index';
 
-const REQUESTS_DIR = path.join(process.cwd(), '.cursor-ai-requests');
-const RESPONSES_DIR = path.join(process.cwd(), '.cursor-ai-responses');
-
-// Ensure directories exist
-if (!fs.existsSync(REQUESTS_DIR)) {
-  fs.mkdirSync(REQUESTS_DIR, { recursive: true });
+// In-memory request/response queue for direct invocation
+interface DirectRequest {
+  id: string;
+  prompt: string;
+  task: {
+    id: string;
+    title: string;
+    description: string;
+  };
+  model: string;
+  codebaseContext?: string;
+  resolve: (result: CodeChanges) => void;
+  reject: (error: Error) => void;
+  timestamp: number;
 }
-if (!fs.existsSync(RESPONSES_DIR)) {
-  fs.mkdirSync(RESPONSES_DIR, { recursive: true });
+
+// Map of request ID to pending request
+const pendingRequests = new Map<string, DirectRequest>();
+
+// Maximum wait time for direct requests (2 minutes)
+const MAX_WAIT_TIME = 120000;
+
+// Configurable path for Cursor AI files (can be set via setCursorAIPath or config)
+let cursorAIPath: string | null = null;
+
+/**
+ * Get the Cursor AI directory path (lazy-loaded from config or default)
+ */
+function getCursorAIDir(): string {
+  if (cursorAIPath) {
+    return path.join(process.cwd(), cursorAIPath);
+  }
+  
+  // Try to load from config file
+  try {
+    const configPath = path.join(process.cwd(), 'devloop.config.js');
+    if (fs.existsSync(configPath)) {
+      // Use require for CommonJS config
+      delete require.cache[require.resolve(configPath)];
+      const config = require(configPath);
+      if (config?.cursor?.requestsPath) {
+        const configuredPath = config.cursor.requestsPath as string;
+        cursorAIPath = configuredPath;
+        return path.join(process.cwd(), configuredPath);
+      }
+    }
+  } catch (error) {
+    // Config loading failed, use default
+  }
+  
+  // Default path
+  return path.join(process.cwd(), 'files-private', 'cursor');
+}
+
+/**
+ * Set the Cursor AI path programmatically
+ */
+export function setCursorAIPath(relativePath: string): void {
+  cursorAIPath = relativePath;
+}
+
+/**
+ * Get the pending requests file path
+ */
+function getPendingRequestsFile(): string {
+  return path.join(getCursorAIDir(), 'pending-requests.json');
+}
+
+/**
+ * Get the completed requests directory path
+ */
+function getCompletedRequestsDir(): string {
+  return path.join(getCursorAIDir(), 'completed');
+}
+
+/**
+ * Ensure the cursor AI directory exists
+ */
+function ensureCursorAIDir(): void {
+  try {
+    const cursorDir = getCursorAIDir();
+    const completedDir = getCompletedRequestsDir();
+    if (!fs.existsSync(cursorDir)) {
+      fs.mkdirSync(cursorDir, { recursive: true });
+    }
+    if (!fs.existsSync(completedDir)) {
+      fs.mkdirSync(completedDir, { recursive: true });
+    }
+  } catch (error) {
+    // Ignore directory creation errors
+  }
+}
+
+/**
+ * Write pending requests to file for external access
+ */
+function writePendingRequestsToFile(): void {
+  try {
+    ensureCursorAIDir();
+    const requests = Array.from(pendingRequests.values()).map(req => ({
+      id: req.id,
+      task: req.task,
+      model: req.model,
+      timestamp: req.timestamp,
+      // Don't include resolve/reject functions
+    }));
+    fs.writeFileSync(getPendingRequestsFile(), JSON.stringify(requests, null, 2));
+  } catch (error) {
+    // Ignore file write errors
+  }
+}
+
+/**
+ * Remove request from file when completed
+ */
+function removeRequestFromFile(requestId: string): void {
+  try {
+    const pendingFile = getPendingRequestsFile();
+    if (fs.existsSync(pendingFile)) {
+      const content = fs.readFileSync(pendingFile, 'utf-8');
+      const requests = JSON.parse(content);
+      const filtered = requests.filter((r: any) => r.id !== requestId);
+      if (filtered.length === 0) {
+        fs.unlinkSync(pendingFile);
+      } else {
+        fs.writeFileSync(pendingFile, JSON.stringify(filtered, null, 2));
+      }
+    }
+  } catch (error) {
+    // Ignore file errors
+  }
+}
+
+/**
+ * Direct execution function for code generation
+ * Can be called directly by CursorProvider without going through MCP protocol
+ */
+export async function executeCursorGenerateCode(
+  prompt: string,
+  task: { id: string; title: string; description: string },
+  model: string = 'auto',
+  codebaseContext?: string
+): Promise<CodeChanges> {
+  const requestId = `req-${Date.now()}-${Math.random().toString(36).substring(7)}`;
+
+  return new Promise<CodeChanges>((resolve, reject) => {
+    // Store the request in memory
+    const request: DirectRequest = {
+      id: requestId,
+      prompt,
+      task,
+      model,
+      codebaseContext,
+      resolve,
+      reject,
+      timestamp: Date.now(),
+    };
+
+    pendingRequests.set(requestId, request);
+    writePendingRequestsToFile(); // Write to file for external access
+
+    // Poll for file-based completion (fallback mechanism)
+    const pollInterval = setInterval(() => {
+      try {
+        const completedDir = getCompletedRequestsDir();
+        if (!fs.existsSync(completedDir)) {
+          fs.mkdirSync(completedDir, { recursive: true });
+        }
+        const completionFile = path.join(completedDir, `${requestId}.json`);
+        if (fs.existsSync(completionFile)) {
+          clearInterval(pollInterval);
+          const completion = JSON.parse(fs.readFileSync(completionFile, 'utf-8'));
+          fs.unlinkSync(completionFile);
+          if (completion.error) {
+            pendingRequests.delete(requestId);
+            removeRequestFromFile(requestId);
+            reject(new Error(completion.error));
+          } else {
+            pendingRequests.delete(requestId);
+            removeRequestFromFile(requestId);
+            request.resolve(completion.codeChanges);
+          }
+        }
+      } catch (error) {
+        // Ignore polling errors
+      }
+    }, 1000); // Poll every second
+
+    // Set timeout to clean up stale requests
+    setTimeout(() => {
+      clearInterval(pollInterval);
+      if (pendingRequests.has(requestId)) {
+        pendingRequests.delete(requestId);
+        removeRequestFromFile(requestId);
+        reject(new Error(`Timeout waiting for Cursor AI to process request ${requestId}`));
+      }
+    }, MAX_WAIT_TIME);
+  });
+}
+
+/**
+ * Complete a pending request with code changes
+ * Called by the MCP tool when Cursor agent processes the request
+ */
+export function completeCursorRequest(requestId: string, codeChanges: CodeChanges): void {
+  const request = pendingRequests.get(requestId);
+  if (request) {
+    pendingRequests.delete(requestId);
+    removeRequestFromFile(requestId);
+    request.resolve(codeChanges);
+  }
+}
+
+/**
+ * Fail a pending request
+ * Called when there's an error processing the request
+ */
+export function failCursorRequest(requestId: string, error: string): void {
+  const request = pendingRequests.get(requestId);
+  if (request) {
+    pendingRequests.delete(requestId);
+    removeRequestFromFile(requestId);
+    request.reject(new Error(error));
+  }
+}
+
+/**
+ * Get list of pending requests
+ * Used by Cursor agent to discover requests that need processing
+ */
+export function getPendingRequests(): Array<{ id: string; task: { title: string }; timestamp: number }> {
+  return Array.from(pendingRequests.values()).map(req => ({
+    id: req.id,
+    task: { title: req.task.title },
+    timestamp: req.timestamp,
+  }));
 }
 
 export function registerCursorAITools(mcp: FastMCPType): void {
-  // Tool: Process AI generation request from file
+  // Tool: List pending requests
+  // Called by Cursor agent to discover requests that need processing
+  mcp.addTool({
+    name: 'cursor_list_pending_requests',
+    description: 'List all pending code generation requests that need to be processed by Cursor AI.',
+    parameters: z.object({}),
+    execute: async () => {
+      const requests = getPendingRequests();
+      return JSON.stringify({
+        success: true,
+        count: requests.length,
+        requests,
+        message: requests.length > 0
+          ? `Found ${requests.length} pending request(s). Call cursor_process_ai_request with a requestId to process one.`
+          : 'No pending requests.',
+      });
+    },
+  });
+
+  // Tool: Process AI generation request (direct invocation)
   // This tool is called by Cursor agent, which has access to Cursor AI
   mcp.addTool({
     name: 'cursor_process_ai_request',
-    description: 'Process an AI code generation request from a file. The Cursor agent calling this tool should use Cursor AI to generate code based on the request, then write the response file.',
+    description: 'Process an AI code generation request. The Cursor agent calling this tool should use Cursor AI to generate code based on the request and return the result directly.',
     parameters: z.object({
-      requestId: z.string().describe('Request ID (filename without .json extension)'),
+      requestId: z.string().describe('Request ID from the pending request (use cursor_list_pending_requests to find pending requests)'),
     }),
     execute: async (args: { requestId: string }, context: any) => {
-      const requestFile = path.join(REQUESTS_DIR, `${args.requestId}.json`);
-      const responseFile = path.join(RESPONSES_DIR, `${args.requestId}.json`);
+      const request = pendingRequests.get(args.requestId);
 
-      // Check if request file exists
-      if (!fs.existsSync(requestFile)) {
+      if (!request) {
         return JSON.stringify({
           success: false,
-          error: `Request file not found: ${requestFile}`,
+          error: `Request not found: ${args.requestId}. Request may have timed out. Use cursor_list_pending_requests to see available requests.`,
         });
       }
 
-      // Read request
-      let request: any;
-      try {
-        const content = fs.readFileSync(requestFile, 'utf-8');
-        request = JSON.parse(content);
-      } catch (error) {
-        return JSON.stringify({
-          success: false,
-          error: `Failed to read/parse request file: ${error instanceof Error ? error.message : String(error)}`,
-        });
-      }
-
-      // Update request status
-      request.status = 'processing';
-      fs.writeFileSync(requestFile, JSON.stringify(request, null, 2));
-
-      // Build instructions for Cursor agent
-      // The agent calling this tool should use Cursor AI to generate code
-      const instructions = {
-        requestId: args.requestId,
-        prompt: `Task: ${request.task.title}
+      // Build prompt for Cursor agent
+      const fullPrompt = `Task: ${request.task.title}
 Description: ${request.task.description}
 
 ${request.codebaseContext ? `Codebase Context:\n${request.codebaseContext}\n` : ''}
@@ -78,25 +304,25 @@ Please generate code changes in JSON format:
     }
   ],
   "summary": "brief summary of changes"
-}`,
-        model: request.model || 'auto',
-        responseFile,
-        note: 'Use Cursor AI to generate code based on the prompt above, then write the response file with the CodeChanges format.',
-      };
+}`;
 
       return JSON.stringify({
         success: true,
-        message: 'Request loaded. Use Cursor AI to generate code and write response file.',
-        instructions,
+        message: 'Request loaded. Use Cursor AI to generate code and call cursor_complete_request with the result.',
+        requestId: args.requestId,
+        prompt: fullPrompt,
+        model: request.model,
+        note: 'After generating code with Cursor AI, call cursor_complete_request with the CodeChanges JSON.',
       });
     },
   });
 
-  // Tool: Generate code directly (simpler approach)
-  // This tool returns instructions for the Cursor agent to use Cursor AI
+  // Tool: Generate code directly (standalone tool for Cursor agent)
+  // This tool creates a pending request that the Cursor agent can complete
+  // Note: This is for standalone use by Cursor agent. CursorProvider uses executeCursorGenerateCode instead.
   mcp.addTool({
     name: 'cursor_generate_code',
-    description: 'Generate code using Cursor AI. The Cursor agent calling this tool should use Cursor AI capabilities to generate code based on the provided prompt and task context.',
+    description: 'Generate code using Cursor AI. Creates a pending request that you should complete by calling cursor_complete_request with the generated code.',
     parameters: z.object({
       prompt: z.string().describe('Code generation prompt'),
       task: z.object({
@@ -108,6 +334,31 @@ Please generate code changes in JSON format:
       codebaseContext: z.string().optional().describe('Codebase context'),
     }),
     execute: async (args: { prompt: string; task: any; model?: string; codebaseContext?: string }, context: any) => {
+      // Create a request ID
+      const requestId = `req-${Date.now()}-${Math.random().toString(36).substring(7)}`;
+
+      // Create a pending request with a no-op resolver (since this is called directly by Cursor agent)
+      // The Cursor agent will call cursor_complete_request which will handle the completion
+      const request: DirectRequest = {
+        id: requestId,
+        prompt: args.prompt,
+        task: args.task,
+        model: args.model || 'auto',
+        codebaseContext: args.codebaseContext,
+        resolve: () => {}, // No-op - completion handled by cursor_complete_request
+        reject: () => {}, // No-op - failure handled by cursor_fail_request
+        timestamp: Date.now(),
+      };
+
+      pendingRequests.set(requestId, request);
+
+      // Set timeout to clean up stale requests
+      setTimeout(() => {
+        if (pendingRequests.has(requestId)) {
+          pendingRequests.delete(requestId);
+        }
+      }, MAX_WAIT_TIME);
+
       const systemPrompt = `You are an expert software developer. Generate code changes based on the task description.
 Model: ${args.model || 'auto'}
 
@@ -130,11 +381,59 @@ Return your response as a JSON object with this structure:
 
       return JSON.stringify({
         success: true,
-        message: 'Use Cursor AI to generate code. The agent calling this tool has access to Cursor AI and should generate the code, then return the CodeChanges format.',
+        message: 'Use Cursor AI to generate code. After generating code, call cursor_complete_request with the requestId and CodeChanges JSON.',
+        requestId,
         systemPrompt,
         userPrompt: args.prompt,
         model: args.model || 'auto',
-        note: 'The calling Cursor agent should use Cursor AI with the prompts above to generate code and return it in CodeChanges format.',
+        note: 'The calling Cursor agent should: 1) Use Cursor AI with the prompts above to generate code, 2) Call cursor_complete_request with requestId and the CodeChanges JSON.',
+      });
+    },
+  });
+
+  // Tool: Complete a request with code changes
+  // Called by Cursor agent after generating code
+  mcp.addTool({
+    name: 'cursor_complete_request',
+    description: 'Complete a code generation request with the generated code changes. Call this after using Cursor AI to generate code.',
+    parameters: z.object({
+      requestId: z.string().describe('Request ID from cursor_generate_code or cursor_process_ai_request'),
+      codeChanges: z.object({
+        files: z.array(z.object({
+          path: z.string(),
+          content: z.string().optional(),
+          patches: z.array(z.object({
+            search: z.string(),
+            replace: z.string(),
+          })).optional(),
+          operation: z.enum(['create', 'update', 'delete', 'patch']),
+        })),
+        summary: z.string(),
+      }).describe('The generated code changes'),
+    }),
+    execute: async (args: { requestId: string; codeChanges: CodeChanges }, context: any) => {
+      completeCursorRequest(args.requestId, args.codeChanges);
+      return JSON.stringify({
+        success: true,
+        message: `Request ${args.requestId} completed successfully with ${args.codeChanges.files.length} file(s).`,
+      });
+    },
+  });
+
+  // Tool: Fail a request
+  // Called by Cursor agent if code generation fails
+  mcp.addTool({
+    name: 'cursor_fail_request',
+    description: 'Mark a code generation request as failed. Call this if code generation encounters an error.',
+    parameters: z.object({
+      requestId: z.string().describe('Request ID from cursor_generate_code or cursor_process_ai_request'),
+      error: z.string().describe('Error message describing what went wrong'),
+    }),
+    execute: async (args: { requestId: string; error: string }, context: any) => {
+      failCursorRequest(args.requestId, args.error);
+      return JSON.stringify({
+        success: true,
+        message: `Request ${args.requestId} marked as failed.`,
       });
     },
   });

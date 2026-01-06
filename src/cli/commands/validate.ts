@@ -116,29 +116,8 @@ export async function validateCommand(options: {
           warnings.push('No AI API key found in environment (ANTHROPIC_API_KEY or OPENAI_API_KEY)');
         }
       } else {
-        // Cursor provider validation
-        const requestsDir = path.join(process.cwd(), '.cursor-ai-requests');
-        const responsesDir = path.join(process.cwd(), '.cursor-ai-responses');
-
-        if (!await fs.pathExists(requestsDir)) {
-          if (options.fix) {
-            await fs.ensureDir(requestsDir);
-            spinner.succeed('Created .cursor-ai-requests directory');
-          } else {
-            warnings.push('.cursor-ai-requests directory does not exist (run with --fix to create)');
-          }
-        }
-
-        if (!await fs.pathExists(responsesDir)) {
-          if (options.fix) {
-            await fs.ensureDir(responsesDir);
-            spinner.succeed('Created .cursor-ai-responses directory');
-          } else {
-            warnings.push('.cursor-ai-responses directory does not exist (run with --fix to create)');
-          }
-        }
-
-        spinner.succeed('Cursor provider configured (uses Cursor account, no API key needed)');
+        // Cursor provider validation - uses direct MCP invocation, no files needed
+        spinner.succeed('Cursor provider configured (uses direct MCP invocation, no API key needed)');
       }
 
       // Check .devloop directory

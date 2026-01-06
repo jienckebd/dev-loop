@@ -66,11 +66,13 @@ export class WorkflowEngine {
 
   constructor(private config: Config) {
     this.debug = (config as any).debug || false;
+    const mcpMode = (config as any).mcpMode || false;
 
     // Configure logger with file path and debug mode
     logger.configure({
       logPath: config.logs.outputPath,
       debug: this.debug,
+      mcpMode,  // Suppress console output when running via MCP
     });
 
 

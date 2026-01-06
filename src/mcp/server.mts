@@ -115,6 +115,31 @@ const mcp = new FastMCP({
   version: '1.0.0',
 });
 
+// Set global MCP mode environment variable (for code that uses console.log directly)
+process.env.DEV_LOOP_MCP_MODE = 'true';
+
+// CRITICAL: Redirect console.log to stderr to prevent breaking MCP JSON-RPC protocol
+// MCP uses stdout for JSON-RPC, so any console.log breaks the protocol
+const originalConsoleLog = console.log;
+console.log = (...args: any[]) => {
+  // Redirect to stderr instead of stdout
+  console.error('[LOG]', ...args);
+};
+
+// Configure logger for MCP mode (suppress stdout to avoid breaking JSON-RPC protocol)
+(async () => {
+  try {
+    const { logger } = await import('../core/logger.js');
+    logger.configure({
+      logPath: '/tmp/dev-loop.log',
+      debug: process.env.MCP_DEBUG === 'true',
+      mcpMode: true,  // Suppress console output in MCP mode
+    });
+  } catch (e) {
+    // Logger not available, continue without it
+  }
+})();
+
 // Initialize MCP log file
 try {
   fs.writeFileSync(MCP_LOG_PATH, `# Dev-Loop MCP Log - Started ${new Date().toISOString()}\n`);
@@ -159,6 +184,8 @@ addLoggedTool({
     if (args.debug) {
       (config as any).debug = true;
     }
+    // Mark as MCP mode to suppress console.log output (which breaks JSON-RPC)
+    (config as any).mcpMode = true;
 
     const engine = new WorkflowEngine(config);
     const result = await engine.runOnce();

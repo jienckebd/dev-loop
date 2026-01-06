@@ -21,6 +21,7 @@ export class Logger {
   private debugMode = false;
   private buffer: LogEntry[] = [];
   private configured = false;
+  private mcpMode = false;  // When true, use stderr instead of stdout
 
   private constructor() {}
 
@@ -34,13 +35,14 @@ export class Logger {
   /**
    * Configure the logger with a file path and debug mode.
    */
-  configure(options: { logPath?: string; debug?: boolean }): void {
-    if (this.configured && this.logPath === options.logPath) {
-      return; // Already configured with same path
+  configure(options: { logPath?: string; debug?: boolean; mcpMode?: boolean }): void {
+    if (this.configured && this.logPath === options.logPath && this.mcpMode === options.mcpMode) {
+      return; // Already configured with same options
     }
 
     this.logPath = options.logPath || null;
     this.debugMode = options.debug || false;
+    this.mcpMode = options.mcpMode || false;
     this.configured = true;
 
     if (this.logPath) {
@@ -95,21 +97,27 @@ export class Logger {
     // Always write to file if configured
     this.writeToFile(formatted);
 
+    // In MCP mode, suppress console output (use only file logging)
+    // This prevents interference with the MCP JSON-RPC protocol
+    if (this.mcpMode) {
+      return;
+    }
+
     // Console output based on level and debug mode
     switch (level) {
       case 'debug':
         if (this.debugMode) {
-          console.log(chalk.gray(formatted));
+          console.error(chalk.gray(formatted));
         }
         break;
       case 'info':
-        console.log(chalk.blue(`[INFO] ${message}`));
+        console.error(chalk.blue(`[INFO] ${message}`));
         break;
       case 'warn':
-        console.log(chalk.yellow(`[WARN] ${message}`));
+        console.error(chalk.yellow(`[WARN] ${message}`));
         break;
       case 'error':
-        console.log(chalk.red(`[ERROR] ${message}`));
+        console.error(chalk.red(`[ERROR] ${message}`));
         break;
     }
   }
@@ -190,13 +198,13 @@ export class Logger {
     }
     this.writeToFile(`${'-'.repeat(40)}\n`);
 
-    // Console output for debug mode
-    if (this.debugMode) {
-      console.log(chalk.cyan(`[DEBUG] ${marker}`));
-      if (data.model) console.log(chalk.gray(`  Model: ${data.model}`));
-      if (data.duration) console.log(chalk.gray(`  Duration: ${data.duration}ms`));
-      if (data.inputTokens) console.log(chalk.gray(`  Input tokens: ${data.inputTokens}`));
-      if (data.outputTokens) console.log(chalk.gray(`  Output tokens: ${data.outputTokens}`));
+    // Console output for debug mode (use stderr to avoid MCP interference)
+    if (this.debugMode && !this.mcpMode) {
+      console.error(chalk.cyan(`[DEBUG] ${marker}`));
+      if (data.model) console.error(chalk.gray(`  Model: ${data.model}`));
+      if (data.duration) console.error(chalk.gray(`  Duration: ${data.duration}ms`));
+      if (data.inputTokens) console.error(chalk.gray(`  Input tokens: ${data.inputTokens}`));
+      if (data.outputTokens) console.error(chalk.gray(`  Output tokens: ${data.outputTokens}`));
     }
   }
 
@@ -208,8 +216,8 @@ export class Logger {
     if (data) {
       this.writeToFile(JSON.stringify(data, null, 2));
     }
-    if (this.debugMode) {
-      console.log(chalk.magenta(`[WORKFLOW] ${event}`));
+    if (this.debugMode && !this.mcpMode) {
+      console.error(chalk.magenta(`[WORKFLOW] ${event}`));
     }
   }
 

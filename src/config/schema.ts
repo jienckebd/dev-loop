@@ -886,6 +886,12 @@ const configSchema = z.object({
     }).optional(),
   }).optional(),
 
+  // Cursor AI provider configuration
+  cursor: z.object({
+    // Path for Cursor AI request/response files (relative to project root)
+    requestsPath: z.string().default('files-private/cursor'),
+  }).optional(),
+
   // AI pattern detection configuration
   aiPatterns: z.object({
     enabled: z.boolean().default(false),
