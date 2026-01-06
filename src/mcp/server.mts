@@ -103,12 +103,14 @@ function logMcp(type: 'REQUEST' | 'RESPONSE' | 'ERROR', toolName: string, data: 
     // Silently fail if we can't write to log
   }
 
-  // Also output to stderr for debug visibility (MCP uses stdout for protocol)
-  // Use INFO prefix for REQUEST/RESPONSE, ERROR only for actual errors
-  if (process.env.MCP_DEBUG === 'true') {
-    const prefix = type === 'ERROR' ? '[ERROR]' : '[INFO]';
-    process.stderr.write(`${prefix} [MCP ${type}] ${toolName}: ${JSON.stringify(data, null, 2)}\n`);
+  // In MCP mode, don't write to stderr (Cursor MCP client prefixes all stderr with [error])
+  // Only write actual errors to stderr, and only if MCP_DEBUG is enabled
+  // All informational logs go to the log file only
+  if (process.env.MCP_DEBUG === 'true' && type === 'ERROR') {
+    // Only actual errors go to stderr in debug mode
+    process.stderr.write(`[ERROR] [MCP ${type}] ${toolName}: ${JSON.stringify(data, null, 2)}\n`);
   }
+  // REQUEST/RESPONSE logs are written to file only (via MCP_LOG_PATH above)
 }
 
 // Create MCP server
@@ -120,30 +122,49 @@ const mcp = new FastMCP({
 // Set global MCP mode environment variable (for code that uses console.log directly)
 process.env.DEV_LOOP_MCP_MODE = 'true';
 
-// CRITICAL: Redirect console.log to stderr to prevent breaking MCP JSON-RPC protocol
-// MCP uses stdout for JSON-RPC, so any console.log breaks the protocol
-// Use a clear prefix to distinguish from actual errors
-const originalConsoleLog = console.log;
-console.log = (...args: any[]) => {
-  // Redirect to stderr with INFO prefix (not ERROR) so MCP clients don't misinterpret
-  // Format: [INFO] prefix makes it clear this is informational, not an error
-  const message = args.map(arg => typeof arg === 'string' ? arg : JSON.stringify(arg)).join(' ');
-  process.stderr.write(`[INFO] ${message}\n`);
-};
-
-// Configure logger for MCP mode (suppress stdout to avoid breaking JSON-RPC protocol)
+// Configure logger for MCP mode FIRST (before redirecting console.log)
+// This ensures all console.log calls go to the log file instead of stderr
+let mcpLogger: any = null;
+const logPath = '/tmp/dev-loop.log';
 (async () => {
   try {
     const { logger } = await import('../core/logger.js');
     logger.configure({
-      logPath: '/tmp/dev-loop.log',
+      logPath,
       debug: process.env.MCP_DEBUG === 'true',
-      mcpMode: true,  // Suppress console output in MCP mode
+      mcpMode: true,  // Suppress console output in MCP mode (writes to file only)
     });
+    mcpLogger = logger;
   } catch (e) {
     // Logger not available, continue without it
   }
 })();
+
+// CRITICAL: Redirect console.log to log file instead of stderr in MCP mode
+// MCP uses stdout for JSON-RPC, so any console.log breaks the protocol
+// Cursor MCP client prefixes ALL stderr with [error], so we write to log file instead
+const originalConsoleLog = console.log;
+console.log = (...args: any[]) => {
+  const message = args.map(arg => typeof arg === 'string' ? arg : JSON.stringify(arg)).join(' ');
+  
+  // Write to log file via logger (if available) instead of stderr
+  // This prevents Cursor MCP client from prefixing with [error]
+  if (mcpLogger) {
+    mcpLogger.info(message);
+  } else {
+    // Fallback: write to log file directly if logger not yet initialized
+    try {
+      fs.appendFileSync(logPath, `[${new Date().toISOString()}] [INFO] ${message}\n`);
+    } catch (e) {
+      // If log file write fails, try MCP log file
+      try {
+        fs.appendFileSync(MCP_LOG_PATH, `[INFO] ${new Date().toISOString()} ${message}\n`);
+      } catch (e2) {
+        // Silently fail - don't break execution
+      }
+    }
+  }
+};
 
 // Initialize MCP log file
 try {
