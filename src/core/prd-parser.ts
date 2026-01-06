@@ -21,12 +21,21 @@ export class PrdParser {
   async parseStructured(prdPath: string): Promise<Requirement[]> {
     // First, try to parse YAML frontmatter requirements
     const metadata = await this.configParser.parsePrdMetadata(prdPath);
+    if (this.debug) {
+      console.log(`[PrdParser] Metadata parsed:`, metadata ? 'yes' : 'no');
+      if (metadata?.requirements) {
+        console.log(`[PrdParser] Requirements metadata found:`, {
+          hasPhases: !!metadata.requirements.phases,
+          phaseCount: metadata.requirements.phases?.length || 0,
+        });
+      }
+    }
     if (metadata?.requirements?.phases) {
       const yamlRequirements = this.parseYamlFrontmatterRequirements(metadata.requirements);
+      if (this.debug) {
+        console.log(`[PrdParser] Parsed ${yamlRequirements.length} requirements from YAML frontmatter`);
+      }
       if (yamlRequirements.length > 0) {
-        if (this.debug) {
-          console.log(`[PrdParser] Found ${yamlRequirements.length} requirements from YAML frontmatter`);
-        }
         return yamlRequirements;
       }
     }
