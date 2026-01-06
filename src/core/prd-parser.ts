@@ -102,7 +102,7 @@ export class PrdParser {
           reqId = idPattern.replace('{id}', task.id);
         }
         const description = task.description.trim();
-        
+
         // Extract acceptance criteria from description (lines starting with -)
         const acceptanceCriteria: string[] = [];
         const lines = description.split('\n');
@@ -356,7 +356,7 @@ Extract ALL requirements from the PRD. Include functional requirements, non-func
 
   /**
    * Parse PRD and extract both requirements and configuration overlay
-   * 
+   *
    * This method parses the PRD for requirements and also extracts any
    * embedded Dev-Loop Configuration section that provides config overlays.
    */
