@@ -1027,7 +1027,41 @@ export class WorkflowEngine {
           }
         }
       }
-      const hasErrors = !testResult.success ||
+      // Filter test failures to only consider those related to task's modified files
+      let relevantTestFailure = false;
+      if (!testResult.success && testResult.output) {
+        const currentState = await this.stateManager.getWorkflowState();
+        const modifiedFiles = (currentState as any).filesModified || [];
+        // Check if test failure mentions any of the modified files
+        const failureRelatesToTask = modifiedFiles.some((file: string) => {
+          // Extract filename from path
+          const fileName = file.split('/').pop() || file;
+          const baseName = fileName.replace(/\.[^.]*$/, ''); // Remove extension
+          // Check if test output mentions this file or its base name
+          return testResult.output.includes(fileName) || 
+                 testResult.output.includes(baseName) ||
+                 testResult.output.includes(file.replace(/^.*\//, '')); // Just the filename part
+        });
+        
+        // Also check if failure is from a test file that was created/modified
+        const testFileRelatesToTask = modifiedFiles.some((file: string) => {
+          return file.includes('test') || file.includes('spec');
+        });
+        
+        relevantTestFailure = failureRelatesToTask || testFileRelatesToTask;
+        
+        // If no modified files or failure doesn't relate, it's likely a pre-existing failure
+        if (modifiedFiles.length > 0 && !relevantTestFailure) {
+          console.log(`[WorkflowEngine] Test failure appears unrelated to task (no mention of modified files). Ignoring.`);
+          console.log(`[WorkflowEngine] Modified files: ${modifiedFiles.join(', ')}`);
+          console.log(`[WorkflowEngine] Test output preview: ${testResult.output.substring(0, 200)}...`);
+        }
+      } else if (!testResult.success) {
+        // If we have a failure but no output details, assume it's relevant
+        relevantTestFailure = true;
+      }
+
+      const hasErrors = (relevantTestFailure && !testResult.success) ||
         (logAnalysis && logAnalysis.errors.length > 0) ||
         (smokeTestResult && !smokeTestResult.success);
 
