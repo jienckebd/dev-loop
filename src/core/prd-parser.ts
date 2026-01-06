@@ -16,8 +16,22 @@ export class PrdParser {
 
   /**
    * Parse PRD markdown using structured format (machine-parseable)
+   * Supports both YAML frontmatter and markdown format requirements
    */
   async parseStructured(prdPath: string): Promise<Requirement[]> {
+    // First, try to parse YAML frontmatter requirements
+    const metadata = await this.configParser.parsePrdMetadata(prdPath);
+    if (metadata?.requirements?.phases) {
+      const yamlRequirements = this.parseYamlFrontmatterRequirements(metadata.requirements);
+      if (yamlRequirements.length > 0) {
+        if (this.debug) {
+          console.log(`[PrdParser] Found ${yamlRequirements.length} requirements from YAML frontmatter`);
+        }
+        return yamlRequirements;
+      }
+    }
+
+    // Fall back to markdown format parsing
     const content = await fs.readFile(prdPath, 'utf-8');
     const requirements: Requirement[] = [];
 
@@ -38,6 +52,69 @@ export class PrdParser {
     }
 
     return requirements.length > 0 ? requirements : this.parse(prdPath);
+  }
+
+  /**
+   * Parse requirements from YAML frontmatter structure
+   */
+  private parseYamlFrontmatterRequirements(requirementsMeta: {
+    idPattern?: string;
+    phases?: Array<{
+      id: number;
+      name: string;
+      parallel?: boolean;
+      tasks?: Array<{
+        id: string;
+        title: string;
+        description: string;
+      }>;
+    }>;
+  }): Requirement[] {
+    const requirements: Requirement[] = [];
+    const idPattern = requirementsMeta.idPattern || 'REQ-{id}';
+
+    if (!requirementsMeta.phases) {
+      return [];
+    }
+
+    for (const phase of requirementsMeta.phases) {
+      if (!phase.tasks) {
+        continue;
+      }
+
+      for (const task of phase.tasks) {
+        const reqId = idPattern.replace('{id}', task.id);
+        const description = task.description.trim();
+        
+        // Extract acceptance criteria from description (lines starting with -)
+        const acceptanceCriteria: string[] = [];
+        const lines = description.split('\n');
+        for (const line of lines) {
+          const trimmed = line.trim();
+          if (trimmed.startsWith('-') && trimmed.length > 2) {
+            acceptanceCriteria.push(trimmed.substring(1).trim());
+          }
+        }
+
+        // If no explicit criteria found, use description as main criterion
+        if (acceptanceCriteria.length === 0) {
+          // Use first line or first sentence as main criterion
+          const firstLine = description.split('\n')[0].trim();
+          acceptanceCriteria.push(firstLine || 'Requirement must be testable');
+        }
+
+        requirements.push({
+          id: reqId,
+          description: task.title + (description ? '\n\n' + description : ''),
+          acceptanceCriteria,
+          priority: 'must', // Default to 'must' for structured requirements
+          status: 'pending',
+          type: 'functional',
+        });
+      }
+    }
+
+    return requirements;
   }
 
   /**
