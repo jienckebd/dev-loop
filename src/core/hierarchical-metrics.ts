@@ -164,6 +164,18 @@ export interface PrdMetricsData {
     operations: SchemaOperation[];
     schemaMetrics: SchemaMetrics;
   };
+  observations: {
+    total: number;
+    byType: Record<string, number>;
+    bySeverity: Record<string, number>;
+    resolutionRate: number;
+  };
+  patterns: {
+    totalMatched: number;
+    byType: Record<string, number>;
+    effectiveness: number;
+    successRate: number;
+  };
 }
 
 // Phase Level

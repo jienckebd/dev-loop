@@ -16,14 +16,20 @@ import {
   TestResults
 } from './hierarchical-metrics';
 import { RunMetrics } from './debug-metrics';
+import { CostCalculator } from './cost-calculator';
+import { TestExecutionResult } from './test-executor';
 import { logger } from './logger';
 
 export class PrdMetrics {
   private metricsPath: string;
   private metrics: Map<string, PrdMetricsData> = new Map();
+  private costCalculator?: CostCalculator;
+  private debug: boolean;
 
-  constructor(metricsPath: string = '.devloop/prd-metrics.json') {
+  constructor(metricsPath: string = '.devloop/prd-metrics.json', costCalculator?: CostCalculator, debug: boolean = false) {
     this.metricsPath = path.resolve(process.cwd(), metricsPath);
+    this.costCalculator = costCalculator;
+    this.debug = debug;
     this.loadMetrics();
   }
 
@@ -126,6 +132,18 @@ export class PrdMetrics {
           },
         },
       },
+      observations: {
+        total: 0,
+        byType: {},
+        bySeverity: {},
+        resolutionRate: 0,
+      },
+      patterns: {
+        totalMatched: 0,
+        byType: {},
+        effectiveness: 0,
+        successRate: 0,
+      },
     };
 
     this.metrics.set(prdId, metric);
@@ -182,11 +200,12 @@ export class PrdMetrics {
     this.saveMetrics();
   }
 
-  recordTaskCompletion(taskId: string, metrics: RunMetrics): void {
-    // Find PRD that contains this task (we'll need to track this relationship)
-    // For now, we'll update all in-progress PRDs
-    for (const [prdId, prdMetric] of this.metrics.entries()) {
-      if (prdMetric.status === 'in-progress') {
+  recordTaskCompletion(prdId: string, taskId: string, metrics: RunMetrics): void {
+    const prdMetric = this.metrics.get(prdId);
+    if (!prdMetric) {
+      logger.warn(`[PrdMetrics] Cannot record task completion: PRD ${prdId} not found`);
+      return;
+    }
         prdMetric.tasks.total++;
 
         if (metrics.status === 'completed') {
@@ -220,6 +239,26 @@ export class PrdMetrics {
         if (metrics.tokens?.output) {
           prdMetric.tokens.totalOutput += metrics.tokens.output;
         }
+        // Calculate and update cost using CostCalculator static method
+        if (metrics.tokens?.input && metrics.tokens?.output) {
+          // Use default provider/model for cost calculation
+          // In a real scenario, we'd track the actual provider/model used
+          try {
+            const { CostCalculator } = require('./cost-calculator');
+            const costCalculation = CostCalculator.calculateCost(
+              'anthropic', // Default provider
+              'claude-3-5-sonnet-20241022', // Default model
+              metrics.tokens.input,
+              metrics.tokens.output
+            );
+            prdMetric.tokens.totalCost = (prdMetric.tokens.totalCost || 0) + costCalculation.totalCost;
+          } catch (err) {
+            // Cost calculation failed, continue without cost
+            if (this.debug) {
+              logger.warn(`[PrdMetrics] Failed to calculate cost: ${err}`);
+            }
+          }
+        }
 
         // Update errors
         if (metrics.outcome?.errorCategory) {
@@ -250,10 +289,7 @@ export class PrdMetrics {
           ? prdMetric.tasks.completed / totalProcessed
           : 0;
 
-        this.saveMetrics();
-        break; // Only update one PRD per task
-      }
-    }
+    this.saveMetrics();
   }
 
   recordTestResults(prdId: string, testResults: TestResults): void {
@@ -273,10 +309,14 @@ export class PrdMetrics {
     this.saveMetrics();
   }
 
-  recordFeatureUsage(featureName: string, success: boolean, duration: number, tokens: { input: number; output: number }, error?: string): void {
-    // Find in-progress PRD
-    for (const [prdId, prdMetric] of this.metrics.entries()) {
-      if (prdMetric.status === 'in-progress' && prdMetric.features.used.includes(featureName)) {
+  recordFeatureUsage(prdId: string, featureName: string, success: boolean, duration: number, tokens: { input: number; output: number }, error?: string): void {
+    const prdMetric = this.metrics.get(prdId);
+    if (!prdMetric) {
+      logger.warn(`[PrdMetrics] Cannot record feature usage: PRD ${prdId} not found`);
+      return;
+    }
+
+    if (prdMetric.features.used.includes(featureName)) {
         if (!prdMetric.features.featureMetrics[featureName]) {
           prdMetric.features.featureMetrics[featureName] = {
             featureName,
@@ -313,16 +353,16 @@ export class PrdMetrics {
 
         featureMetric.totalTokens += tokens.input + tokens.output;
 
-        this.saveMetrics();
-        break;
-      }
+      this.saveMetrics();
     }
   }
 
-  recordSchemaOperation(operation: SchemaOperation): void {
-    // Find in-progress PRD
-    for (const [prdId, prdMetric] of this.metrics.entries()) {
-      if (prdMetric.status === 'in-progress') {
+  recordSchemaOperation(prdId: string, operation: SchemaOperation): void {
+    const prdMetric = this.metrics.get(prdId);
+    if (!prdMetric) {
+      logger.warn(`[PrdMetrics] Cannot record schema operation: PRD ${prdId} not found`);
+      return;
+    }
         prdMetric.schema.operations.push(operation);
 
         const schemaMetrics = prdMetric.schema.schemaMetrics;
@@ -357,10 +397,56 @@ export class PrdMetrics {
             (schemaMetrics.errors.bySchemaType[operation.schemaType] || 0) + 1;
         }
 
-        this.saveMetrics();
-        break;
-      }
+    this.saveMetrics();
+  }
+
+  recordObservation(prdId: string, observation: { type: string; severity: string; count: number; resolvedCount: number; resolutionRate: number }): void {
+    const prdMetric = this.metrics.get(prdId);
+    if (!prdMetric) {
+      logger.warn(`[PrdMetrics] Cannot record observation: PRD ${prdId} not found`);
+      return;
     }
+
+    prdMetric.observations.total += observation.count;
+    prdMetric.observations.byType[observation.type] =
+      (prdMetric.observations.byType[observation.type] || 0) + observation.count;
+    prdMetric.observations.bySeverity[observation.severity] =
+      (prdMetric.observations.bySeverity[observation.severity] || 0) + observation.count;
+
+    // Update resolution rate (weighted average)
+    const totalObservations = prdMetric.observations.total;
+    if (totalObservations > 0) {
+      prdMetric.observations.resolutionRate =
+        ((prdMetric.observations.resolutionRate * (totalObservations - observation.count)) +
+         (observation.resolutionRate * observation.count)) / totalObservations;
+    }
+
+    this.saveMetrics();
+  }
+
+  recordPattern(prdId: string, pattern: { type: string; matchCount: number; applyCount: number; successCount: number; effectiveness: number }): void {
+    const prdMetric = this.metrics.get(prdId);
+    if (!prdMetric) {
+      logger.warn(`[PrdMetrics] Cannot record pattern: PRD ${prdId} not found`);
+      return;
+    }
+
+    prdMetric.patterns.totalMatched += pattern.matchCount;
+    prdMetric.patterns.byType[pattern.type] =
+      (prdMetric.patterns.byType[pattern.type] || 0) + pattern.matchCount;
+
+    // Update effectiveness and success rate (weighted average)
+    const totalMatched = prdMetric.patterns.totalMatched;
+    if (totalMatched > 0) {
+      prdMetric.patterns.effectiveness =
+        ((prdMetric.patterns.effectiveness * (totalMatched - pattern.matchCount)) +
+         (pattern.effectiveness * pattern.matchCount)) / totalMatched;
+      prdMetric.patterns.successRate =
+        ((prdMetric.patterns.successRate * (totalMatched - pattern.matchCount)) +
+         ((pattern.successCount / pattern.applyCount) * pattern.matchCount)) / totalMatched;
+    }
+
+    this.saveMetrics();
   }
 
   completePrdExecution(prdId: string, status: 'completed' | 'failed'): void {

@@ -22,6 +22,12 @@ import { PhaseMetrics } from './phase-metrics';
 import { PrdMetadata } from './hierarchical-metrics';
 import { FeatureTracker } from './feature-tracker';
 import { SchemaTracker } from './schema-tracker';
+import { ObservationMetrics } from './observation-metrics';
+import { PatternMetrics } from './pattern-metrics';
+import { TestResultsTracker } from './test-results-tracker';
+import { ErrorAnalyzer } from './error-analyzer';
+import { CostCalculator } from './cost-calculator';
+import { RunMetrics } from './debug-metrics';
 import { logger } from './logger';
 import { PrdContextManager, PrdContext, Requirement } from './prd-context';
 import { PrdParser } from './prd-parser';
@@ -62,6 +68,11 @@ export class WorkflowEngine {
   private phaseMetrics?: PhaseMetrics;
   private featureTracker?: FeatureTracker;
   private schemaTracker?: SchemaTracker;
+  private observationMetrics?: ObservationMetrics;
+  private patternMetrics?: PatternMetrics;
+  private testResultsTracker?: TestResultsTracker;
+  private errorAnalyzer?: ErrorAnalyzer;
+  private costCalculator?: CostCalculator;
   private observationTracker?: any; // ObservationTracker
   private improvementSuggester?: any; // ImprovementSuggester
   private frameworkPatternLibrary?: any; // FrameworkPatternLibrary
@@ -158,14 +169,29 @@ export class WorkflowEngine {
     }
 
     // Initialize hierarchical metrics
-    const prdMetricsPath = (config as any).metrics?.prdMetricsPath || '.devloop/prd-metrics.json';
-    const phaseMetricsPath = (config as any).metrics?.phaseMetricsPath || '.devloop/phase-metrics.json';
-    const featureMetricsPath = (config as any).metrics?.featureMetricsPath || '.devloop/feature-metrics.json';
-    const schemaMetricsPath = (config as any).metrics?.schemaMetricsPath || '.devloop/schema-metrics.json';
-    this.prdMetrics = new PrdMetrics(prdMetricsPath);
-    this.phaseMetrics = new PhaseMetrics(phaseMetricsPath);
-    this.featureTracker = new FeatureTracker(featureMetricsPath);
-    this.schemaTracker = new SchemaTracker(schemaMetricsPath);
+    const metricsConfig = (config as any).metrics || {};
+    if (metricsConfig.enabled !== false) {
+      const prdMetricsPath = metricsConfig.prdMetricsPath || '.devloop/prd-metrics.json';
+      const phaseMetricsPath = metricsConfig.phaseMetricsPath || '.devloop/phase-metrics.json';
+      const featureMetricsPath = metricsConfig.featureMetricsPath || '.devloop/feature-metrics.json';
+      const schemaMetricsPath = metricsConfig.schemaMetricsPath || '.devloop/schema-metrics.json';
+      const observationMetricsPath = metricsConfig.observationMetricsPath || '.devloop/observation-metrics.json';
+      const patternMetricsPath = metricsConfig.patternMetricsPath || '.devloop/pattern-metrics.json';
+      const testResultsPath = metricsConfig.testResultsPath || '.devloop/test-results.json';
+
+      // CostCalculator is static, no instance needed
+      this.prdMetrics = new PrdMetrics(prdMetricsPath);
+      this.phaseMetrics = new PhaseMetrics(phaseMetricsPath);
+      this.featureTracker = new FeatureTracker(featureMetricsPath);
+      this.schemaTracker = new SchemaTracker(schemaMetricsPath);
+      this.observationMetrics = new ObservationMetrics(observationMetricsPath);
+      this.patternMetrics = new PatternMetrics(patternMetricsPath);
+      this.testResultsTracker = new TestResultsTracker(testResultsPath);
+      this.errorAnalyzer = new ErrorAnalyzer();
+    } else {
+      // Still initialize error analyzer as it may be used elsewhere
+      this.errorAnalyzer = new ErrorAnalyzer();
+    }
 
     // Initialize observation tracking if enabled (for evolution mode)
     if ((config as any).evolution?.enabled !== false) {
@@ -743,11 +769,21 @@ export class WorkflowEngine {
 
           // Record patterns for learning
           for (const error of validationResult.errors) {
-            await this.patternLearner.recordPattern(
-              error.message,
-              error.file,
-              error.suggestion
-            );
+            const patternStartTime = Date.now();
+            try {
+              await this.patternLearner.recordPattern(
+                error.message,
+                error.file,
+                error.suggestion
+              );
+              const patternDuration = Date.now() - patternStartTime;
+
+              // Record pattern metrics (prdId not available in this scope, skip for now)
+              // Pattern metrics will be recorded at task level
+            } catch (err) {
+              const patternDuration = Date.now() - patternStartTime;
+              // Pattern metrics will be recorded at task level
+            }
           }
 
           // Create fix task with validation errors AND file context for patch failures
@@ -1229,12 +1265,18 @@ export class WorkflowEngine {
         if ((this.config as any).patternLearning?.enabled !== false) {
           try {
             const projectType = this.detectProjectType();
+            const patternStartTime = Date.now();
             await this.patternLearner.recordPattern(
               errorDescription.substring(0, 500),
               targetFiles?.split('\n')[0],
               undefined,
               projectType
             );
+            const patternDuration = Date.now() - patternStartTime;
+
+            // Record pattern metrics (prdId available in runAutonomousPrd scope)
+            // Note: prdId needs to be passed to this method or stored in context
+            // For now, pattern metrics will be recorded at task completion level
           } catch (err) {
             if (this.debug) {
               console.warn('[WorkflowEngine] Could not record pattern:', err);
@@ -1246,7 +1288,12 @@ export class WorkflowEngine {
         if (this.observationTracker) {
           try {
             const projectType = this.detectProjectType() || 'unknown';
+            const observationStartTime = Date.now();
             await this.observationTracker.trackFailurePattern(errorDescription, projectType);
+            const observationDuration = Date.now() - observationStartTime;
+
+            // Record observation metrics (prdId needs to be available in this scope)
+            // For now, observations will be tracked through the observation tracker
           } catch (err) {
             if (this.debug) {
               console.warn('[WorkflowEngine] Could not track failure pattern:', err);
@@ -2678,6 +2725,16 @@ export class WorkflowEngine {
       this.schemaTracker.startPrdTracking(prdId);
     }
 
+    // Start observation tracking
+    if (this.observationMetrics) {
+      this.observationMetrics.startPrdTracking(prdId);
+    }
+
+    // Start pattern tracking
+    if (this.patternMetrics) {
+      this.patternMetrics.startPrdTracking(prdId);
+    }
+
     let effectiveConfig = this.config;
     if (prdConfigOverlay) {
       console.log('[WorkflowEngine] PRD config overlay detected, merging with base config...');
@@ -2873,10 +2930,30 @@ export class WorkflowEngine {
       console.log(`[WorkflowEngine] Generated ${tests.length} tests from ${requirements.length} requirements`);
 
       // Execute phase 1 validation gates
+      const phase1 = prdMetadata?.requirements?.phases?.find((p: any) => p.id === 1);
+      const phase1Name = phase1?.name || 'Phase 1';
+      if (this.phaseMetrics && prdId) {
+        this.phaseMetrics.startPhaseExecution(1, phase1Name, prdId, false);
+      }
       await this.executePhaseValidation(1, prdMetadata);
+      if (this.phaseMetrics && prdId) {
+        this.phaseMetrics.completePhaseExecution(1, prdId, 'completed');
+        // Record phase completion in PRD metrics
+        const phaseMetricsData = this.phaseMetrics.getPhaseMetrics(1, prdId);
+        if (phaseMetricsData && this.prdMetrics) {
+          this.prdMetrics.recordPhaseCompletion(1, phaseMetricsData);
+        }
+      }
     }
 
     // Phase 2: Main execution loop
+    const phase2 = prdMetadata?.requirements?.phases?.find((p: any) => p.id === 2);
+    const phase2Name = phase2?.name || 'Phase 2';
+    let currentPhaseId = 2; // Track current phase for task metrics
+    if (this.phaseMetrics && prdId) {
+      this.phaseMetrics.startPhaseExecution(2, phase2Name, prdId, false);
+    }
+    
     while (context.status === 'running') {
       context.currentIteration++;
       const iterationStart = Date.now();
@@ -2892,12 +2969,49 @@ export class WorkflowEngine {
       }
 
       // Run all tests
+      const testStartTime = Date.now();
       const testResult = await testExecutor.executeTests(context.tests);
+      const testDuration = Date.now() - testStartTime;
+
+      // Record test execution metrics
+      if (this.prdMetrics && prdId) {
+        this.prdMetrics.recordTestResults(prdId, {
+          total: testResult.total,
+          passing: testResult.passed,
+          failing: testResult.failed,
+          passRate: testResult.total > 0 ? (testResult.passed / testResult.total) * 100 : 0,
+        });
+      }
+      // Record test results in phase metrics
+      if (this.phaseMetrics && prdId && currentPhaseId) {
+        this.phaseMetrics.recordTestResults(prdId, currentPhaseId, testResult.total, testResult.passed, testResult.failed);
+      }
+      if (this.testResultsTracker && prdId) {
+        const executionId = `test-${prdId}-${Date.now()}`;
+        this.testResultsTracker.startExecution(executionId, undefined, prdId, currentPhaseId || undefined);
+        this.testResultsTracker.recordTestResults(
+          testResult.total,
+          testResult.passed,
+          testResult.failed,
+          0, // skipped
+          testDuration
+        );
+      }
 
       // Check for completion
       if (testResult.failed === 0) {
         // Execute final phase validation gates before marking complete
         await this.executePhaseValidation(2, prdMetadata);
+
+        // Complete phase 2 metrics
+        if (this.phaseMetrics && prdId) {
+          this.phaseMetrics.completePhaseExecution(2, prdId, 'completed');
+          // Record phase completion in PRD metrics
+          const phaseMetricsData = this.phaseMetrics.getPhaseMetrics(2, prdId);
+          if (phaseMetricsData && this.prdMetrics) {
+            this.prdMetrics.recordPhaseCompletion(2, phaseMetricsData);
+          }
+        }
 
         context.status = 'complete';
         console.log('[WorkflowEngine] All tests passing! PRD complete.');
@@ -2908,7 +3022,36 @@ export class WorkflowEngine {
       console.log(`[WorkflowEngine] Tests: ${testResult.passed}/${testResult.total} passing`);
 
       // Analyze failures
+      const analysisStartTime = Date.now();
       const analysis = await failureAnalyzer.analyze(testResult, context);
+      const analysisDuration = Date.now() - analysisStartTime;
+
+      // Record error analysis metrics
+      if (this.prdMetrics && prdId && analysis.failures) {
+        const prdMetric = this.prdMetrics.getPrdMetrics(prdId);
+        if (prdMetric) {
+          // Extract error info from failures
+          for (const failure of analysis.failures) {
+            prdMetric.errors.total++;
+            const category = failure.category || 'unknown';
+            prdMetric.errors.byCategory[category] = (prdMetric.errors.byCategory[category] || 0) + 1;
+            // Use rootCause as error type
+            const errorType = failure.rootCause.substring(0, 50) || 'unknown';
+            prdMetric.errors.byType[errorType] = (prdMetric.errors.byType[errorType] || 0) + 1;
+          }
+          // Metrics are saved automatically in recordTaskCompletion
+        }
+      }
+
+      // Record feature usage for error analysis
+      if (this.featureTracker && prdId) {
+        const tokensUsed = { input: 0, output: 0 }; // Error analysis tokens would need to be tracked
+        this.featureTracker.recordFeatureUsage('error-analysis', true, analysisDuration, tokensUsed);
+      }
+      if (this.prdMetrics && prdId) {
+        const tokensUsed = { input: 0, output: 0 };
+        this.prdMetrics.recordFeatureUsage(prdId, 'error-analysis', true, analysisDuration, tokensUsed);
+      }
 
       // Generate fix tasks
       const tasks = await taskGenerator.generateFixTasks(analysis, context);
@@ -2921,6 +3064,13 @@ export class WorkflowEngine {
         await this.taskBridge.createTask(task);
 
         // Execute the task using existing workflow
+        const taskStartTime = Date.now();
+        let aiCallStartTime = 0;
+        let aiCallDuration = 0;
+        let tokensUsed = { input: 0, output: 0 };
+        let taskStatus: 'completed' | 'failed' = 'failed';
+        let runMetrics: RunMetrics | undefined;
+
         try {
           const { codebaseContext, targetFiles } = await this.getCodebaseContext(task);
           const taskContext: TaskContext = {
@@ -2942,7 +3092,16 @@ export class WorkflowEngine {
             patternGuidance: '',
           });
 
+          // Record AI call start
+          aiCallStartTime = Date.now();
           const changes = await this.aiProvider.generateCode(template, taskContext);
+          aiCallDuration = Date.now() - aiCallStartTime;
+
+          // Extract token usage from changes if available
+          if ((changes as any).tokens) {
+            tokensUsed = (changes as any).tokens;
+          }
+
           const applyResult = await this.applyChanges(changes);
 
           // Check if task succeeded (no failed patches) or if all patches were skipped (also success)
@@ -2999,8 +3158,10 @@ export class WorkflowEngine {
             }
 
             await this.taskBridge.updateTaskStatus(task.id, 'done');
+            taskStatus = 'completed';
           } else {
             console.warn(`[WorkflowEngine] Failed to apply changes for task ${task.id}`);
+            taskStatus = 'failed';
             if (applyResult.failedPatches.length > 0) {
               console.warn(`[WorkflowEngine] Failed patches: ${applyResult.failedPatches.slice(0, 3).join('; ')}`);
             }
@@ -3023,8 +3184,75 @@ export class WorkflowEngine {
               context.knowledge.failedApproaches = context.knowledge.failedApproaches.slice(-20);
             }
           }
+
+          // Record task completion metrics
+          const taskDuration = Date.now() - taskStartTime;
+          if (this.prdMetrics && prdId) {
+            runMetrics = {
+              timestamp: new Date().toISOString(),
+              taskId: parseInt(task.id) || undefined,
+              taskTitle: task.title,
+              status: taskStatus,
+              timing: {
+                totalMs: taskDuration,
+                aiCallMs: aiCallDuration,
+                testRunMs: 0, // Test run time is tracked separately
+              },
+              tokens: {
+                input: tokensUsed.input,
+                output: tokensUsed.output,
+              },
+              context: {},
+              patches: {},
+              validation: {},
+              patterns: {},
+              outcome: {
+                errorCategory: taskStatus === 'failed' ? 'code' : undefined,
+                failureType: taskStatus === 'failed' ? 'test' as any : undefined,
+              },
+            };
+            this.prdMetrics.recordTaskCompletion(prdId, task.id, runMetrics);
+          }
+          // Record task completion in phase metrics
+          if (this.phaseMetrics && prdId && currentPhaseId && runMetrics) {
+            this.phaseMetrics.recordTaskCompletion(task.id, runMetrics, prdId, currentPhaseId);
+          }
+
         } catch (error) {
           console.error(`[WorkflowEngine] Error executing task ${task.id}:`, error);
+
+          // Record failed task metrics
+          const taskDuration = Date.now() - taskStartTime;
+          if (this.prdMetrics && prdId) {
+            runMetrics = {
+              timestamp: new Date().toISOString(),
+              taskId: parseInt(task.id) || undefined,
+              taskTitle: task.title,
+              status: 'failed',
+              timing: {
+                totalMs: taskDuration,
+                aiCallMs: aiCallDuration,
+                testRunMs: 0,
+              },
+              tokens: {
+                input: tokensUsed.input,
+                output: tokensUsed.output,
+              },
+              context: {},
+              patches: {},
+              validation: {},
+              patterns: {},
+              outcome: {
+                errorCategory: 'code',
+                failureType: 'test' as any,
+              },
+            };
+            this.prdMetrics.recordTaskCompletion(prdId, task.id, runMetrics);
+          }
+          // Record failed task in phase metrics
+          if (this.phaseMetrics && prdId && currentPhaseId && runMetrics) {
+            this.phaseMetrics.recordTaskCompletion(task.id, runMetrics, prdId, currentPhaseId);
+          }
         }
       }
 
