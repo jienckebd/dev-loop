@@ -284,7 +284,15 @@ export async function executeCursorGenerateCode(
       if (pendingRequests.has(requestId)) {
         pendingRequests.delete(requestId);
         removeRequestFromFile(requestId);
-        reject(new Error(`Timeout waiting for Cursor AI to process request ${requestId}`));
+        const pendingFile = getPendingRequestsFile();
+        const completedDir = getCompletedRequestsDir();
+        reject(new Error(
+          `Timeout waiting for Cursor AI to process request ${requestId}. ` +
+          `The request was written to ${pendingFile} for manual processing. ` +
+          `To complete this request, write a response to ${completedDir}/${requestId}.json ` +
+          `with format: {"codeChanges": {"files": [...], "summary": "..."}}. ` +
+          `If using file-based communication, check ${pendingFile} for pending requests.`
+        ));
       }
     }, MAX_WAIT_TIME);
   });
