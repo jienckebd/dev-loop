@@ -212,7 +212,7 @@ export async function executeCursorGenerateCode(
     writePendingRequestsToFile(); // Write to file for external access
 
     // Poll for file-based completion (fallback mechanism)
-    const pollInterval = setInterval(() => {
+    const pollInterval = setInterval(async () => {
       try {
         const completedDir = getCompletedRequestsDir();
         if (!fs.existsSync(completedDir)) {
@@ -221,23 +221,54 @@ export async function executeCursorGenerateCode(
         }
         const completionFile = path.join(completedDir, `${requestId}.json`);
         if (fs.existsSync(completionFile)) {
-          clearInterval(pollInterval);
-          const fileContent = fs.readFileSync(completionFile, 'utf-8');
-          const completion = JSON.parse(fileContent);
-          fs.unlinkSync(completionFile);
-          if (completion.error) {
-            pendingRequests.delete(requestId);
-            removeRequestFromFile(requestId);
-            reject(new Error(completion.error));
-          } else if (completion.codeChanges) {
-            pendingRequests.delete(requestId);
-            removeRequestFromFile(requestId);
-            request.resolve(completion.codeChanges);
-          } else {
-            // Invalid completion format
-            pendingRequests.delete(requestId);
-            removeRequestFromFile(requestId);
-            reject(new Error(`Invalid completion format: missing codeChanges in ${requestId}`));
+          try {
+            // Read file with retry for race conditions
+            let fileContent: string;
+            let completion: any;
+            let retries = 3;
+            while (retries > 0) {
+              try {
+                fileContent = fs.readFileSync(completionFile, 'utf-8');
+                if (!fileContent || fileContent.trim().length === 0) {
+                  retries--;
+                  if (retries > 0) {
+                    await new Promise(resolve => setTimeout(resolve, 100));
+                    continue;
+                  }
+                  throw new Error('Completion file is empty');
+                }
+                completion = JSON.parse(fileContent);
+                break; // Successfully parsed
+              } catch (parseError) {
+                retries--;
+                if (retries === 0) {
+                  throw parseError;
+                }
+                // Wait a bit and retry (file might be partially written)
+                await new Promise(resolve => setTimeout(resolve, 200));
+              }
+            }
+
+            clearInterval(pollInterval);
+            fs.unlinkSync(completionFile);
+            if (completion.error) {
+              pendingRequests.delete(requestId);
+              removeRequestFromFile(requestId);
+              reject(new Error(completion.error));
+            } else if (completion.codeChanges) {
+              pendingRequests.delete(requestId);
+              removeRequestFromFile(requestId);
+              request.resolve(completion.codeChanges);
+            } else {
+              // Invalid completion format
+              pendingRequests.delete(requestId);
+              removeRequestFromFile(requestId);
+              reject(new Error(`Invalid completion format: missing codeChanges in ${requestId}`));
+            }
+          } catch (readError) {
+            // If reading/parsing fails, log but don't stop polling
+            const errorMessage = readError instanceof Error ? readError.message : String(readError);
+            console.error(`[CursorProvider] Error reading completion file ${requestId}: ${errorMessage}`);
           }
         }
       } catch (error) {
