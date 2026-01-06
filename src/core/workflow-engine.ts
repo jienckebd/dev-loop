@@ -2953,7 +2953,7 @@ export class WorkflowEngine {
     if (this.phaseMetrics && prdId) {
       this.phaseMetrics.startPhaseExecution(2, phase2Name, prdId, false);
     }
-    
+
     while (context.status === 'running') {
       context.currentIteration++;
       const iterationStart = Date.now();
@@ -2996,6 +2996,7 @@ export class WorkflowEngine {
           0, // skipped
           testDuration
         );
+        this.testResultsTracker.completeExecution();
       }
 
       // Check for completion
