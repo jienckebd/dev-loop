@@ -3056,17 +3056,30 @@ export class WorkflowEngine {
     const filePaths: string[] = [];
 
     // Pattern 1: "Create path/to/file.yml" or "Create `path/to/file.yml`" (handles backticks)
+    // Improved to prefer longer/more complete paths and avoid partial matches
     const createPattern = /Create\s+(?:`|"|')?([a-zA-Z0-9_./-]+\.[a-z]+)(?:`|"|')?/gi;
     let match;
+    const createMatches: string[] = [];
     while ((match = createPattern.exec(taskDetails)) !== null) {
       const filePath = match[1].trim();
       if (filePath && !filePath.includes('...') && !filePath.includes('example')) {
-        filePaths.push(filePath);
+        createMatches.push(filePath);
+      }
+    }
+    // Prefer longer paths (more complete) over shorter partial matches
+    if (createMatches.length > 0) {
+      const longestPath = createMatches.reduce((a, b) => a.length > b.length ? a : b);
+      // Only add if it looks like a complete path (has directory separators or starts with config/)
+      if (longestPath.includes('/') || longestPath.startsWith('config/')) {
+        filePaths.push(longestPath);
+      } else {
+        // If no complete path found, add all matches (fallback)
+        filePaths.push(...createMatches);
       }
     }
 
-    // Pattern 2: "File: path/to/file.ext"
-    const filePattern = /File:\s*([a-zA-Z0-9_./-]+\.[a-z]+)/gi;
+    // Pattern 2: "File: path/to/file.ext" or "Place file at: path/to/file.ext"
+    const filePattern = /(?:File:|Place file at:)\s*([a-zA-Z0-9_./-]+\.[a-z]+)/gi;
     while ((match = filePattern.exec(taskDetails)) !== null) {
       const filePath = match[1].trim();
       if (filePath && !filePath.includes('...') && !filePath.includes('example')) {
@@ -3083,8 +3096,9 @@ export class WorkflowEngine {
       }
     }
 
-    // Remove duplicates and return
-    return [...new Set(filePaths)];
+    // Remove duplicates, prefer longer paths (more complete)
+    const uniquePaths = [...new Set(filePaths)];
+    return uniquePaths.sort((a, b) => b.length - a.length); // Sort by length descending
   }
 
   /**
