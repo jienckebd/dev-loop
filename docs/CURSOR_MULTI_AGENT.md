@@ -127,3 +127,4 @@ Note: The actual model used depends on the Cursor agent configuration and may no
 2. Requests have a timeout (default: varies by request type)
 3. The agent processing requests must have access to the project files
 
+

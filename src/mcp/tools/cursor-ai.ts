@@ -42,7 +42,7 @@ function getCursorAIDir(): string {
   if (cursorAIPath) {
     return path.join(process.cwd(), cursorAIPath);
   }
-  
+
   // Try to load from config file
   try {
     const configPath = path.join(process.cwd(), 'devloop.config.js');
@@ -59,7 +59,7 @@ function getCursorAIDir(): string {
   } catch (error) {
     // Config loading failed, use default
   }
-  
+
   // Default path
   return path.join(process.cwd(), 'files-private', 'cursor');
 }
@@ -217,24 +217,33 @@ export async function executeCursorGenerateCode(
         const completedDir = getCompletedRequestsDir();
         if (!fs.existsSync(completedDir)) {
           fs.mkdirSync(completedDir, { recursive: true });
+          return; // Directory didn't exist, wait for next poll
         }
         const completionFile = path.join(completedDir, `${requestId}.json`);
         if (fs.existsSync(completionFile)) {
           clearInterval(pollInterval);
-          const completion = JSON.parse(fs.readFileSync(completionFile, 'utf-8'));
+          const fileContent = fs.readFileSync(completionFile, 'utf-8');
+          const completion = JSON.parse(fileContent);
           fs.unlinkSync(completionFile);
           if (completion.error) {
             pendingRequests.delete(requestId);
             removeRequestFromFile(requestId);
             reject(new Error(completion.error));
-          } else {
+          } else if (completion.codeChanges) {
             pendingRequests.delete(requestId);
             removeRequestFromFile(requestId);
             request.resolve(completion.codeChanges);
+          } else {
+            // Invalid completion format
+            pendingRequests.delete(requestId);
+            removeRequestFromFile(requestId);
+            reject(new Error(`Invalid completion format: missing codeChanges in ${requestId}`));
           }
         }
       } catch (error) {
-        // Ignore polling errors
+        // Log polling errors for debugging
+        const errorMessage = error instanceof Error ? error.message : String(error);
+        console.error(`[CursorProvider] Polling error for ${requestId}: ${errorMessage}`);
       }
     }, 1000); // Poll every second
 
