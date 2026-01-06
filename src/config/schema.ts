@@ -890,6 +890,10 @@ const configSchema = z.object({
   cursor: z.object({
     // Path for Cursor AI request/response files (relative to project root)
     requestsPath: z.string().default('files-private/cursor'),
+    // Agent name for multi-agent workflows (matches AGENTS.md)
+    agentName: z.string().default('DevLoopCodeGen'),
+    // Default model to request (auto, claude-sonnet, gpt-4, etc.)
+    model: z.string().default('auto'),
   }).optional(),
 
   // AI pattern detection configuration

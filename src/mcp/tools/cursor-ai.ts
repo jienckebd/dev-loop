@@ -72,6 +72,44 @@ export function setCursorAIPath(relativePath: string): void {
 }
 
 /**
+ * Get the Cursor agent name from config
+ */
+function getCursorAgentName(): string {
+  try {
+    const configPath = path.join(process.cwd(), 'devloop.config.js');
+    if (fs.existsSync(configPath)) {
+      delete require.cache[require.resolve(configPath)];
+      const config = require(configPath);
+      if (config?.cursor?.agentName) {
+        return config.cursor.agentName as string;
+      }
+    }
+  } catch (error) {
+    // Config loading failed, use default
+  }
+  return 'DevLoopCodeGen';
+}
+
+/**
+ * Get the default model from config
+ */
+function getCursorModel(): string {
+  try {
+    const configPath = path.join(process.cwd(), 'devloop.config.js');
+    if (fs.existsSync(configPath)) {
+      delete require.cache[require.resolve(configPath)];
+      const config = require(configPath);
+      if (config?.cursor?.model) {
+        return config.cursor.model as string;
+      }
+    }
+  } catch (error) {
+    // Config loading failed, use default
+  }
+  return 'auto';
+}
+
+/**
  * Get the pending requests file path
  */
 function getPendingRequestsFile(): string {
@@ -109,10 +147,12 @@ function ensureCursorAIDir(): void {
 function writePendingRequestsToFile(): void {
   try {
     ensureCursorAIDir();
+    const agentName = getCursorAgentName();
     const requests = Array.from(pendingRequests.values()).map(req => ({
       id: req.id,
       task: req.task,
-      model: req.model,
+      model: req.model || getCursorModel(),
+      agent: agentName,
       timestamp: req.timestamp,
       // Don't include resolve/reject functions
     }));
