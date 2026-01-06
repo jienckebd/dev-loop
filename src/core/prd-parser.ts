@@ -92,7 +92,15 @@ export class PrdParser {
       }
 
       for (const task of phase.tasks) {
-        const reqId = idPattern.replace('{id}', task.id);
+        // If task.id already matches the pattern prefix, use it directly
+        // Otherwise, apply the pattern
+        let reqId: string;
+        const patternPrefix = idPattern.split('{id}')[0];
+        if (task.id.startsWith(patternPrefix)) {
+          reqId = task.id;
+        } else {
+          reqId = idPattern.replace('{id}', task.id);
+        }
         const description = task.description.trim();
         
         // Extract acceptance criteria from description (lines starting with -)
