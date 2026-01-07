@@ -30,7 +30,7 @@ export class CursorProvider implements AIProvider {
 
     // Check configuration for background agent mode
     const useBackgroundAgent = agentsConfig.useBackgroundAgent !== false; // Default to true
-    const createObservabilityChats = agentsConfig.createObservabilityChats !== false; // Default to true
+    const createObservabilityChats = agentsConfig.createObservabilityChats === true; // Only true if explicitly true
     const fallbackToFileBased = agentsConfig.fallbackToFileBased !== false; // Default to true
     const agentOutputFormat = agentsConfig.agentOutputFormat || 'json';
 

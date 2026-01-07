@@ -2838,6 +2838,47 @@ export class WorkflowEngine {
 
       context.requirements = requirements;
 
+      // Create initial tasks from requirements immediately after parsing
+      // This ensures tasks are available even if test generation hangs
+      console.log('[WorkflowEngine] Creating initial tasks from requirements...');
+      try {
+        for (const req of requirements) {
+          if (req.status === 'pending') {
+            // Map requirement priority (must/should/could) to task priority (critical/high/medium/low)
+            let taskPriority: 'critical' | 'high' | 'medium' | 'low' = 'medium';
+            if (req.priority === 'must') {
+              taskPriority = 'critical';
+            } else if (req.priority === 'should') {
+              taskPriority = 'high';
+            } else if (req.priority === 'could') {
+              taskPriority = 'low';
+            }
+
+            const task: Task = {
+              id: req.id,
+              title: req.description || `Complete: ${req.id}`,
+              description: req.description || `Implement requirement: ${req.id}`,
+              status: 'pending',
+              priority: taskPriority,
+              details: JSON.stringify({
+                requirementId: req.id,
+                acceptanceCriteria: req.acceptanceCriteria || [],
+                type: req.type || 'functional',
+                createdAt: new Date().toISOString(),
+              }),
+            };
+            await this.taskBridge.createTask(task);
+            if (this.debug) {
+              console.log(`[WorkflowEngine] Created initial task: ${req.id}`);
+            }
+          }
+        }
+        console.log(`[WorkflowEngine] Created ${requirements.filter(r => r.status === 'pending').length} initial task(s) from requirements`);
+      } catch (error: any) {
+        console.warn(`[WorkflowEngine] Failed to create initial tasks: ${error.message}`);
+        // Don't fail the workflow if task creation fails - continue with test generation
+      }
+
       // Generate implementation code if enabled and requirements have implementation files
       const generateImplementation = prdConfig.generateImplementation !== false;
       const drupalConfig = (effectiveConfig as any).drupal || {};

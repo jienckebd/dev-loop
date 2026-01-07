@@ -12,6 +12,10 @@ import { createGzip } from 'zlib';
 import { pipeline } from 'stream/promises';
 import { createReadStream, createWriteStream } from 'fs';
 import { loadConfig } from '../../config/loader';
+import { exec } from 'child_process';
+import { promisify } from 'util';
+
+const execAsync = promisify(exec);
 
 export interface ArchiveOptions {
   config?: string;
@@ -42,6 +46,40 @@ export async function archiveCommand(options: ArchiveOptions): Promise<void> {
     // Ensure archive directory exists
     await fs.ensureDir(archiveDir);
 
+    // Step 1: Kill background agent processes
+    console.log(chalk.cyan('🛑 Killing background agent processes...'));
+    try {
+      await execAsync('pkill -f "cursor.*agent" || true', { timeout: 5000 });
+      console.log(chalk.gray('  Killed hanging Cursor background agent processes'));
+    } catch (error) {
+      console.log(chalk.gray('  No background agent processes found'));
+    }
+
+    // Step 2: Delete Cursor agent files (not archived, deleted completely)
+    console.log(chalk.cyan('🗑️  Deleting Cursor agent files...'));
+    const agentsDir = path.resolve(projectRoot, '.cursor/agents');
+    let deletedAgentCount = 0;
+    if (await fs.pathExists(agentsDir)) {
+      try {
+        const agentFiles = await fs.readdir(agentsDir);
+        for (const file of agentFiles) {
+          if (file.endsWith('.md')) {
+            const filePath = path.join(agentsDir, file);
+            await fs.unlink(filePath);
+            deletedAgentCount++;
+            console.log(chalk.gray(`  Deleted ${path.relative(projectRoot, filePath)}`));
+          }
+        }
+      } catch (error) {
+        console.log(chalk.yellow(`  Warning: Could not delete agent files: ${error}`));
+      }
+    }
+    if (deletedAgentCount > 0) {
+      console.log(chalk.green(`✓ Deleted ${deletedAgentCount} agent file(s)`));
+    } else {
+      console.log(chalk.gray('  No agent files to delete'));
+    }
+
     // Files to archive
     const filesToArchive: Array<{ source: string; dest: string }> = [];
 
@@ -60,6 +98,7 @@ export async function archiveCommand(options: ArchiveOptions): Promise<void> {
       '.devloop/schema-metrics.json',
       '.devloop/observation-metrics.json',
       '.devloop/pattern-metrics.json',
+      '.devloop/cursor-sessions.json', // Cursor background agent session state
     ];
 
     for (const file of devloopFiles) {
@@ -109,6 +148,47 @@ export async function archiveCommand(options: ArchiveOptions): Promise<void> {
           const destPath = path.join(archiveDir, 'taskmaster', 'tasks', file);
           filesToArchive.push({ source: sourcePath, dest: destPath });
         }
+      }
+    }
+
+    // Cursor chat request files
+    const cursorChatRequestsPath = path.resolve(projectRoot, 'files-private/cursor/chat-requests.json');
+    if (await fs.pathExists(cursorChatRequestsPath)) {
+      const destPath = path.join(archiveDir, 'files-private', 'cursor', 'chat-requests.json');
+      filesToArchive.push({ source: cursorChatRequestsPath, dest: destPath });
+    }
+
+    // Cursor chat instructions directory
+    const cursorChatInstructionsDir = path.resolve(projectRoot, 'files-private/cursor/chat-instructions');
+    if (await fs.pathExists(cursorChatInstructionsDir)) {
+      try {
+        const instructionFiles = await fs.readdir(cursorChatInstructionsDir);
+        for (const file of instructionFiles) {
+          if (file.endsWith('.md') || file.endsWith('.json')) {
+            const sourcePath = path.join(cursorChatInstructionsDir, file);
+            const destPath = path.join(archiveDir, 'files-private', 'cursor', 'chat-instructions', file);
+            filesToArchive.push({ source: sourcePath, dest: destPath });
+          }
+        }
+      } catch (error) {
+        // Directory might be empty or inaccessible
+      }
+    }
+
+    // Cursor completed requests directory
+    const cursorCompletedDir = path.resolve(projectRoot, 'files-private/cursor/completed');
+    if (await fs.pathExists(cursorCompletedDir)) {
+      try {
+        const completedFiles = await fs.readdir(cursorCompletedDir);
+        for (const file of completedFiles) {
+          if (file.endsWith('.json')) {
+            const sourcePath = path.join(cursorCompletedDir, file);
+            const destPath = path.join(archiveDir, 'files-private', 'cursor', 'completed', file);
+            filesToArchive.push({ source: sourcePath, dest: destPath });
+          }
+        }
+      } catch (error) {
+        // Directory might be empty or inaccessible
       }
     }
 
@@ -173,6 +253,7 @@ export async function archiveCommand(options: ArchiveOptions): Promise<void> {
       '.devloop/schema-metrics.json',
       '.devloop/observation-metrics.json',
       '.devloop/pattern-metrics.json',
+      '.devloop/cursor-sessions.json', // Reset cursor sessions
     ];
 
     for (const file of devloopFilesToReset) {
@@ -184,7 +265,15 @@ export async function archiveCommand(options: ArchiveOptions): Promise<void> {
       }
     }
 
+    // Reset cursor chat requests file
+    if (movedFiles.includes(cursorChatRequestsPath)) {
+      await fs.ensureDir(path.dirname(cursorChatRequestsPath));
+      await fs.writeJson(cursorChatRequestsPath, [], { spaces: 2 });
+      console.log(chalk.gray(`  Reset ${path.relative(projectRoot, cursorChatRequestsPath)}`));
+    }
+
     // Note: PRD context files are not reset (directory may not exist if empty)
+    // Note: Chat instruction files and completed files don't need reset (directories will be empty)
 
     // Compress if requested
     if (options.compress) {

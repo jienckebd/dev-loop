@@ -74,8 +74,9 @@ export class PrdParser {
       parallel?: boolean;
       tasks?: Array<{
         id: string;
-        title: string;
-        description: string;
+        title?: string;
+        description?: string;
+        testSpec?: Record<string, unknown>;
       }>;
     }>;
   }): Requirement[] {
@@ -87,44 +88,82 @@ export class PrdParser {
     }
 
     for (const phase of requirementsMeta.phases) {
-      if (!phase.tasks) {
-        continue;
-      }
-
-      for (const task of phase.tasks) {
-        // If task.id already matches the pattern prefix, use it directly
-        // Otherwise, apply the pattern
-        let reqId: string;
-        const patternPrefix = idPattern.split('{id}')[0];
-        if (task.id.startsWith(patternPrefix)) {
-          reqId = task.id;
-        } else {
-          reqId = idPattern.replace('{id}', task.id);
-        }
-        const description = task.description.trim();
-
-        // Extract acceptance criteria from description (lines starting with -)
-        const acceptanceCriteria: string[] = [];
-        const lines = description.split('\n');
-        for (const line of lines) {
-          const trimmed = line.trim();
-          if (trimmed.startsWith('-') && trimmed.length > 2) {
-            acceptanceCriteria.push(trimmed.substring(1).trim());
+      // If phase has tasks, create requirements from tasks
+      if (phase.tasks && phase.tasks.length > 0) {
+        for (const task of phase.tasks) {
+          // If task.id already matches the pattern prefix, use it directly
+          // Otherwise, apply the pattern
+          let reqId: string;
+          const patternPrefix = idPattern.split('{id}')[0];
+          if (task.id.startsWith(patternPrefix)) {
+            reqId = task.id;
+          } else {
+            reqId = idPattern.replace('{id}', task.id);
           }
-        }
 
-        // If no explicit criteria found, use description as main criterion
-        if (acceptanceCriteria.length === 0) {
-          // Use first line or first sentence as main criterion
-          const firstLine = description.split('\n')[0].trim();
-          acceptanceCriteria.push(firstLine || 'Requirement must be testable');
+          // Handle optional description - use testSpec.describe as fallback
+          const description = task.description?.trim()
+            || (task.testSpec?.describe as string | undefined)?.trim()
+            || '';
+
+          // Extract acceptance criteria from description (lines starting with -)
+          const acceptanceCriteria: string[] = [];
+          if (description) {
+            const lines = description.split('\n');
+            for (const line of lines) {
+              const trimmed = line.trim();
+              if (trimmed.startsWith('-') && trimmed.length > 2) {
+                acceptanceCriteria.push(trimmed.substring(1).trim());
+              }
+            }
+          }
+
+          // If no explicit criteria found, use description or testSpec info as main criterion
+          if (acceptanceCriteria.length === 0) {
+            // Use first line or first sentence as main criterion
+            const firstLine = description ? description.split('\n')[0].trim() : '';
+            // Fallback to testSpec cases if available
+            const testCases = task.testSpec?.cases as Array<{ name: string }> | undefined;
+            if (firstLine) {
+              acceptanceCriteria.push(firstLine);
+            } else if (testCases && testCases.length > 0) {
+              // Use test case names as acceptance criteria
+              for (const testCase of testCases) {
+                if (testCase.name) {
+                  acceptanceCriteria.push(testCase.name);
+                }
+              }
+            } else {
+              acceptanceCriteria.push('Requirement must be testable');
+            }
+          }
+
+          // Use title, or derive from testSpec.describe, or use task id
+          const title = task.title
+            || (task.testSpec?.describe as string | undefined)
+            || `Task ${task.id}`;
+
+          requirements.push({
+            id: reqId,
+            description: title + (description ? '\n\n' + description : ''),
+            acceptanceCriteria,
+            priority: 'must', // Default to 'must' for structured requirements
+            status: 'pending',
+            type: 'functional',
+          });
         }
+      } else {
+        // Phase has no tasks - create a requirement from the phase itself
+        // This handles cases like index.md.yml where phases are defined but tasks are in child PRDs
+        const phaseReqId = idPattern.replace('{id}', `PHASE-${phase.id}`);
+        const phaseTitle = phase.name || `Phase ${phase.id}`;
+        const phaseDescription = `Complete phase: ${phaseTitle}`;
 
         requirements.push({
-          id: reqId,
-          description: task.title + (description ? '\n\n' + description : ''),
-          acceptanceCriteria,
-          priority: 'must', // Default to 'must' for structured requirements
+          id: phaseReqId,
+          description: phaseDescription,
+          acceptanceCriteria: [phaseDescription],
+          priority: 'must',
           status: 'pending',
           type: 'functional',
         });

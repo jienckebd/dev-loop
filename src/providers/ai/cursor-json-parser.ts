@@ -20,6 +20,7 @@ import { logger } from '../../core/logger';
  * - Cursor agent result format (response.raw)
  * - Text responses (string or response.text)
  * - Content property responses
+ * - Parsed JSON strings that may contain CodeChanges in various fields
  *
  * @param response - Response from Cursor background agent (various formats)
  * @returns CodeChanges object or null if extraction fails
@@ -31,12 +32,39 @@ export function extractCodeChanges(response: any): CodeChanges | null {
 
   // Case 1: Direct CodeChanges object
   if (response.files && Array.isArray(response.files) && response.summary) {
+    logger.debug(`[CursorJsonParser] Extracted CodeChanges from direct object: ${response.files.length} files`);
     return response as CodeChanges;
   }
 
   // Case 2: CodeChanges nested in response
   if (response.codeChanges) {
+    logger.debug(`[CursorJsonParser] Extracted CodeChanges from codeChanges property: ${response.codeChanges.files?.length || 0} files`);
     return response.codeChanges as CodeChanges;
+  }
+
+  // Case 2a: Check for common nested properties (result, data, response, output)
+  const nestedPaths = ['result', 'data', 'response', 'output', 'content'];
+  for (const path of nestedPaths) {
+    if (response[path]) {
+      const nested = response[path];
+      // Check if nested object is CodeChanges
+      if (nested.files && Array.isArray(nested.files) && nested.summary) {
+        logger.debug(`[CursorJsonParser] Extracted CodeChanges from ${path} property: ${nested.files.length} files`);
+        return nested as CodeChanges;
+      }
+      // Try parsing as stringified JSON
+      if (typeof nested === 'string') {
+        try {
+          const parsed = JSON.parse(nested);
+          if (parsed.files && Array.isArray(parsed.files) && parsed.summary) {
+            logger.debug(`[CursorJsonParser] Extracted CodeChanges from ${path} (parsed string): ${parsed.files.length} files`);
+            return parsed as CodeChanges;
+          }
+        } catch {
+          // Not JSON, continue
+        }
+      }
+    }
   }
 
   // Case 3: Cursor agent result format - check result field first
@@ -52,7 +80,51 @@ export function extractCodeChanges(response: any): CodeChanges | null {
       // Not JSON, try extracting from text
     }
     // Extract from text (may contain JSON code blocks)
-    return parseCodeChangesFromText(resultText);
+    const extracted = parseCodeChangesFromText(resultText);
+    if (extracted) return extracted;
+  }
+
+  // Case 3b: Check if response itself is a Cursor result object
+  if (response.type === 'result' && response.result) {
+    const resultText = typeof response.result === 'string' ? response.result : JSON.stringify(response.result);
+    const extracted = parseCodeChangesFromText(resultText);
+    if (extracted) {
+      logger.debug(`[CursorJsonParser] Extracted CodeChanges from response.result: ${extracted.files.length} files`);
+      return extracted;
+    }
+  }
+
+  // Case 3c: Check text field (may contain stringified result object with JSON inside)
+  if (response.text && typeof response.text === 'string') {
+    // Try parsing as JSON first (might be stringified result object)
+    try {
+      const parsedText = JSON.parse(response.text);
+      // If it's a result object, extract from result field
+      if (parsedText.type === 'result' && parsedText.result) {
+        const extracted = parseCodeChangesFromText(parsedText.result);
+        if (extracted) {
+          logger.debug(`[CursorJsonParser] Extracted CodeChanges from response.text (result object): ${extracted.files.length} files`);
+          return extracted;
+        }
+      }
+    } catch {
+      // Not JSON, try extracting directly from text
+    }
+    // Extract directly from text (may contain JSON code blocks)
+    const extracted = parseCodeChangesFromText(response.text);
+    if (extracted) {
+      logger.debug(`[CursorJsonParser] Extracted CodeChanges from response.text: ${extracted.files.length} files`);
+      return extracted;
+    }
+  }
+
+  // Case 3d: Check stdout field (background agent output)
+  if (response.stdout && typeof response.stdout === 'string') {
+    const extracted = parseCodeChangesFromText(response.stdout);
+    if (extracted) {
+      logger.debug(`[CursorJsonParser] Extracted CodeChanges from stdout: ${extracted.files.length} files`);
+      return extracted;
+    }
   }
 
   // Case 4: Text response - try to extract JSON code blocks
@@ -63,10 +135,38 @@ export function extractCodeChanges(response: any): CodeChanges | null {
 
   // Case 5: Check for common patterns in response object
   if (response.content) {
-    return parseCodeChangesFromText(response.content);
+    const extracted = parseCodeChangesFromText(response.content);
+    if (extracted) {
+      logger.debug(`[CursorJsonParser] Extracted CodeChanges from content: ${extracted.files.length} files`);
+      return extracted;
+    }
   }
 
-  logger.debug('[CursorJsonParser] Could not extract code changes from response');
+  // Log diagnostic info before returning null (for contribution mode debugging)
+  if (typeof response === 'object' && response !== null) {
+    const responseKeys = Object.keys(response);
+    logger.debug(`[CursorJsonParser] Could not extract CodeChanges. Response keys: ${responseKeys.join(', ')}. Response type: ${response.constructor?.name || typeof response}`);
+    // Log sample of response structure (limited size) - focus on keys that might contain CodeChanges
+    try {
+      const sample: any = {};
+      for (const key of ['text', 'raw', 'result', 'data', 'response', 'output', 'content']) {
+        if (response[key] !== undefined) {
+          const value = response[key];
+          if (typeof value === 'string') {
+            sample[key] = value.substring(0, 200) + (value.length > 200 ? '...' : '');
+          } else if (typeof value === 'object' && value !== null) {
+            sample[key] = Object.keys(value).join(', ');
+          } else {
+            sample[key] = typeof value;
+          }
+        }
+      }
+      logger.debug(`[CursorJsonParser] Response sample: ${JSON.stringify(sample)}`);
+    } catch {
+      // Can't stringify, skip
+    }
+  }
+
   return null;
 }
 
@@ -135,7 +235,8 @@ export function parseCodeChangesFromText(text: string): CodeChanges | null {
 
   // Try to find CodeChanges structure anywhere in text (more flexible regex)
   // Match: {"files": [...], "summary": "..."}
-  const codeChangesRegex = /\{\s*"files"\s*:\s*\[[\s\S]{0,50000}\]\s*,\s*"summary"\s*:\s*"[^"]*"\s*\}/;
+  // Enhanced: Support multi-line, nested objects, and various whitespace patterns
+  const codeChangesRegex = /\{\s*"files"\s*:\s*\[[\s\S]{0,50000}?\]\s*,\s*"summary"\s*:\s*"(?:[^"\\]|\\.)*"\s*\}/;
   const codeChangesMatch = text.match(codeChangesRegex);
   if (codeChangesMatch) {
     let jsonStr = codeChangesMatch[0];
@@ -160,6 +261,62 @@ export function parseCodeChangesFromText(text: string): CodeChanges | null {
         }
       } catch (retryError) {
         logger.debug(`[CursorJsonParser] Failed to parse CodeChanges JSON: ${error}`);
+      }
+    }
+  }
+
+  // NEW: Try finding JSON object with balanced braces (more robust extraction)
+  // This handles cases where the regex might miss nested structures
+  const braceStart = text.indexOf('{"files"');
+  if (braceStart !== -1) {
+    let braceCount = 0;
+    let inString = false;
+    let escapeNext = false;
+    let endPos = braceStart;
+
+    for (let i = braceStart; i < text.length; i++) {
+      const char = text[i];
+
+      if (escapeNext) {
+        escapeNext = false;
+        continue;
+      }
+
+      if (char === '\\') {
+        escapeNext = true;
+        continue;
+      }
+
+      if (char === '"' && !escapeNext) {
+        inString = !inString;
+        continue;
+      }
+
+      if (!inString) {
+        if (char === '{') braceCount++;
+        if (char === '}') {
+          braceCount--;
+          if (braceCount === 0) {
+            endPos = i + 1;
+            break;
+          }
+        }
+      }
+    }
+
+    if (endPos > braceStart && braceCount === 0) {
+      const jsonStr = text.substring(braceStart, endPos);
+      try {
+        const parsed = JSON.parse(jsonStr);
+        if (parsed.files && Array.isArray(parsed.files)) {
+          if (!parsed.summary) {
+            parsed.summary = `Generated ${parsed.files.length} file(s)`;
+          }
+          logger.debug(`[CursorJsonParser] Extracted CodeChanges using balanced brace algorithm: ${parsed.files.length} files`);
+          return parsed as CodeChanges;
+        }
+      } catch (error) {
+        logger.debug(`[CursorJsonParser] Failed to parse balanced brace JSON: ${error instanceof Error ? error.message : String(error)}`);
       }
     }
   }

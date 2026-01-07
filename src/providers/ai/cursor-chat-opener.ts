@@ -698,30 +698,64 @@ export class CursorChatOpener {
       }
 
       // Use spawn with stdin for long prompts (more reliable than command-line args)
-      return new Promise<ChatOpenResult>((resolve) => {
-        const child = spawn(this.cursorPath!, args, {
-          cwd: workspacePath,
-          stdio: ['pipe', 'pipe', 'pipe'],
-        });
+      // Add timeout to prevent hanging (default 5 minutes for background agents)
+      // Code generation should complete in < 5 minutes; test generation may take longer
+      // Can be overridden via config.cursor.agents.backgroundAgentTimeout
+      const configTimeout = (this.config as any).backgroundAgentTimeout;
+      const timeoutMs = configTimeout ? configTimeout * 60 * 1000 : 5 * 60 * 1000; // Default: 5 minutes
+      const timeoutPromise = new Promise<ChatOpenResult>((resolve) => {
+        setTimeout(() => {
+          resolve({
+            success: false,
+            method: 'agent',
+            message: `Background agent timed out after ${timeoutMs / 1000 / 60} minutes`,
+          });
+        }, timeoutMs);
+      });
 
-        let stdout = '';
-        let stderr = '';
+      return Promise.race([
+        timeoutPromise,
+        new Promise<ChatOpenResult>((resolve) => {
+          const child = spawn(this.cursorPath!, args, {
+            cwd: workspacePath,
+            stdio: ['pipe', 'pipe', 'pipe'],
+          });
 
-        child.stdout?.on('data', (data) => {
-          stdout += data.toString();
-        });
+          let stdout = '';
+          let stderr = '';
 
-        child.stderr?.on('data', (data) => {
-          stderr += data.toString();
-        });
+          child.stdout?.on('data', (data) => {
+            stdout += data.toString();
+          });
 
-        // Write enhanced prompt (with history) to stdin if provided
-        if (enhancedPrompt) {
-          child.stdin?.write(enhancedPrompt);
-          child.stdin?.end();
-        }
+          child.stderr?.on('data', (data) => {
+            stderr += data.toString();
+          });
 
-        child.on('close', (code) => {
+          // Write enhanced prompt (with history) to stdin if provided
+          if (enhancedPrompt) {
+            child.stdin?.write(enhancedPrompt);
+            child.stdin?.end();
+          }
+
+          // Handle timeout - kill the child process
+          const timeoutHandle = setTimeout(() => {
+            logger.warn(`[CursorChatOpener] Background agent timeout after ${timeoutMs / 1000 / 60} minutes, killing process`);
+            try {
+              child.kill('SIGTERM');
+              // Force kill after a short grace period
+              setTimeout(() => {
+                if (!child.killed) {
+                  child.kill('SIGKILL');
+                }
+              }, 5000);
+            } catch (error) {
+              logger.error(`[CursorChatOpener] Failed to kill background agent process: ${error}`);
+            }
+          }, timeoutMs);
+
+          child.on('close', (code) => {
+            clearTimeout(timeoutHandle);
           if (code !== 0 && stderr) {
             logger.warn(`[CursorChatOpener] Background agent exited with code ${code}: ${stderr.substring(0, 200)}`);
           }
@@ -841,15 +875,17 @@ export class CursorChatOpener {
           }
         });
 
-        child.on('error', (error) => {
-          logger.error(`[CursorChatOpener] Background agent spawn error: ${error.message}`);
-          resolve({
-            success: false,
-            method: 'agent',
-            message: error.message,
+          child.on('error', (error) => {
+            clearTimeout(timeoutHandle);
+            logger.error(`[CursorChatOpener] Background agent spawn error: ${error.message}`);
+            resolve({
+              success: false,
+              method: 'agent',
+              message: error.message,
+            });
           });
-        });
-      });
+        }),
+      ]);
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : String(error);
       logger.error(`[CursorChatOpener] Background agent failed: ${errorMessage}`);

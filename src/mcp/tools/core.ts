@@ -231,16 +231,31 @@ export function registerCoreTools(mcp: FastMCPType, getConfig: ConfigLoader): vo
             detected: false,
           };
 
+      // Calculate timeout from PRD config or use default (180 minutes)
+      const timeoutMinutes = (prdConfigOverlay as any)?.execution?.timeoutMinutes || 180;
+      const timeoutMs = timeoutMinutes * 60 * 1000;
+
       // Import the PRD command handler
       const { prdCommand } = await import('../../cli/commands/prd.js');
 
+      // Create timeout promise
+      const timeoutPromise = new Promise<never>((_, reject) => {
+        setTimeout(() => {
+          reject(new Error(`PRD execution timed out after ${timeoutMinutes} minutes`));
+        }, timeoutMs);
+      });
+
       try {
-        await prdCommand({
-          prd: args.prdPath,
-          config: args.config,
-          debug: args.debug,
-          resume: args.resume,
-        });
+        // Race between PRD execution and timeout
+        await Promise.race([
+          prdCommand({
+            prd: args.prdPath,
+            config: args.config,
+            debug: args.debug,
+            resume: args.resume,
+          }),
+          timeoutPromise,
+        ]);
 
         return JSON.stringify({
           success: true,
@@ -248,9 +263,22 @@ export function registerCoreTools(mcp: FastMCPType, getConfig: ConfigLoader): vo
           prdConfig: prdConfigInfo,
         });
       } catch (error) {
+        const errorMessage = error instanceof Error ? error.message : String(error);
+        
+        // Check if it's a timeout error
+        if (errorMessage.includes('timed out')) {
+          return JSON.stringify({
+            success: false,
+            error: errorMessage,
+            timeout: true,
+            timeoutMinutes,
+            prdConfig: prdConfigInfo,
+          });
+        }
+
         return JSON.stringify({
           success: false,
-          error: error instanceof Error ? error.message : String(error),
+          error: errorMessage,
           prdConfig: prdConfigInfo,
         });
       }
