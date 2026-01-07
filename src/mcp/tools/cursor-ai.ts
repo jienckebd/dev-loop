@@ -29,8 +29,9 @@ interface DirectRequest {
 // Map of request ID to pending request
 const pendingRequests = new Map<string, DirectRequest>();
 
-// Maximum wait time for direct requests (10 minutes for contribution mode)
-const MAX_WAIT_TIME = 600000;
+// Maximum wait time for direct requests (configurable, default 5 minutes)
+// Can be overridden via CURSOR_AI_TIMEOUT environment variable
+const MAX_WAIT_TIME = parseInt(process.env.CURSOR_AI_TIMEOUT || '300000', 10);
 
 // Configurable path for Cursor AI files (can be set via setCursorAIPath or config)
 let cursorAIPath: string | null = null;
@@ -288,12 +289,14 @@ export async function executeCursorGenerateCode(
         removeRequestFromFile(requestId);
         const pendingFile = getPendingRequestsFile();
         const completedDir = getCompletedRequestsDir();
+        const timeoutMinutes = Math.round(MAX_WAIT_TIME / 60000);
         reject(new Error(
-          `Timeout waiting for Cursor AI to process request ${requestId}. ` +
+          `Timeout waiting for Cursor AI to process request ${requestId} (waited ${timeoutMinutes} minutes). ` +
           `The request was written to ${pendingFile} for manual processing. ` +
           `To complete this request, write a response to ${completedDir}/${requestId}.json ` +
           `with format: {"codeChanges": {"files": [...], "summary": "..."}}. ` +
-          `If using file-based communication, check ${pendingFile} for pending requests.`
+          `If using file-based communication, check ${pendingFile} for pending requests. ` +
+          `To adjust timeout, set CURSOR_AI_TIMEOUT environment variable (in milliseconds).`
         ));
       }
     }, MAX_WAIT_TIME);

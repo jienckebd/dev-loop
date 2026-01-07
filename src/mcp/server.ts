@@ -8,6 +8,7 @@ import { registerCoreTools } from './tools/core';
 import { registerDebugTools } from './tools/debug';
 import { registerControlTools } from './tools/control';
 import { registerContributionTools } from './tools/contribution';
+import { registerBackgroundAgentTools } from './tools/background-agent';
 
 // Load .env file from project root before anything else
 // This ensures API keys are available when config loads
@@ -22,15 +23,15 @@ const MCP_LOG_PATH = process.env.MCP_LOG_PATH || '/tmp/dev-loop-mcp.log';
 
 function logMcp(type: 'REQUEST' | 'RESPONSE' | 'ERROR', toolName: string, data: any): void {
   const timestamp = new Date().toISOString();
-  
+
   const logLine = `[${timestamp}] ${type} ${toolName}: ${JSON.stringify(data)}\n`;
-  
+
   try {
     fs.appendFileSync(MCP_LOG_PATH, logLine);
   } catch (e) {
     // Silently fail if we can't write to log
   }
-  
+
   // Also output to stderr for debug visibility (MCP uses stdout for protocol)
   if (process.env.MCP_DEBUG === 'true') {
     console.error(`[MCP ${type}] ${toolName}:`, JSON.stringify(data, null, 2));
@@ -48,10 +49,10 @@ async function main() {
     addTool(tool: any): void {
       const originalExecute = tool.execute;
       const toolName = tool.name;
-      
+
       tool.execute = async (args: any, context: any) => {
         logMcp('REQUEST', toolName, { args });
-        
+
         try {
           const result = await originalExecute(args, context);
           logMcp('RESPONSE', toolName, { result });
@@ -61,7 +62,7 @@ async function main() {
           throw error;
         }
       };
-      
+
       super.addTool(tool);
     }
   }
@@ -93,6 +94,7 @@ async function main() {
   registerDebugTools(mcp, getConfig);
   registerControlTools(mcp, getConfig);
   registerContributionTools(mcp, getConfig);
+  registerBackgroundAgentTools(mcp, getConfig);
 
   // Start the MCP server with stdio transport
   await mcp.start({ transportType: 'stdio' });

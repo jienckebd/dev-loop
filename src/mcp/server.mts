@@ -146,7 +146,7 @@ const logPath = '/tmp/dev-loop.log';
 const originalConsoleLog = console.log;
 console.log = (...args: any[]) => {
   const message = args.map(arg => typeof arg === 'string' ? arg : JSON.stringify(arg)).join(' ');
-  
+
   // Write to log file via logger (if available) instead of stderr
   // This prevents Cursor MCP client from prefixing with [error]
   if (mcpLogger) {
@@ -333,136 +333,12 @@ addLoggedTool({
 });
 
 // ============================================
-// Evolution Mode Tools (3)
-// ============================================
-
-addLoggedTool({
-  name: 'devloop_evolution_start',
-  description: 'Start evolution mode with a PRD',
-  parameters: z.object({
-    prd: z.string().describe('Path to PRD file'),
-    config: z.string().optional().describe('Path to config file'),
-  }),
-  execute: async (args: { prd: string; config?: string }) => {
-    const { loadConfig } = await import('../config/loader.js');
-    const { PrdTracker } = await import('../core/prd-tracker.js');
-
-    const config = await loadConfig(args.config);
-    const prdTracker = new PrdTracker(config);
-
-    // Initialize evolution mode state
-    const evolutionState = {
-      active: true,
-      prdPath: args.prd,
-      startedAt: new Date().toISOString(),
-      iterations: 0,
-    };
-
-    const statePath = path.join(process.cwd(), '.devloop', 'evolution-state.json');
-    fs.mkdirSync(path.dirname(statePath), { recursive: true });
-    fs.writeFileSync(statePath, JSON.stringify(evolutionState, null, 2));
-
-    return JSON.stringify({
-      success: true,
-      message: 'Evolution mode started',
-      state: evolutionState,
-    });
-  },
-});
-
-addLoggedTool({
-  name: 'devloop_evolution_status',
-  description: 'Get evolution mode status',
-  parameters: z.object({}),
-  execute: async () => {
-    const statePath = path.join(process.cwd(), '.devloop', 'evolution-state.json');
-
-    try {
-      const content = fs.readFileSync(statePath, 'utf-8');
-      const state = JSON.parse(content);
-      return JSON.stringify({
-        active: state.active,
-        ...state,
-      });
-    } catch {
-      return JSON.stringify({
-        active: false,
-        message: 'Evolution mode not active',
-      });
-    }
-  },
-});
-
-addLoggedTool({
-  name: 'devloop_evolution_stop',
-  description: 'Stop evolution mode',
-  parameters: z.object({}),
-  execute: async () => {
-    const statePath = path.join(process.cwd(), '.devloop', 'evolution-state.json');
-
-    try {
-      const content = fs.readFileSync(statePath, 'utf-8');
-      const state = JSON.parse(content);
-      state.active = false;
-      state.stoppedAt = new Date().toISOString();
-      fs.writeFileSync(statePath, JSON.stringify(state, null, 2));
-
-      return JSON.stringify({
-        success: true,
-        message: 'Evolution mode stopped',
-        state,
-      });
-    } catch {
-      return JSON.stringify({
-        success: false,
-        message: 'Evolution mode was not active',
-      });
-    }
-  },
-});
-
-// ============================================
 // Task Management Tools
 // ============================================
 
 addLoggedTool({
-  name: 'devloop_reset_task',
-  description: 'Reset a blocked task to pending status and clear its retry count',
-  parameters: z.object({
-    taskId: z.string().describe('Task ID to reset (e.g., "1" or "fix-1-12345")'),
-    config: z.string().optional().describe('Path to config file (optional)'),
-  }),
-  execute: async (args: { taskId: string; config?: string }) => {
-    const { loadConfig } = await import('../config/loader.js');
-    const { TaskMasterBridge } = await import('../core/task-bridge.js');
-
-    const config = await loadConfig(args.config);
-    const taskBridge = new TaskMasterBridge(config);
-
-    try {
-      // Reset retry count
-      taskBridge.resetRetryCount(args.taskId);
-
-      // Update task status to pending
-      await taskBridge.updateTaskStatus(args.taskId, 'pending');
-
-      return JSON.stringify({
-        success: true,
-        message: `Task ${args.taskId} reset to pending and retry count cleared`,
-        taskId: args.taskId,
-      });
-    } catch (error) {
-      return JSON.stringify({
-        success: false,
-        error: error instanceof Error ? error.message : String(error),
-      });
-    }
-  },
-});
-
-addLoggedTool({
   name: 'devloop_diagnostics',
-  description: 'Get evolution mode diagnostics including retry counts, blocked tasks, and recent failures',
+  description: 'Get diagnostics including retry counts, blocked tasks, and recent failures',
   parameters: z.object({
     config: z.string().optional().describe('Path to config file (optional)'),
   }),
@@ -671,6 +547,15 @@ try {
 } catch (error) {
   console.error('Failed to register Cursor AI tools:', error);
   // Continue without Cursor AI tools if import fails
+}
+
+// Import and register Cursor Chat tools
+try {
+  const { registerCursorChatTools } = await import('./tools/cursor-chat.js');
+  registerCursorChatTools(mcp);
+} catch (error) {
+  console.error('Failed to register Cursor Chat tools:', error);
+  // Continue without Cursor Chat tools if import fails
 }
 
 // Start the MCP server
