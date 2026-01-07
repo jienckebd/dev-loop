@@ -894,6 +894,71 @@ const configSchema = z.object({
     agentName: z.string().default('DevLoopCodeGen'),
     // Default model to request (auto, claude-sonnet, gpt-4, etc.)
     model: z.string().default('auto'),
+    // Agent configuration for auto-generation and chat creation
+    agents: z.object({
+      // Enable agent auto-generation and chat request system
+      enabled: z.boolean().default(true),
+      // Automatically generate agent config files in .cursor/agents/
+      autoGenerate: z.boolean().default(true),
+      // Path to agent config files directory (relative to project root)
+      agentsPath: z.string().default('.cursor/agents'),
+      // Path to chat requests JSON file
+      chatRequestsPath: z.string().default('files-private/cursor/chat-requests.json'),
+      // Path to chat instruction files directory (use .cursor/chat-instructions/ so Cursor can detect them)
+      chatInstructionsPath: z.string().default('.cursor/chat-instructions'),
+      // Default chat mode (Ask, Chat, Compose)
+      defaultMode: z.enum(['Ask', 'Chat', 'Compose']).default('Ask'),
+      // Auto-process chat requests in watch mode (100% automation)
+      autoProcess: z.boolean().default(true),
+      // Enable file watching for new chat requests
+      watchMode: z.boolean().default(true),
+      // Polling interval in milliseconds for checking new requests
+      processInterval: z.number().default(2000),
+      // Automatically open instruction files in Cursor when created
+      autoOpen: z.boolean().default(true),
+      // Automatically open chats via CLI when created
+      autoOpenChats: z.boolean().default(true),
+      // Open as agent chat (vs editor tab)
+      openAsAgent: z.boolean().default(true),
+      // Open as editor tab (alternative to agent)
+      openAsTab: z.boolean().default(false),
+      // Strategy for opening chats: 'auto', 'cli', 'agent', 'ide', 'file', 'manual'
+      openStrategy: z.enum(['auto', 'cli', 'agent', 'ide', 'file', 'manual']).default('agent'),
+      // Fallback to manual instructions if auto-open fails
+      fallbackToManual: z.boolean().default(true),
+      // Prefer IDE chat integration (prompt files for composer) over terminal agent
+      preferIdeChat: z.boolean().default(false),
+      // Enable keyboard automation for macOS (AppleScript-based Cmd+L simulation)
+      keyboardAutomation: z.boolean().default(false),
+      // Fully automate chat opening (skip file opening, go straight to composer with paste)
+      // Requires keyboardAutomation: true and macOS
+      fullAutomation: z.boolean().default(false),
+      // Format for prompt files: 'markdown' or 'plain'
+      promptFileFormat: z.enum(['markdown', 'plain']).default('markdown'),
+      // Path to composer-ready prompt files
+      chatPromptsPath: z.string().default('.cursor/chat-prompts'),
+      // Use background agent mode (--print) for headless operation
+      useBackgroundAgent: z.boolean().default(true),
+      // Output format for background agent: 'json', 'text', or 'stream-json'
+      agentOutputFormat: z.enum(['json', 'text', 'stream-json']).default('json'),
+      // Create visible chat agents for observability and guidance (runs parallel to background agents)
+      createObservabilityChats: z.boolean().default(true),
+      // Strategy for opening observability chats: 'agent', 'ide', 'file', 'manual'
+      observabilityStrategy: z.enum(['agent', 'ide', 'file', 'manual']).default('agent'),
+      // Fallback to file-based method if background agent fails
+      fallbackToFileBased: z.boolean().default(true),
+      // Session management for context persistence between background agent calls
+      sessionManagement: z.object({
+        // Enable session management (default: true)
+        enabled: z.boolean().default(true),
+        // Maximum session age in milliseconds before cleanup (default: 1 hour)
+        maxSessionAge: z.number().int().default(3600000),
+        // Maximum number of history entries per session (default: 50)
+        maxHistoryItems: z.number().int().default(50),
+        // Path to sessions storage file (relative to project root)
+        sessionsPath: z.string().default('.devloop/cursor-sessions.json'),
+      }).optional(),
+    }).optional(),
   }).optional(),
 
   // AI pattern detection configuration

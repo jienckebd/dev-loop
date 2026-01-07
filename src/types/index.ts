@@ -24,6 +24,10 @@ export interface TaskContext {
   task: Task;
   projectFiles?: string[];
   codebaseContext?: string;
+  // PRD/phase context for parallel execution
+  prdId?: string;
+  phaseId?: number | null;
+  prdSetId?: string | null;
 }
 
 export interface CodePatch {
@@ -188,5 +192,66 @@ export interface Config {
     // Include builtin patterns
     useBuiltinPatterns?: boolean;
   };
+}
+
+/**
+ * Agent configuration for Cursor agent auto-generation
+ */
+export interface AgentConfig {
+  name: string;
+  model?: string;
+  purpose: string;
+  type?: string;
+  question: string;
+  mode: 'Ask' | 'Chat' | 'Compose';
+  metadata?: {
+    prdId?: string;
+    phaseId?: number | null;
+    prdSetId?: string | null;
+    taskId?: string;
+  };
+}
+
+/**
+ * Chat request for creating visible chat sessions in Cursor IDE
+ */
+export interface ChatRequest {
+  id: string;
+  agentName: string;
+  question: string;
+  model: string;
+  mode: 'Ask' | 'Chat' | 'Compose';
+  status: 'pending' | 'processed' | 'failed';
+  createdAt: string;
+  context?: {
+    prdId?: string;
+    phaseId?: number | null;
+    prdSetId?: string | null;
+    taskId?: string;
+    taskTitle?: string;
+  };
+}
+
+/**
+ * Chat instruction file for Cursor agent to process
+ */
+export interface ChatInstruction {
+  action: 'create_chat';
+  agentName: string;
+  question: string;
+  model: string;
+  mode: 'Ask' | 'Chat' | 'Compose';
+  requestId: string;
+  createdAt: string;
+  instructions: string;
+  context?: {
+    prdId?: string;
+    phaseId?: number | null;
+    prdSetId?: string | null;
+    taskId?: string;
+    taskTitle?: string;
+  };
+  /** CLI command for manual execution (e.g., "cursor agent '<question>'") */
+  cliCommand?: string;
 }
 
