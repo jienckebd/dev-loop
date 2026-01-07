@@ -21,6 +21,10 @@ import { resetCommand } from './cli/commands/reset';
 import { handoffCreateCommand, handoffShowCommand, handoffListCommand } from './cli/commands/handoff';
 import { configShowCommand } from './cli/commands/config';
 import { validateCommand } from './cli/commands/validate';
+import { validateCursorAgentsCommand } from './cli/commands/validate-cursor-agents';
+import { checkAgentVisibilityCommand } from './cli/commands/check-agent-visibility';
+import { listPendingChatsCommand } from './cli/commands/list-pending-chats';
+import { openChatInstructionsCommand } from './cli/commands/open-chat-instructions';
 import { contributionCommand } from './cli/commands/contribution';
 import { evolveCommand } from './cli/commands/evolve';
 import { prdCommand } from './cli/commands/prd';
@@ -323,6 +327,49 @@ program
     });
   });
 
+program
+  .command('validate-cursor-agents')
+  .description('Validate Cursor agent setup and create test chats')
+  .action(async () => {
+    await validateCursorAgentsCommand();
+  });
+
+program
+  .command('check-agent-visibility')
+  .description('Check agent config files and verify they can be detected by Cursor')
+  .action(async () => {
+    await checkAgentVisibilityCommand();
+  });
+
+program
+  .command('list-pending-chats')
+  .description('List all pending chat instruction files and show how to create chats manually')
+  .action(async () => {
+    await listPendingChatsCommand();
+  });
+
+program
+  .command('open-chat-instructions')
+  .description('Open pending chat instruction files in Cursor IDE or start agents directly')
+  .option('-a, --all', 'Open all pending instruction files')
+  .option('-l, --latest', 'Open only the latest instruction file')
+  .option('-r, --request-id <id>', 'Open specific instruction file by request ID')
+  .option('-m, --markdown', 'Create and open markdown versions of instruction files')
+  .option('--agent', 'Start Cursor agent directly instead of opening files')
+  .option('-c, --create', 'Create a new empty chat via cursor agent create-chat')
+  .option('-p, --prompt <prompt>', 'Start agent with a specific prompt directly')
+  .action(async (options) => {
+    await openChatInstructionsCommand({
+      all: options.all,
+      latest: options.latest,
+      requestId: options.requestId,
+      createMarkdown: options.markdown,
+      agent: options.agent,
+      create: options.create,
+      prompt: options.prompt,
+    });
+  });
+
 const prdSetCmd = program
   .command('prd-set')
   .description('PRD set execution and management commands');
@@ -380,26 +427,23 @@ prdSetCmd
 
 prdSetCmd
   .command('pause <path>')
-  .description('Pause PRD set execution')
+  .description('Pause PRD set execution (coming soon)')
   .action(async (path) => {
-    console.log('Pause command not yet implemented');
-    // TODO: Implement pause functionality
+    console.log('⚠️  Pause command is not yet implemented. This feature is planned for a future release.');
   });
 
 prdSetCmd
   .command('resume <path>')
-  .description('Resume paused PRD set execution')
+  .description('Resume paused PRD set execution (coming soon)')
   .action(async (path) => {
-    console.log('Resume command not yet implemented');
-    // TODO: Implement resume functionality
+    console.log('⚠️  Resume command is not yet implemented. This feature is planned for a future release.');
   });
 
 prdSetCmd
   .command('cancel <path>')
-  .description('Cancel PRD set execution')
+  .description('Cancel PRD set execution (coming soon)')
   .action(async (path) => {
-    console.log('Cancel command not yet implemented');
-    // TODO: Implement cancel functionality
+    console.log('⚠️  Cancel command is not yet implemented. This feature is planned for a future release.');
   });
 
 program
