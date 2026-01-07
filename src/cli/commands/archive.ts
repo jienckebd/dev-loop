@@ -1,7 +1,8 @@
 /**
  * Archive Command
  *
- * Moves Task Master and dev-loop JSON state files to an archive location.
+ * Moves Task Master and dev-loop JSON state files to an archive location
+ * and resets them to empty/default state.
  */
 
 import chalk from 'chalk';
@@ -52,7 +53,6 @@ export async function archiveCommand(options: ArchiveOptions): Promise<void> {
       '.devloop/patterns.json',
       '.devloop/retry-counts.json',
       '.devloop/contribution-mode.json',
-      '.devloop/evolution-state.json',
       '.devloop/prd-set-metrics.json',
       '.devloop/prd-metrics.json',
       '.devloop/phase-metrics.json',
@@ -85,9 +85,9 @@ export async function archiveCommand(options: ArchiveOptions): Promise<void> {
     }
 
     // Task Master state files
+    // Note: .taskmaster/config.json is user configuration and should NOT be archived
     const taskmasterFiles = [
       '.taskmaster/state.json',
-      '.taskmaster/config.json',
     ];
 
     for (const file of taskmasterFiles) {
@@ -112,20 +112,79 @@ export async function archiveCommand(options: ArchiveOptions): Promise<void> {
       }
     }
 
+    // Note: tasksDir is reused below for reset logic
+
     if (filesToArchive.length === 0) {
       console.log(chalk.yellow('⚠ No state files found to archive'));
       return;
     }
 
-    // Archive files
+    // Archive files (move, not copy)
     let archivedCount = 0;
+    const movedFiles: string[] = [];
     for (const { source, dest } of filesToArchive) {
       await fs.ensureDir(path.dirname(dest));
-      await fs.copy(source, dest);
+      await fs.move(source, dest);
+      movedFiles.push(source);
       archivedCount++;
     }
 
     console.log(chalk.green(`✓ Archived ${archivedCount} file(s)`));
+
+    // Reset state files after moving
+    console.log(chalk.cyan('🔄 Resetting state files...'));
+
+    // Reset Task Master task files
+    const tasksJsonPath = path.resolve(tasksDir, 'tasks.json');
+    for (const movedFile of movedFiles) {
+      // Check if this is a task file from .taskmaster/tasks/
+      if (movedFile.startsWith(tasksDir + path.sep) && movedFile.endsWith('.json')) {
+        await fs.ensureDir(path.dirname(movedFile));
+        // Main tasks.json gets the standard structure, others get empty
+        if (movedFile === tasksJsonPath) {
+          await fs.writeJson(movedFile, { master: { tasks: [] } }, { spaces: 2 });
+        } else {
+          await fs.writeJson(movedFile, {}, { spaces: 2 });
+        }
+        console.log(chalk.gray(`  Reset ${path.relative(projectRoot, movedFile)}`));
+      }
+    }
+
+    // Reset Task Master state.json
+    const taskmasterStatePath = path.resolve(projectRoot, '.taskmaster/state.json');
+    if (movedFiles.includes(taskmasterStatePath)) {
+      await fs.ensureDir(path.dirname(taskmasterStatePath));
+      await fs.writeJson(taskmasterStatePath, { migrationNoticeShown: true }, { spaces: 2 });
+      console.log(chalk.gray(`  Reset ${path.relative(projectRoot, taskmasterStatePath)}`));
+    }
+
+    // Reset dev-loop state files
+    const devloopFilesToReset = [
+      '.devloop/state.json',
+      '.devloop/metrics.json',
+      '.devloop/observations.json',
+      '.devloop/patterns.json',
+      '.devloop/retry-counts.json',
+      '.devloop/contribution-mode.json',
+      '.devloop/prd-set-metrics.json',
+      '.devloop/prd-metrics.json',
+      '.devloop/phase-metrics.json',
+      '.devloop/feature-metrics.json',
+      '.devloop/schema-metrics.json',
+      '.devloop/observation-metrics.json',
+      '.devloop/pattern-metrics.json',
+    ];
+
+    for (const file of devloopFilesToReset) {
+      const filePath = path.resolve(projectRoot, file);
+      if (movedFiles.includes(filePath)) {
+        await fs.ensureDir(path.dirname(filePath));
+        await fs.writeJson(filePath, {}, { spaces: 2 });
+        console.log(chalk.gray(`  Reset ${path.relative(projectRoot, filePath)}`));
+      }
+    }
+
+    // Note: PRD context files are not reset (directory may not exist if empty)
 
     // Compress if requested
     if (options.compress) {
@@ -178,4 +237,7 @@ function formatFileSize(bytes: number): string {
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(2)} KB`;
   return `${(bytes / 1024 / 1024).toFixed(2)} MB`;
 }
+
+
+
 
