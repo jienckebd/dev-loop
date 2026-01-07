@@ -134,8 +134,10 @@ export class CursorChatOpener {
     logger.info(`[CursorChatOpener] Opening chat for request ${request.id} with strategy: ${strategy}`);
 
     // Try IDE strategy explicitly (deprecated - kept for backward compatibility)
+    // NOTE: IDE strategy is deprecated. Background agents (agent strategy) are the primary execution method.
+    // This path is only used if explicitly set to 'ide' strategy, which is not the default.
     if (strategy === 'ide') {
-      logger.warn('[CursorChatOpener] IDE strategy is deprecated. Use agent strategy instead.');
+      logger.warn('[CursorChatOpener] IDE strategy is deprecated. Use agent strategy with background agents instead.');
       return this.openForIdeComposer(request);
     }
 
@@ -171,6 +173,9 @@ export class CursorChatOpener {
 
   /**
    * Open a composer-ready prompt file for IDE chat panel integration
+   *
+   * DEPRECATED: This method is only used by the deprecated 'ide' strategy.
+   * Primary execution uses background agents (--print mode) which don't require IDE interaction.
    *
    * This creates a .prompt.md file that users can easily copy-paste into
    * Cursor's composer (Cmd+L / Ctrl+L).
@@ -225,6 +230,9 @@ export class CursorChatOpener {
 
   /**
    * Open composer with full automation (no file opening required)
+   *
+   * DEPRECATED: This method is only used by the deprecated 'ide' strategy.
+   * Primary execution uses background agents (--print mode) which don't require IDE interaction.
    *
    * This method:
    * 1. Extracts prompt text from request
@@ -578,7 +586,9 @@ export class CursorChatOpener {
         return await this.openWithBackgroundAgent(request, workspacePath, prompt, outputFormat, sessionId);
       }
 
-      // Interactive agent mode: Opens terminal
+      // Interactive agent mode: Opens terminal (only used if useBackgroundAgent is false)
+      // NOTE: This path is rarely used since useBackgroundAgent defaults to true.
+      // Primary execution uses background agents (--print mode) above.
       // First create a new chat
       const createResult = await this.createChat();
       if (!createResult.success || !createResult.chatId) {
@@ -1351,13 +1361,6 @@ export class CursorChatOpener {
 }
 
 /**
- * Create a default chat opener instance
- */
-export function createChatOpener(config?: CursorChatOpenerConfig): CursorChatOpener {
-  return new CursorChatOpener(config);
-}
-
-/**
  * Quick function to open a chat with minimal configuration
  */
 export async function quickOpenChat(request: ChatRequest): Promise<ChatOpenResult> {
@@ -1381,19 +1384,4 @@ export async function quickStartAgent(prompt: string, workspace?: string): Promi
   return opener.startAgentWithPrompt(prompt, { workspace });
 }
 
-/**
- * Quick function to open chat for IDE composer
- */
-export async function quickOpenForIdeComposer(request: ChatRequest): Promise<ChatOpenResult> {
-  const opener = new CursorChatOpener({ openStrategy: 'ide', preferIdeChat: true });
-  return opener.openForIdeComposer(request);
-}
-
-/**
- * Quick function to create a composer-ready prompt file
- */
-export async function quickCreatePromptFile(request: ChatRequest): Promise<string> {
-  const opener = new CursorChatOpener();
-  return opener.createComposerPromptFile(request);
-}
 

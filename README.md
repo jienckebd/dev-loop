@@ -298,12 +298,13 @@ See [`docs/users/METRICS.md`](docs/users/METRICS.md), [`docs/users/REPORTS.md`](
 
 ## Cursor Multi-Agent Integration
 
-Dev-loop can automatically generate Cursor agent configuration files and create visible chat sessions in your Cursor IDE. This enables:
+Dev-loop uses Cursor background agents (headless execution) as the primary method for autonomous code generation. This enables:
 
-- **Automatic agent creation** for each PRD/phase/task combination
-- **Visible chat sessions** in Cursor IDE for monitoring and interaction
-- **100% automated execution** via watch mode integration
-- **Parallel execution support** - multiple PRD sets and phases can run simultaneously with separate chats
+- **Background agent execution** - Headless, autonomous code generation using `cursor agent --print` mode
+- **Session persistence** - Context and conversation history maintained across tasks
+- **100% automated execution** - No manual intervention required
+- **Parallel execution support** - Multiple PRD sets and phases execute simultaneously with isolated sessions
+- **Optional observability** - Visible agent configs can be created for monitoring (optional, non-blocking)
 
 ### Quick Start
 

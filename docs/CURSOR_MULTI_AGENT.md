@@ -4,13 +4,15 @@ This document describes how to configure and use dev-loop's Cursor multi-agent c
 
 ## Overview
 
-Dev-loop can automatically generate Cursor agent configuration files and create visible chat sessions in your Cursor IDE. This enables:
+Dev-loop uses Cursor background agents (headless execution via `cursor agent --print`) as the primary method for autonomous code generation. This enables:
 
-- **Automatic agent creation** for each PRD/phase/task combination
-- **Visible chat sessions** in Cursor IDE for monitoring and interaction
-- **100% automated execution** via watch mode integration
-- **Parallel execution support** - multiple PRD sets and phases can run simultaneously with separate chats
-- **File-based approach** - no API keys required, works entirely within your project directory
+- **Background agent execution** - Headless, autonomous code generation using `cursor agent --print` mode
+- **Session persistence** - Context and conversation history maintained across tasks
+- **100% automated execution** - No manual intervention required
+- **Parallel execution support** - Multiple PRD sets and phases execute simultaneously with isolated sessions
+- **Optional observability** - Visible agent configs and chat requests can be created for monitoring (optional, non-blocking)
+
+**Primary Execution Flow**: Background agents execute headlessly and return code changes via structured JSON output. Visible chats are optional and only created for observability when `createObservabilityChats` is enabled.
 
 ## Features
 
@@ -21,17 +23,23 @@ Dev-loop automatically generates agent configuration files in `.cursor/agents/` 
 - Format: `DevLoop-[Set-{prdSetId}]-PRD-{prdId}-Phase-{phaseId}-Task-{taskId}`
 - Example: `DevLoop-Set-1-PRD-api-spec-Phase-2-Task-123`
 
-### Chat Request System
+### Background Agent Execution (Primary)
 
-When agents are enabled, dev-loop creates chat requests in `files-private/cursor/chat-requests.json`. These requests are automatically processed by the chat auto-processor (when watch mode is running) to create instruction files that Cursor agents can consume.
+The primary execution path uses Cursor background agents (`cursor agent --print`) for headless, autonomous code generation:
 
-### Auto-Processing
+- **Direct execution** - Background agents run headlessly and return code changes via stdout
+- **Session management** - Each PRD/phase combination maintains its own session for context persistence
+- **JSON parsing** - Robust parsing extracts code changes from structured JSON responses
+- **No visible chats** - Execution is completely headless (no IDE interaction required)
 
-When `dev-loop watch` is running, the chat auto-processor:
-- Monitors `chat-requests.json` for new requests
-- Automatically creates instruction files in `chat-instructions/`
-- Marks requests as processed
-- Supports parallel processing of multiple requests simultaneously
+### Observability Chats (Optional)
+
+When `createObservabilityChats` is enabled, dev-loop can optionally create visible agent configs and chat requests for monitoring:
+
+- **Agent configs** - Generated in `.cursor/agents/` for visibility in Cursor IDE
+- **Chat requests** - Created in `files-private/cursor/chat-requests.json` (optional, for observability only)
+- **Auto-processing** - Chat auto-processor (when watch mode is running) processes requests to create instruction files
+- **Non-blocking** - Observability chat creation runs in parallel and doesn't block primary execution
 
 ### Parallel Execution
 
@@ -207,7 +215,7 @@ Instruction files are created in `files-private/cursor/chat-instructions/{reques
   "mode": "Ask",
   "requestId": "req-1234567890-abc",
   "createdAt": "2025-01-15T10:00:00Z",
-  "instructions": "Create a new chat session in Cursor IDE with agent \"DevLoop-Set-1-PRD-api-spec-Phase-2-Task-123\" and question: Generate code for task X",
+  "instructions": "Optional observability: Create a visible agent config for monitoring (background agents execute headlessly)",
   "context": {
     "prdId": "api-spec",
     "phaseId": 2,
@@ -337,21 +345,23 @@ List all chat instruction files that have been created.
    ```
 
 3. **Dev-loop automatically**:
-   - Generates agent configs when tasks execute
-   - Creates chat requests
-   - Auto-processes requests via background service
-   - Creates instruction files for Cursor agents
+   - Executes tasks using background agents (headless, primary execution)
+   - Optionally generates observability agent configs (if `createObservabilityChats: true`)
+   - Optionally creates chat requests for observability (if enabled)
+   - Auto-processes observability requests via background service (if watch mode running)
 
-### Manual Processing
+### Manual Processing (Observability Only)
 
-If watch mode is not running, you can manually process chat requests:
+**Note**: Manual processing only applies to optional observability chats. Primary execution uses background agents automatically and doesn't require manual processing.
 
-1. **List pending requests**:
+If watch mode is not running and observability chats are enabled, you can manually process observability chat requests:
+
+1. **List pending observability requests**:
    ```bash
    # Use MCP tool: cursor_chat_list_requests
    ```
 
-2. **Process all requests**:
+2. **Process all observability requests**:
    ```bash
    # Use MCP tool: cursor_chat_auto_process_all
    ```
@@ -365,10 +375,11 @@ dev-loop validate-cursor-agents
 ```
 
 This command:
-- Generates 3 test agent configs
-- Creates 3 chat requests
-- Auto-processes all requests
+- Generates 3 test observability agent configs (for testing)
+- Creates 3 observability chat requests (for testing)
+- Auto-processes all observability requests
 - Verifies files are created correctly
+- Note: Primary execution uses background agents, not these test configs
 
 ## Parallel Execution
 
@@ -381,32 +392,66 @@ When multiple PRD sets or phases execute in parallel:
    - Example: `DevLoop-Set-1-PRD-B-Phase-1-Task-10`
    - Example: `DevLoop-Set-2-PRD-C-Phase-1-Task-15`
 
-2. **Concurrent Chat Requests**: Multiple requests created simultaneously
-   - All stored in same `chat-requests.json` file
-   - Each request has unique ID and context
+2. **Isolated Sessions**: Each PRD/phase gets its own background agent session
+   - Sessions execute headlessly with no IDE interaction
+   - Each session maintains separate context and history
+   - Sessions are tracked independently via session management
 
-3. **Parallel Processing**: Auto-processor handles multiple requests concurrently
-   - Uses `Promise.all()` for true parallel execution
-   - No sequential blocking
-   - Multiple instruction files created simultaneously
+3. **Concurrent Execution**: Multiple background agents execute simultaneously
+   - Each PRD/phase runs its background agent independently
+   - No blocking between sessions
+   - All sessions return code changes in parallel
 
-4. **Multiple Chats**: Each PRD/phase gets its own chat session
-   - All chats appear in Cursor agent panel simultaneously
-   - Each chat is independent and tracked separately
+4. **Optional Observability**: If enabled, observability chats create agent configs and requests
+   - Chat requests stored in `chat-requests.json` (optional, for observability only)
+   - Auto-processor handles requests concurrently (if watch mode running)
+   - Creates instruction files for visible monitoring (non-blocking)
 
-### Example Scenario
+### PRD Set Execution Diagram
 
-**PRD Set executing 3 PRDs in parallel**:
+When executing a PRD set with multiple PRDs and phases, background agents run in parallel:
 
+```mermaid
+flowchart TB
+    PRDSet[PRD Set 1] --> PRDA[PRD A]
+    PRDSet --> PRDB[PRD B]
+    PRDSet --> PRDC[PRD C]
+
+    PRDA --> PhaseA1[Phase 1]
+    PRDA --> PhaseA2[Phase 2]
+    PRDB --> PhaseB1[Phase 1]
+    PRDC --> PhaseC1[Phase 1]
+
+    PhaseA1 --> SessionA1[Background Agent<br/>Session: A-1]
+    PhaseA2 --> SessionA2[Background Agent<br/>Session: A-2]
+    PhaseB1 --> SessionB1[Background Agent<br/>Session: B-1]
+    PhaseC1 --> SessionC1[Background Agent<br/>Session: C-1]
+
+    SessionA1 --> TasksA1[Tasks 1-4]
+    SessionA2 --> TasksA2[Tasks 5-8]
+    SessionB1 --> TasksB1[Tasks 9-12]
+    SessionC1 --> TasksC1[Tasks 13-16]
+
+    TasksA1 --> CodeA1[Code Changes]
+    TasksA2 --> CodeA2[Code Changes]
+    TasksB1 --> CodeB1[Code Changes]
+    TasksC1 --> CodeC1[Code Changes]
+
+    style SessionA1 fill:#e1f5ff
+    style SessionA2 fill:#e1f5ff
+    style SessionB1 fill:#e1f5ff
+    style SessionC1 fill:#e1f5ff
 ```
-PRD Set 1:
-  ├─ PRD A (Phase 1) → Chat: DevLoop-Set-1-PRD-A-Phase-1-Task-1
-  ├─ PRD A (Phase 2) → Chat: DevLoop-Set-1-PRD-A-Phase-2-Task-5
-  ├─ PRD B (Phase 1) → Chat: DevLoop-Set-1-PRD-B-Phase-1-Task-10
-  └─ PRD C (Phase 1) → Chat: DevLoop-Set-1-PRD-C-Phase-1-Task-15
-```
 
-**Result**: 4 chats appear simultaneously in Cursor agent panel, all processing independently.
+**Execution Flow**:
+1. PRD Set 1 starts execution
+2. PRDs A, B, and C execute in parallel
+3. Each PRD's phases execute sequentially within that PRD
+4. Each phase uses a background agent session (e.g., Session A-1 for PRD A Phase 1)
+5. Tasks within each phase execute sequentially, sharing the same session
+6. All background agents run headlessly and return code changes independently
+
+**Result**: Multiple background agent sessions execute in parallel, each maintaining its own context and history, with no visible IDE interaction required.
 
 ## Validation
 
@@ -419,11 +464,12 @@ npx dev-loop validate-cursor-agents
 ```
 
 This command will:
-1. Create 3 test agent config files
-2. Create chat requests for each agent
-3. Auto-process requests to create instruction files
+1. Create 3 test observability agent config files (for testing visibility)
+2. Create observability chat requests for each agent (for testing)
+3. Auto-process observability requests to create instruction files
 4. Verify file formats and structure
 5. Provide validation summary
+6. Note: This tests observability features only. Primary execution uses background agents automatically.
 
 ### Check Agent Visibility
 
@@ -453,21 +499,24 @@ This command will:
    npx dev-loop check-agent-visibility
    ```
 
-3. **Verify in Cursor IDE**:
+3. **Verify observability agent configs** (if observability is enabled):
    - Toggle agent panel (Ctrl+E / Cmd+E)
    - Or restart Cursor IDE
-   - Check that agents appear in the panel
+   - Check that observability agent configs appear in the panel
+   - Note: Primary execution uses background agents and doesn't require visible configs
 
-4. **Manual chat creation** (if needed):
-   - Select an agent from the panel
-   - Start a chat session manually
-   - Note: Instruction files are created but Cursor may not automatically create visible chats
+4. **Background agent execution**:
+   - Primary execution uses background agents (headless, no IDE interaction)
+   - Observability chats (if enabled) create visible agent configs for monitoring
+   - Instruction files are only created for observability chats, not for primary execution
 
 ## Troubleshooting
 
-### Agents Not Appearing in Cursor Agent Panel
+### Observability Agent Configs Not Appearing in Cursor Agent Panel
 
-If agent config files are created but not visible in Cursor's agent panel:
+**Note**: This section only applies to optional observability chats. Primary execution uses background agents (headless) and doesn't require visible agent configs.
+
+If observability agent config files are created but not visible in Cursor's agent panel:
 
 1. **Toggle Agent Panel**:
    - Press `Ctrl+E` (or `Cmd+E` on Mac) to toggle the agent panel
@@ -562,13 +611,13 @@ The shared JSON parser (`cursor-json-parser.ts`) handles various edge cases auto
 5. **Check instruction files** to verify processing
 6. **Use unique agent names** for parallel execution (automatic)
 7. **Verify agent format** matches working examples before troubleshooting
-8. **Note**: Instruction files are created but Cursor may require manual agent selection to create visible chats
+8. **Note**: Background agents execute headlessly. Instruction files are only created for optional observability chats, not for primary execution.
 
 ## Integration with Existing Workflow
 
 The agent and chat system integrates seamlessly with dev-loop's existing code generation workflow:
 
-- **Existing code generation** continues to work via `executeCursorGenerateCode`
-- **Agent generation** is optional and can be disabled
-- **Chat requests** are created in addition to (not replacing) existing workflow
+- **Primary execution** uses background agents (`cursor agent --print`) for headless code generation
+- **Fallback method** (`executeCursorGenerateCode`) is available if background agents fail
+- **Observability chats** are optional and can be disabled via `createObservabilityChats: false`
 - **Backward compatible** - existing configs without `cursor.agents` continue to work
