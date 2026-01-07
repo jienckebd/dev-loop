@@ -66,8 +66,9 @@ export function registerControlTools(mcp: FastMCPType, getConfig: ConfigLoader):
       config: z.string().optional().describe('Path to config file (optional)'),
       allFailed: z.boolean().optional().describe('Reset all blocked/failed tasks'),
       all: z.boolean().optional().describe('Reset all tasks to pending'),
+      clearRetryCount: z.boolean().optional().describe('Clear retry count when resetting task(s)'),
     }),
-    execute: async (args: { taskId?: string; config?: string; allFailed?: boolean; all?: boolean }, context: any) => {
+    execute: async (args: { taskId?: string; config?: string; allFailed?: boolean; all?: boolean; clearRetryCount?: boolean }, context: any) => {
       const config = await getConfig(args.config);
       const taskBridge = new TaskMasterBridge(config);
 
@@ -76,10 +77,13 @@ export function registerControlTools(mcp: FastMCPType, getConfig: ConfigLoader):
           const tasks = await taskBridge.getAllTasks();
           for (const task of tasks) {
             await taskBridge.updateTaskStatus(task.id, 'pending');
+            if (args.clearRetryCount) {
+              taskBridge.resetRetryCount(task.id);
+            }
           }
           return JSON.stringify({
             success: true,
-            message: `Reset ${tasks.length} tasks to pending`,
+            message: `Reset ${tasks.length} tasks to pending${args.clearRetryCount ? ' and cleared retry counts' : ''}`,
             count: tasks.length,
           });
         } else if (args.allFailed) {
@@ -87,17 +91,23 @@ export function registerControlTools(mcp: FastMCPType, getConfig: ConfigLoader):
           const failed = allTasks.filter(t => t.status === 'blocked');
           for (const task of failed) {
             await taskBridge.updateTaskStatus(task.id, 'pending');
+            if (args.clearRetryCount) {
+              taskBridge.resetRetryCount(task.id);
+            }
           }
           return JSON.stringify({
             success: true,
-            message: `Reset ${failed.length} failed/blocked tasks to pending`,
+            message: `Reset ${failed.length} failed/blocked tasks to pending${args.clearRetryCount ? ' and cleared retry counts' : ''}`,
             count: failed.length,
           });
         } else if (args.taskId) {
           await taskBridge.updateTaskStatus(args.taskId, 'pending');
+          if (args.clearRetryCount) {
+            taskBridge.resetRetryCount(args.taskId);
+          }
           return JSON.stringify({
             success: true,
-            message: `Reset task ${args.taskId} to pending`,
+            message: `Reset task ${args.taskId} to pending${args.clearRetryCount ? ' and cleared retry count' : ''}`,
             taskId: args.taskId,
           });
         } else {

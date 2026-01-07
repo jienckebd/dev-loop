@@ -4,6 +4,7 @@ import { loadConfig } from '../../config/loader';
 import { WorkflowEngine } from '../../core/workflow-engine';
 import { PrdTracker } from '../../core/prd-tracker';
 import { writePidFile, removePidFile } from './stop';
+import { ChatRequestAutoProcessor } from '../../providers/ai/cursor-chat-auto-processor';
 
 export async function watchCommand(options: {
   config?: string;
@@ -25,6 +26,15 @@ export async function watchCommand(options: {
     spinner.start('Initializing workflow engine');
     const engine = new WorkflowEngine(config);
     spinner.succeed('Workflow engine initialized');
+
+    // NEW: Initialize and start chat auto-processor (after engine initialization, before loop)
+    let chatProcessor: ChatRequestAutoProcessor | null = null;
+    if ((config as any).cursor?.agents?.enabled !== false &&
+        (config as any).cursor?.agents?.autoProcess !== false) {
+      chatProcessor = new ChatRequestAutoProcessor(config);
+      await chatProcessor.startWatching();
+      console.log(chalk.cyan('Chat request auto-processor started'));
+    }
 
     const prdTracker = options.untilComplete ? new PrdTracker(config) : null;
     const maxIterations = options.maxIterations || 1000;
@@ -53,6 +63,12 @@ export async function watchCommand(options: {
     const shutdown = async () => {
       shouldContinue = false;
       console.log(chalk.yellow('\nShutting down gracefully...'));
+
+      // NEW: Stop chat auto-processor (before removePidFile)
+      if (chatProcessor) {
+        await chatProcessor.stopWatching();
+      }
+
       await removePidFile();
       engine.shutdown();
       process.exit(0);
