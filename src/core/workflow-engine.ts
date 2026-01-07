@@ -587,6 +587,10 @@ export class WorkflowEngine {
       const context: TaskContext = {
         task,
         codebaseContext,
+        // NEW: Add PRD/phase context if available (from class properties or execution context)
+        prdId: (this as any).currentPrdId,
+        phaseId: (this as any).currentPhaseId,
+        prdSetId: (this as any).currentPrdSetId,
       };
 
       // NEW: Generate file-specific guidance from CodeContextProvider
@@ -2699,6 +2703,10 @@ export class WorkflowEngine {
     const prdVersion = prdMetadata?.prd?.version || '1.0.0';
     const prdSetId = (prdMetadata as any)?.prdSetId;
 
+    // Store PRD context in class properties for use in executeTask
+    (this as any).currentPrdId = prdId;
+    (this as any).currentPrdSetId = prdSetId;
+
     // Start PRD metrics tracking
     if (this.prdMetrics && prdMetadata) {
       const prdMetadataForMetrics: PrdMetadata = {
@@ -2950,6 +2958,7 @@ export class WorkflowEngine {
     const phase2 = prdMetadata?.requirements?.phases?.find((p: any) => p.id === 2);
     const phase2Name = phase2?.name || 'Phase 2';
     let currentPhaseId = 2; // Track current phase for task metrics
+    (this as any).currentPhaseId = currentPhaseId; // Store in class property for use in executeTask
     if (this.phaseMetrics && prdId) {
       this.phaseMetrics.startPhaseExecution(2, phase2Name, prdId, false);
     }
@@ -3077,6 +3086,10 @@ export class WorkflowEngine {
           const taskContext: TaskContext = {
             task,
             codebaseContext,
+            // NEW: Add PRD/phase context for parallel execution
+            prdId: prdId,                    // Already extracted at line 2698
+            phaseId: currentPhaseId,         // Already tracked at line 2952
+            prdSetId: prdSetId,             // Already extracted at line 2700
           };
 
           const template = await this.templateManager.getTaskGenerationTemplateWithContext({
