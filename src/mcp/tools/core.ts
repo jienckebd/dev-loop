@@ -105,25 +105,48 @@ export function registerCoreTools(mcp: FastMCPType, getConfig: ConfigLoader): vo
     parameters: z.object({
       config: z.string().optional().describe('Path to config file (optional)'),
       status: z.string().optional().describe('Filter by status (pending, in-progress, done, failed, blocked)'),
+      pending: z.boolean().optional().describe('Show only pending tasks'),
+      failed: z.boolean().optional().describe('Show only failed tasks'),
+      done: z.boolean().optional().describe('Show only completed tasks'),
+      blocked: z.boolean().optional().describe('Show only blocked tasks'),
+      tree: z.boolean().optional().describe('Show task dependency tree'),
       json: z.boolean().optional().describe('Output as JSON'),
     }),
-    execute: async (args: { config?: string; status?: string; json?: boolean }, context: any) => {
+    execute: async (args: {
+      config?: string;
+      status?: string;
+      pending?: boolean;
+      failed?: boolean;
+      done?: boolean;
+      blocked?: boolean;
+      tree?: boolean;
+      json?: boolean;
+    }, context: any) => {
       const config = await getConfig(args.config);
       const taskBridge = new TaskMasterBridge(config);
 
       let tasks;
-      if (args.status === 'pending') {
+      const allTasks = await taskBridge.getAllTasks();
+
+      // Apply filters
+      if (args.pending) {
+        tasks = allTasks.filter(t => t.status === 'pending');
+      } else if (args.failed) {
+        // Note: TaskStatus doesn't include 'failed', so we filter for 'blocked' tasks
+        tasks = allTasks.filter(t => t.status === 'blocked');
+      } else if (args.done) {
+        tasks = allTasks.filter(t => t.status === 'done');
+      } else if (args.blocked) {
+        tasks = allTasks.filter(t => t.status === 'blocked');
+      } else if (args.status === 'pending') {
         tasks = await taskBridge.getPendingTasks();
+      } else if (args.status) {
+        tasks = allTasks.filter(t => t.status === args.status);
       } else {
-        const allTasks = await taskBridge.getAllTasks();
-        if (args.status) {
-          tasks = allTasks.filter(t => t.status === args.status);
-        } else {
-          tasks = allTasks;
-        }
+        tasks = allTasks;
       }
 
-      return JSON.stringify({
+      const result: any = {
         tasks: tasks.map((t: any) => ({
           id: t.id,
           title: t.title,
@@ -132,7 +155,50 @@ export function registerCoreTools(mcp: FastMCPType, getConfig: ConfigLoader): vo
           description: t.description,
         })),
         count: tasks.length,
-      });
+      };
+
+      // Add dependency tree if requested
+      if (args.tree) {
+        // Build dependency tree structure
+        const taskMap = new Map(allTasks.map((t: any) => [t.id, t]));
+        const tree: any[] = [];
+        const processed = new Set();
+
+        const buildTree = (taskId: string | number, depth: number = 0): any => {
+          if (processed.has(taskId)) return null;
+          processed.add(taskId);
+
+          const task = taskMap.get(taskId);
+          if (!task) return null;
+
+          const node: any = {
+            id: task.id,
+            title: task.title,
+            status: task.status,
+            depth,
+          };
+
+          // Find dependencies (tasks that depend on this one)
+          const dependencies = allTasks.filter((t: any) => {
+            if (t.dependencies && Array.isArray(t.dependencies)) {
+              return t.dependencies.includes(taskId);
+            }
+            return false;
+          });
+
+          if (dependencies.length > 0) {
+            node.dependencies = dependencies.map((dep: any) => buildTree(dep.id, depth + 1)).filter(Boolean);
+          }
+
+          return node;
+        };
+
+        // Build tree for root tasks (no dependencies)
+        const rootTasks = allTasks.filter((t: any) => !t.dependencies || t.dependencies.length === 0);
+        result.tree = rootTasks.map((t: any) => buildTree(t.id)).filter(Boolean);
+      }
+
+      return JSON.stringify(result, null, 2);
     },
   });
 
