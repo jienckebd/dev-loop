@@ -190,7 +190,7 @@ Create `devloop.config.js`:
 ```javascript
 module.exports = {
   ai: {
-    provider: 'anthropic',              // 'anthropic' | 'openai' | 'gemini' | 'ollama'
+    provider: 'anthropic',              // 'anthropic' | 'openai' | 'gemini' | 'ollama' | 'cursor'
     model: 'claude-sonnet-4-20250514',
     fallback: 'openai:gpt-4o',
   },
@@ -205,6 +205,27 @@ module.exports = {
   taskMaster: {
     tasksPath: '.taskmaster/tasks/tasks.json',
   },
+  cursor: {
+    requestsPath: 'files-private/cursor',
+    agentName: 'DevLoopCodeGen',
+    model: 'auto',
+    agents: {
+      enabled: true,                    // Enable agent auto-generation
+      autoGenerate: true,               // Automatically generate agent configs
+      autoProcess: true,                // Auto-process chat requests in watch mode
+      watchMode: true,                  // Enable file watching
+      processInterval: 2000,            // Polling interval (ms)
+      useBackgroundAgent: true,         // Use --print mode for headless operation
+      agentOutputFormat: 'json',        // Output format: 'json', 'text', 'stream-json'
+      // Session management for context persistence
+      sessionManagement: {
+        enabled: true,                  // Enable session persistence (default: true)
+        maxSessionAge: 3600000,         // Max session age in ms (default: 1 hour)
+        maxHistoryItems: 50,          // Max history entries per session (default: 50)
+        sessionsPath: '.devloop/cursor-sessions.json', // Session storage path
+      },
+    },
+  },
   debug: false,
   metrics: { enabled: true, path: '.devloop/metrics.json' },
   patternLearning: { enabled: true, patternsPath: '.devloop/patterns.json' },
@@ -215,6 +236,7 @@ module.exports = {
 - [AI Pattern Detection](#ai-enhanced-pattern-detection) — `aiPatterns` config for embeddings and LLM analysis
 - [Code Quality Scanning](#code-quality-scanning) — `scan` config for static analysis and tech debt
 - [Framework Plugins](#framework-plugins) — `framework` config for framework-specific behavior
+- [Cursor Multi-Agent Integration](#cursor-multi-agent-integration) — `cursor.agents` config for automatic agent generation and chat creation
 
 ## CLI Reference
 
@@ -273,6 +295,101 @@ See [`docs/users/METRICS.md`](docs/users/METRICS.md), [`docs/users/REPORTS.md`](
 | `dev-loop scan [--type TYPE]` | Run code quality scans |
 | `dev-loop recommend [--ai]` | Generate abstraction recommendations |
 | `dev-loop feedback <id> [--accept\|--reject]` | Provide feedback on AI recommendations |
+
+## Cursor Multi-Agent Integration
+
+Dev-loop can automatically generate Cursor agent configuration files and create visible chat sessions in your Cursor IDE. This enables:
+
+- **Automatic agent creation** for each PRD/phase/task combination
+- **Visible chat sessions** in Cursor IDE for monitoring and interaction
+- **100% automated execution** via watch mode integration
+- **Parallel execution support** - multiple PRD sets and phases can run simultaneously with separate chats
+
+### Quick Start
+
+1. **Enable in config**:
+   ```javascript
+   cursor: {
+     agents: {
+       enabled: true,
+       autoProcess: true,
+     }
+   }
+   ```
+
+2. **Start watch mode**:
+   ```bash
+   dev-loop watch
+   ```
+
+3. **Validate setup**:
+   ```bash
+   dev-loop validate-cursor-agents
+   ```
+
+### Session Persistence
+
+Background agents maintain context between calls using session management:
+
+- **Automatic session creation**: Sessions are created per PRD/phase combination
+- **Conversation history**: Previous prompts and responses are included in context
+- **Context window continuity**: Agents can build on previous interactions
+- **Session statistics**: Track success rates, JSON parsing errors, and call counts
+
+**Configuration:**
+```javascript
+cursor: {
+  agents: {
+    sessionManagement: {
+      enabled: true,              // Enable session persistence
+      maxSessionAge: 3600000,     // 1 hour (milliseconds)
+      maxHistoryItems: 50,        // Max conversation history entries
+      sessionsPath: '.devloop/cursor-sessions.json',
+    },
+  },
+}
+```
+
+**How it works:**
+1. First task in a PRD/phase creates a new session
+2. Subsequent tasks in the same PRD/phase resume the session
+3. Conversation history is included in prompts for context
+4. Sessions are automatically cleaned up after `maxSessionAge`
+5. Statistics are tracked per session (calls, errors, JSON parsing failures)
+
+**MCP Tools:**
+- `devloop_background_agent_status()` - Query session state and statistics
+- `devloop_logs(analyze: true)` - Get categorized background agent errors
+- `devloop_metrics()` - View execution metrics including background agent operations
+
+### Background Agent JSON Parsing
+
+Dev-loop uses a robust JSON parsing strategy to extract code changes from Cursor background agent responses. The parser handles various response formats and edge cases:
+
+**Parsing Strategy:**
+1. **Raw JSON first**: Attempts to parse JSON without modification (JSON should already be valid)
+2. **Double-escaping detection**: Only unescapes when double-escaping is detected (e.g., `\\\\n` → `\\n`)
+3. **Multiple extraction strategies**:
+   - JSON code blocks (```json ... ```)
+   - CodeChanges structure in text
+   - Files key extraction with brace counting
+
+**Key Improvements:**
+- **Fixed control character errors**: No longer incorrectly unescapes valid JSON escape sequences
+- **Better error handling**: Detailed logging with context snippets for debugging
+- **Shared parser utility**: Centralized parsing logic in `cursor-json-parser.ts` for consistency
+
+**Architecture:**
+```
+CursorProvider
+  └─> CursorChatOpener
+       ├─> CursorSessionManager (session persistence)
+       └─> cursor-json-parser (shared JSON parsing)
+```
+
+The refactored architecture eliminates code duplication by centralizing JSON parsing logic in a shared utility module used by both `CursorProvider` and `CursorChatOpener`.
+
+See [`docs/CURSOR_MULTI_AGENT.md`](docs/CURSOR_MULTI_AGENT.md) for complete documentation.
 
 ## MCP Integration
 

@@ -1,0 +1,1399 @@
+/**
+ * Cursor Chat Opener
+ *
+ * Direct CLI-based integration for opening chats and agent sessions in Cursor IDE.
+ * Uses the `cursor` CLI command and `cursor agent` subcommands for direct control.
+ */
+
+import * as fs from 'fs';
+import * as path from 'path';
+import { spawn, execSync, exec } from 'child_process';
+import { promisify } from 'util';
+import { logger } from '../../core/logger';
+import { ChatRequest, Config, CodeChanges } from '../../types';
+import { CursorSessionManager, SessionContext } from './cursor-session-manager';
+import { extractCodeChanges as extractCodeChangesShared, parseCodeChangesFromText as parseCodeChangesFromTextShared } from './cursor-json-parser';
+
+const execAsync = promisify(exec);
+
+export type OpenStrategy = 'auto' | 'cli' | 'agent' | 'file' | 'ide' | 'manual';
+export type PromptFileFormat = 'markdown' | 'plain';
+
+export interface ChatOpenResult {
+  success: boolean;
+  chatId?: string;
+  promptFilePath?: string;
+  method: 'agent' | 'file' | 'ide' | 'manual';
+  message: string;
+  command?: string;
+  instructions?: string;
+  /** Response from background agent (when using --print mode) */
+  response?: any;
+  /** Raw stdout from agent command */
+  stdout?: string;
+}
+
+export interface CursorChatOpenerConfig {
+  autoOpenChats?: boolean;
+  openAsAgent?: boolean;
+  openAsTab?: boolean;
+  openStrategy?: OpenStrategy;
+  fallbackToManual?: boolean;
+  workspacePath?: string;
+  /** Prefer IDE chat integration (prompt files) over terminal agent */
+  preferIdeChat?: boolean;
+  /** Enable keyboard automation for macOS (AppleScript) */
+  keyboardAutomation?: boolean;
+  /** Format for prompt files */
+  promptFileFormat?: PromptFileFormat;
+  /** Use background agent mode (--print) for headless operation */
+  useBackgroundAgent?: boolean;
+  /** Output format for background agent (json, text, stream-json) */
+  agentOutputFormat?: 'json' | 'text' | 'stream-json';
+  /** Session management configuration */
+  sessionManagement?: {
+    enabled?: boolean;
+    maxSessionAge?: number;
+    maxHistoryItems?: number;
+    sessionsPath?: string;
+  };
+}
+
+/**
+ * CursorChatOpener - Direct CLI integration for opening Cursor chats
+ *
+ * Supports multiple strategies:
+ * - 'ide': Open prompt file in editor for easy copy-paste to composer (Cmd+L)
+ * - 'agent': Start terminal-based cursor agent
+ * - 'file': Open instruction file in editor
+ * - 'manual': Provide CLI commands for user to run
+ * - 'auto': Try IDE first, then agent, then file, then manual
+ */
+export class CursorChatOpener {
+  private config: CursorChatOpenerConfig;
+  private cursorPath: string | null = null;
+  private sessionManager: CursorSessionManager | null = null;
+
+  constructor(config?: CursorChatOpenerConfig) {
+    // Merge config with defaults, handling sessionManagement specially
+    const defaultSessionManagement = {
+      enabled: true,
+      maxSessionAge: 3600000, // 1 hour
+      maxHistoryItems: 50,
+    };
+
+    this.config = {
+      autoOpenChats: true,
+      openAsAgent: true,
+      openAsTab: false,
+      openStrategy: 'auto',
+      fallbackToManual: true,
+      preferIdeChat: true,
+      keyboardAutomation: false,
+      promptFileFormat: 'markdown',
+      sessionManagement: {
+        ...defaultSessionManagement,
+        ...config?.sessionManagement,
+      },
+      ...config,
+    };
+
+    // Ensure sessionManagement is properly merged
+    if (config?.sessionManagement) {
+      this.config.sessionManagement = {
+        ...defaultSessionManagement,
+        ...config.sessionManagement,
+      };
+    }
+
+    this.cursorPath = this.findCursorExecutable();
+
+    // Initialize session manager if enabled (defaults to true)
+    const sessionEnabled = this.config.sessionManagement?.enabled !== false;
+    if (sessionEnabled) {
+      this.sessionManager = new CursorSessionManager({
+        enabled: this.config.sessionManagement?.enabled !== false,
+        maxSessionAge: this.config.sessionManagement?.maxSessionAge,
+        maxHistoryItems: this.config.sessionManagement?.maxHistoryItems,
+        sessionsPath: this.config.sessionManagement?.sessionsPath,
+      });
+    }
+  }
+
+  /**
+   * Open a chat in Cursor using the most appropriate method
+   *
+   * Strategy order for 'auto':
+   * 1. Agent: Start cursor agent (background mode if useBackgroundAgent=true)
+   * 2. File: Open instruction file in editor
+   * 3. Manual: Provide CLI commands
+   */
+  async openChat(request: ChatRequest): Promise<ChatOpenResult> {
+    const strategy = this.config.openStrategy || 'agent';
+
+    logger.info(`[CursorChatOpener] Opening chat for request ${request.id} with strategy: ${strategy}`);
+
+    // Try IDE strategy explicitly (deprecated - kept for backward compatibility)
+    if (strategy === 'ide') {
+      logger.warn('[CursorChatOpener] IDE strategy is deprecated. Use agent strategy instead.');
+      return this.openForIdeComposer(request);
+    }
+
+    // Try agent strategy
+    if (strategy === 'auto' || strategy === 'agent') {
+      const agentResult = await this.openWithAgent(request);
+      if (agentResult.success) {
+        return agentResult;
+      }
+      logger.debug(`[CursorChatOpener] Agent method failed, trying alternatives...`);
+    }
+
+    // Try file strategy
+    if (strategy === 'auto' || strategy === 'file') {
+      const fileResult = await this.openAsFile(request);
+      if (fileResult.success) {
+        return fileResult;
+      }
+      logger.debug(`[CursorChatOpener] File method failed, trying alternatives...`);
+    }
+
+    // Fallback to manual instructions
+    if (this.config.fallbackToManual) {
+      return this.getManualInstructions(request);
+    }
+
+    return {
+      success: false,
+      method: 'manual',
+      message: 'Failed to open chat automatically. No fallback enabled.',
+    };
+  }
+
+  /**
+   * Open a composer-ready prompt file for IDE chat panel integration
+   *
+   * This creates a .prompt.md file that users can easily copy-paste into
+   * Cursor's composer (Cmd+L / Ctrl+L).
+   */
+  async openForIdeComposer(request: ChatRequest): Promise<ChatOpenResult> {
+    if (!this.cursorPath) {
+      return {
+        success: false,
+        method: 'ide',
+        message: 'Cursor CLI not found',
+      };
+    }
+
+    try {
+      // Create the composer-ready prompt file
+      const promptFilePath = await this.createComposerPromptFile(request);
+
+      // Open the prompt file in Cursor
+      const child = spawn(this.cursorPath, ['-r', promptFilePath], {
+        detached: true,
+        stdio: 'ignore',
+      });
+      child.unref();
+
+      // Try keyboard automation if enabled (macOS only)
+      if (this.config.keyboardAutomation && process.platform === 'darwin') {
+        await this.triggerComposerShortcut();
+      }
+
+      const instructions = this.getIdeInstructions(promptFilePath);
+
+      logger.info(`[CursorChatOpener] Opened prompt file for IDE composer: ${path.basename(promptFilePath)}`);
+
+      return {
+        success: true,
+        method: 'ide',
+        promptFilePath,
+        message: `Opened prompt file: ${path.basename(promptFilePath)}`,
+        instructions,
+        command: `cursor -r "${promptFilePath}"`,
+      };
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      logger.error(`[CursorChatOpener] IDE method failed: ${errorMessage}`);
+      return {
+        success: false,
+        method: 'ide',
+        message: errorMessage,
+      };
+    }
+  }
+
+  /**
+   * Open composer with full automation (no file opening required)
+   *
+   * This method:
+   * 1. Extracts prompt text from request
+   * 2. Uses keyboard automation to open composer
+   * 3. Pastes prompt text automatically
+   * 4. Optionally sends the message
+   *
+   * Falls back to file opening if automation fails.
+   *
+   * @param request - Chat request to open
+   * @param autoSend - Whether to automatically send the message (default: false)
+   */
+  async openForIdeComposerAutomated(request: ChatRequest, autoSend: boolean = false): Promise<ChatOpenResult> {
+    // Check if automation is supported and enabled
+    if (!this.config.keyboardAutomation || process.platform !== 'darwin') {
+      logger.debug('[CursorChatOpener] Automation not enabled or not on macOS, falling back to file opening');
+      return this.openForIdeComposer(request);
+    }
+
+    try {
+      // Extract prompt text (text above --- separator)
+      const promptText = this.extractPromptText(request);
+
+      if (!promptText || promptText.trim().length === 0) {
+        logger.warn('[CursorChatOpener] No prompt text to extract, falling back to file opening');
+        return this.openForIdeComposer(request);
+      }
+
+      logger.info('[CursorChatOpener] Starting full automation workflow...');
+
+      // Import keyboard automation
+      const { fullComposerWorkflow } = await import('./cursor-keyboard-automation.js');
+
+      // Execute full automation workflow
+      const success = await fullComposerWorkflow(promptText, autoSend);
+
+      if (success) {
+        logger.info('[CursorChatOpener] Full automation workflow completed successfully');
+
+        // Optionally create prompt file as backup/fallback
+        let promptFilePath: string | undefined;
+        try {
+          promptFilePath = await this.createComposerPromptFile(request);
+        } catch (error) {
+          // Don't fail if file creation fails
+          logger.debug(`[CursorChatOpener] Could not create backup prompt file: ${error}`);
+        }
+
+        return {
+          success: true,
+          method: 'ide',
+          promptFilePath,
+          message: 'Chat opened automatically in composer with prompt pasted',
+          instructions: autoSend
+            ? 'Message was automatically sent to composer'
+            : 'Prompt is pasted in composer. Press Enter to send.',
+        };
+      } else {
+        logger.warn('[CursorChatOpener] Automation workflow failed, falling back to file opening');
+        return this.openForIdeComposer(request);
+      }
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      logger.error(`[CursorChatOpener] Automated IDE method failed: ${errorMessage}`);
+      // Fallback to file opening
+      return this.openForIdeComposer(request);
+    }
+  }
+
+  /**
+   * Create a composer-ready prompt file (.prompt.md)
+   *
+   * The file is formatted for easy copy-paste into Cursor's composer.
+   */
+  async createComposerPromptFile(request: ChatRequest): Promise<string> {
+    const instructionsDir = this.getPromptFilesDir();
+    await fs.promises.mkdir(instructionsDir, { recursive: true });
+
+    const fileName = `${request.id}.prompt.md`;
+    const filePath = path.join(instructionsDir, fileName);
+
+    const content = this.generateComposerPromptContent(request);
+    await fs.promises.writeFile(filePath, content, 'utf-8');
+
+    logger.debug(`[CursorChatOpener] Created composer prompt file: ${filePath}`);
+    return filePath;
+  }
+
+  /**
+   * Generate composer-ready prompt content
+   *
+   * Format is optimized for direct copy-paste into Cursor's composer.
+   */
+  private generateComposerPromptContent(request: ChatRequest): string {
+    const format = this.config.promptFileFormat || 'markdown';
+
+    if (format === 'plain') {
+      return this.generatePlainPromptContent(request);
+    }
+
+    return this.generateMarkdownPromptContent(request);
+  }
+
+  /**
+   * Generate markdown-formatted prompt content
+   */
+  private generateMarkdownPromptContent(request: ChatRequest): string {
+    const lines: string[] = [];
+
+    // Header with copy instructions
+    lines.push(`<!-- DEV-LOOP PROMPT FILE -->`);
+    lines.push(`<!-- Select all (Cmd+A), Copy (Cmd+C), then open Composer (Cmd+L) and Paste (Cmd+V) -->`);
+    lines.push(``);
+
+    // The actual prompt - formatted for composer
+    if (request.question) {
+      // Add @codebase tag if it seems like a code-related request
+      const prompt = request.question;
+      if (this.shouldAddCodebaseTag(prompt)) {
+        lines.push(`@codebase ${prompt}`);
+      } else {
+        lines.push(prompt);
+      }
+    }
+
+    // Add context as additional instructions
+    if (request.context) {
+      lines.push(``);
+      if (request.context.prdId) {
+        lines.push(`PRD: ${request.context.prdId}`);
+      }
+      if (request.context.taskId) {
+        lines.push(`Task ID: ${request.context.taskId}`);
+      }
+      if (request.context.taskTitle) {
+        lines.push(`Task: ${request.context.taskTitle}`);
+      }
+    }
+
+    // Add a separator and metadata (not part of the prompt)
+    lines.push(``);
+    lines.push(`---`);
+    lines.push(``);
+    lines.push(`**Request ID:** ${request.id}`);
+    lines.push(`**Agent:** ${request.agentName || 'DevLoopCodeGen'}`);
+    lines.push(`**Model:** ${request.model || 'Auto'}`);
+    lines.push(`**Created:** ${request.createdAt || new Date().toISOString()}`);
+    lines.push(``);
+    lines.push(`### Quick Start`);
+    lines.push(`1. Select all text above the --- line (Cmd+A won't work, select manually)`);
+    lines.push(`2. Copy (Cmd+C)`);
+    lines.push(`3. Open Composer: **Cmd+L** (Mac) or **Ctrl+L** (Windows/Linux)`);
+    lines.push(`4. Paste (Cmd+V)`);
+    lines.push(`5. Press Enter to send`);
+
+    return lines.join('\n');
+  }
+
+  /**
+   * Generate plain-text prompt content
+   */
+  private generatePlainPromptContent(request: ChatRequest): string {
+    const lines: string[] = [];
+
+    // Just the prompt, ready to copy
+    if (request.question) {
+      const prompt = request.question;
+      if (this.shouldAddCodebaseTag(prompt)) {
+        lines.push(`@codebase ${prompt}`);
+      } else {
+        lines.push(prompt);
+      }
+    }
+
+    // Add context
+    if (request.context) {
+      if (request.context.prdId) {
+        lines.push(``);
+        lines.push(`PRD: ${request.context.prdId}`);
+      }
+      if (request.context.taskId) {
+        lines.push(`Task: ${request.context.taskId}`);
+      }
+    }
+
+    return lines.join('\n');
+  }
+
+  /**
+   * Check if we should add @codebase tag to the prompt
+   */
+  private shouldAddCodebaseTag(prompt: string): boolean {
+    // Add @codebase for code-related prompts that don't already have it
+    if (prompt.startsWith('@')) {
+      return false;
+    }
+
+    const codeKeywords = [
+      'generate', 'create', 'implement', 'build', 'add',
+      'fix', 'debug', 'refactor', 'update', 'modify',
+      'test', 'write', 'code', 'function', 'class',
+      'module', 'component', 'api', 'endpoint', 'service'
+    ];
+
+    const lowerPrompt = prompt.toLowerCase();
+    return codeKeywords.some(keyword => lowerPrompt.includes(keyword));
+  }
+
+  /**
+   * Extract prompt text from a chat request
+   *
+   * Returns the text that would appear above the --- separator in the prompt file.
+   * This is the text that should be pasted into the composer.
+   *
+   * @param request - Chat request to extract prompt from
+   * @returns The prompt text ready for composer
+   */
+  extractPromptText(request: ChatRequest): string {
+    const lines: string[] = [];
+
+    // The actual prompt - formatted for composer
+    if (request.question) {
+      const prompt = request.question;
+      if (this.shouldAddCodebaseTag(prompt)) {
+        lines.push(`@codebase ${prompt}`);
+      } else {
+        lines.push(prompt);
+      }
+    }
+
+    // Add context as additional instructions
+    if (request.context) {
+      if (request.context.prdId) {
+        lines.push(``);
+        lines.push(`PRD: ${request.context.prdId}`);
+      }
+      if (request.context.taskId) {
+        lines.push(`Task ID: ${request.context.taskId}`);
+      }
+      if (request.context.taskTitle) {
+        lines.push(`Task: ${request.context.taskTitle}`);
+      }
+    }
+
+    return lines.join('\n').trim();
+  }
+
+  /**
+   * Get the directory for prompt files
+   */
+  private getPromptFilesDir(): string {
+    return path.join(process.cwd(), '.cursor', 'chat-prompts');
+  }
+
+  /**
+   * Get instructions for IDE chat usage
+   */
+  private getIdeInstructions(promptFilePath: string): string {
+    return [
+      `Prompt file opened in Cursor: ${path.basename(promptFilePath)}`,
+      ``,
+      `To use with Cursor Composer:`,
+      `  1. Select the prompt text (above the --- line)`,
+      `  2. Copy: Cmd+C (Mac) / Ctrl+C (Windows)`,
+      `  3. Open Composer: Cmd+L (Mac) / Ctrl+L (Windows)`,
+      `  4. Paste and send`,
+    ].join('\n');
+  }
+
+  /**
+   * Trigger Cursor composer shortcut via AppleScript (macOS only)
+   */
+  private async triggerComposerShortcut(): Promise<boolean> {
+    if (process.platform !== 'darwin') {
+      return false;
+    }
+
+    try {
+      // Wait a moment for the file to open
+      await new Promise(resolve => setTimeout(resolve, 500));
+
+      // Use AppleScript to simulate Cmd+L
+      const script = `
+        tell application "System Events"
+          tell process "Cursor"
+            keystroke "l" using command down
+          end tell
+        end tell
+      `;
+
+      await execAsync(`osascript -e '${script}'`);
+      logger.info('[CursorChatOpener] Triggered Cmd+L via AppleScript');
+      return true;
+    } catch (error) {
+      logger.debug(`[CursorChatOpener] AppleScript automation failed: ${error}`);
+      return false;
+    }
+  }
+
+  /**
+   * Create a new chat using `cursor agent create-chat`
+   */
+  async createChat(): Promise<{ success: boolean; chatId?: string; error?: string }> {
+    if (!this.cursorPath) {
+      return { success: false, error: 'Cursor CLI not found' };
+    }
+
+    try {
+      const { stdout, stderr } = await execAsync(`"${this.cursorPath}" agent create-chat`);
+      const chatId = stdout.trim();
+
+      if (chatId && chatId.match(/^[a-f0-9-]{36}$/)) {
+        logger.info(`[CursorChatOpener] Created chat with ID: ${chatId}`);
+        return { success: true, chatId };
+      }
+
+      return { success: false, error: stderr || 'Invalid chat ID returned' };
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      logger.error(`[CursorChatOpener] Failed to create chat: ${errorMessage}`);
+      return { success: false, error: errorMessage };
+    }
+  }
+
+  /**
+   * Open a chat using the Cursor agent CLI
+   *
+   * Supports two modes:
+   * 1. Interactive mode: Opens terminal-based agent (default)
+   * 2. Background mode (--print): Headless operation with structured output
+   */
+  private async openWithAgent(request: ChatRequest): Promise<ChatOpenResult> {
+    if (!this.cursorPath) {
+      return {
+        success: false,
+        method: 'agent',
+        message: 'Cursor CLI not found',
+      };
+    }
+
+    try {
+      const workspacePath = this.config.workspacePath || process.cwd();
+      const prompt = this.buildPromptFromRequest(request);
+      const useBackground = this.config.useBackgroundAgent ?? false;
+      const outputFormat = this.config.agentOutputFormat || 'json';
+
+      // Background agent mode (--print): Headless operation
+      if (useBackground) {
+        // Extract session ID from request context if available
+        const sessionId = (request.context as any)?.sessionId;
+        return await this.openWithBackgroundAgent(request, workspacePath, prompt, outputFormat, sessionId);
+      }
+
+      // Interactive agent mode: Opens terminal
+      // First create a new chat
+      const createResult = await this.createChat();
+      if (!createResult.success || !createResult.chatId) {
+        return {
+          success: false,
+          method: 'agent',
+          message: createResult.error || 'Failed to create chat',
+        };
+      }
+
+      // Use spawn for non-blocking execution
+      const args = ['agent', '--workspace', workspacePath];
+
+      // Add prompt if available
+      if (prompt) {
+        args.push(prompt);
+      }
+
+      // Spawn the agent process (non-blocking, opens in terminal)
+      const child = spawn(this.cursorPath, args, {
+        detached: true,
+        stdio: 'ignore',
+        cwd: workspacePath,
+      });
+
+      child.unref();
+
+      logger.info(`[CursorChatOpener] Started Cursor agent for chat ${createResult.chatId}`);
+
+      return {
+        success: true,
+        chatId: createResult.chatId,
+        method: 'agent',
+        message: `Started Cursor agent with chat ID: ${createResult.chatId}`,
+        command: `cursor agent --workspace "${workspacePath}" "${prompt}"`,
+      };
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      logger.error(`[CursorChatOpener] Agent method failed: ${errorMessage}`);
+      return {
+        success: false,
+        method: 'agent',
+        message: errorMessage,
+      };
+    }
+  }
+
+  /**
+   * Open a chat using Cursor agent in background mode (--print)
+   *
+   * This runs headlessly and captures the response for processing.
+   * Supports session management for context persistence.
+   */
+  private async openWithBackgroundAgent(
+    request: ChatRequest,
+    workspacePath: string,
+    prompt: string,
+    outputFormat: 'json' | 'text' | 'stream-json',
+    sessionId?: string
+  ): Promise<ChatOpenResult> {
+    try {
+      // Extract model from request and normalize "auto" to "Auto" for Cursor CLI
+      const model = request.model || 'Auto';
+      const normalizedModel = model.toLowerCase() === 'auto' ? 'Auto' : model;
+
+      // Get or create session for context persistence
+      let session = null;
+      let enhancedPrompt = prompt;
+
+      if (this.sessionManager && request.context) {
+        const sessionContext: SessionContext = {
+          prdId: request.context.prdId || undefined,
+          phaseId: request.context.phaseId !== undefined && request.context.phaseId !== null ? request.context.phaseId : undefined,
+          prdSetId: request.context.prdSetId || undefined,
+          taskIds: request.context.taskId ? [request.context.taskId] : [],
+        };
+
+        if (sessionId) {
+          session = this.sessionManager.resumeSession(sessionId);
+        } else {
+          session = this.sessionManager.getOrCreateSession(sessionContext);
+        }
+
+        if (session && this.sessionManager) {
+          // Build prompt with conversation history
+          enhancedPrompt = this.sessionManager.buildPromptWithHistory(session, prompt);
+          logger.debug(`[CursorChatOpener] Using session ${session.sessionId} with ${session.history.length} history entries`);
+        }
+      }
+
+      // Build command with --print mode (don't include prompt in args - pass via stdin)
+      const args = [
+        'agent',
+        '--print',
+        '--output-format',
+        outputFormat,
+        '--workspace',
+        workspacePath,
+        '--model',
+        normalizedModel,
+      ];
+
+      logger.info(`[CursorChatOpener] Starting background agent with --print mode${session ? ` (session: ${session.sessionId})` : ''}`);
+      logger.debug(`[CursorChatOpener] Command: cursor agent --print --output-format ${outputFormat} --workspace ${workspacePath} --model ${normalizedModel}`);
+      if (enhancedPrompt) {
+        logger.debug(`[CursorChatOpener] Prompt length: ${enhancedPrompt.length} chars (will be passed via stdin)${session ? `, ${session.history.length} history entries` : ''}`);
+      }
+
+      // Use spawn with stdin for long prompts (more reliable than command-line args)
+      return new Promise<ChatOpenResult>((resolve) => {
+        const child = spawn(this.cursorPath!, args, {
+          cwd: workspacePath,
+          stdio: ['pipe', 'pipe', 'pipe'],
+        });
+
+        let stdout = '';
+        let stderr = '';
+
+        child.stdout?.on('data', (data) => {
+          stdout += data.toString();
+        });
+
+        child.stderr?.on('data', (data) => {
+          stderr += data.toString();
+        });
+
+        // Write enhanced prompt (with history) to stdin if provided
+        if (enhancedPrompt) {
+          child.stdin?.write(enhancedPrompt);
+          child.stdin?.end();
+        }
+
+        child.on('close', (code) => {
+          if (code !== 0 && stderr) {
+            logger.warn(`[CursorChatOpener] Background agent exited with code ${code}: ${stderr.substring(0, 200)}`);
+          }
+
+          // Parse response based on output format
+          let parsedResponse: any = null;
+          if (outputFormat === 'json') {
+            try {
+              const trimmed = stdout.trim();
+
+              // Strategy 1: Try to find and parse all complete JSON objects
+              // This handles cases where multiple JSON objects are returned
+              const jsonObjects = this.extractAllJsonObjects(trimmed);
+
+              if (jsonObjects.length > 0) {
+                // Use the last complete JSON object (most recent response)
+                const lastJson = jsonObjects[jsonObjects.length - 1];
+                try {
+                  const parsed = JSON.parse(lastJson);
+
+                  // Handle Cursor agent --print response format
+                  // Format: {"type":"result","result":"...","session_id":"...","request_id":"..."}
+                  if (parsed.type === 'result' && parsed.result) {
+                    // The actual response is in the 'result' field
+                    parsedResponse = { text: parsed.result, raw: parsed };
+                  } else {
+                    parsedResponse = parsed;
+                  }
+
+                  logger.debug(`[CursorChatOpener] Successfully parsed JSON object (${jsonObjects.length} found, using last)`);
+                } catch (parseError) {
+                  logger.warn(`[CursorChatOpener] Failed to parse extracted JSON: ${parseError}`);
+                  // Fall through to text extraction
+                }
+              }
+
+              // Strategy 2: If no complete JSON found, try extracting from markdown code blocks
+              if (!parsedResponse) {
+                const codeBlockJson = this.extractJsonFromCodeBlocks(trimmed);
+                if (codeBlockJson) {
+                  try {
+                    const parsed = JSON.parse(codeBlockJson);
+                    parsedResponse = parsed;
+                    logger.debug(`[CursorChatOpener] Extracted JSON from code block`);
+                  } catch (parseError) {
+                    logger.warn(`[CursorChatOpener] Failed to parse JSON from code block: ${parseError}`);
+                  }
+                }
+              }
+
+              // Strategy 3: If still no JSON, try to find JSON-like structures in text
+              if (!parsedResponse) {
+                // Look for JSON-like patterns (objects with "files" and "summary" keys)
+                const jsonLikeMatch = trimmed.match(/\{[^{}]*"files"[^{}]*"summary"[^{}]*\}/s);
+                if (jsonLikeMatch) {
+                  try {
+                    const parsed = JSON.parse(jsonLikeMatch[0]);
+                    if (parsed.files && parsed.summary) {
+                      parsedResponse = parsed;
+                      logger.debug(`[CursorChatOpener] Extracted JSON-like structure from text`);
+                    }
+                  } catch (parseError) {
+                    // Ignore - not valid JSON
+                  }
+                }
+              }
+
+              // Strategy 4: Fall back to text if no JSON found
+              if (!parsedResponse) {
+                logger.warn(`[CursorChatOpener] No valid JSON found in response, using as text`);
+                parsedResponse = { text: trimmed };
+              }
+            } catch (parseError) {
+              logger.warn(`[CursorChatOpener] Failed to parse JSON response: ${parseError}`);
+              // Fall back to text response - might contain JSON code blocks
+              parsedResponse = { text: stdout.trim() };
+            }
+          } else {
+            // Text or stream-json format
+            parsedResponse = { text: stdout.trim() };
+          }
+
+          // Track session history
+          const codeChanges = this.extractCodeChanges(parsedResponse);
+          const success = code === 0 || stdout.trim().length > 0;
+          const error = success ? undefined : (stderr || `Background agent exited with code ${code}`);
+
+          if (session && this.sessionManager) {
+            this.sessionManager.addToHistory(
+              session.sessionId,
+              request.id,
+              prompt,
+              parsedResponse,
+              success && codeChanges !== null,
+              error
+            );
+          }
+
+          if (success) {
+            logger.info(`[CursorChatOpener] Background agent completed successfully${session ? ` (session: ${session.sessionId})` : ''}`);
+
+            resolve({
+              success: true,
+              method: 'agent',
+              message: 'Background agent completed successfully',
+              command: `cursor agent --print --output-format ${outputFormat} --workspace ${workspacePath}`,
+              response: parsedResponse,
+              stdout: stdout.trim(),
+            });
+          } else {
+            logger.error(`[CursorChatOpener] Background agent failed with code ${code}${session ? ` (session: ${session.sessionId})` : ''}`);
+            resolve({
+              success: false,
+              method: 'agent',
+              message: error || `Background agent exited with code ${code}`,
+            });
+          }
+        });
+
+        child.on('error', (error) => {
+          logger.error(`[CursorChatOpener] Background agent spawn error: ${error.message}`);
+          resolve({
+            success: false,
+            method: 'agent',
+            message: error.message,
+          });
+        });
+      });
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      logger.error(`[CursorChatOpener] Background agent failed: ${errorMessage}`);
+      return {
+        success: false,
+        method: 'agent',
+        message: errorMessage,
+      };
+    }
+  }
+
+  /**
+   * Extract all complete JSON objects from text
+   * Handles multiple JSON objects, nested structures, and escaped strings
+   * Properly handles control characters in JSON strings (newlines, tabs, etc.)
+   */
+  private extractAllJsonObjects(text: string): string[] {
+    const jsonObjects: string[] = [];
+    let i = 0;
+
+    while (i < text.length) {
+      // Find the start of a JSON object
+      const startBrace = text.indexOf('{', i);
+      if (startBrace === -1) break;
+
+      // Try to find the matching closing brace
+      let braceCount = 0;
+      let inString = false;
+      let escapeNext = false;
+      let endBrace = -1;
+
+      for (let j = startBrace; j < text.length; j++) {
+        const char = text[j];
+
+        if (escapeNext) {
+          escapeNext = false;
+          // After escape, the next character is part of the string, not a control character
+          // This handles \n, \t, \", etc. in JSON strings
+          continue;
+        }
+
+        if (char === '\\') {
+          escapeNext = true;
+          continue;
+        }
+
+        if (char === '"') {
+          inString = !inString;
+          continue;
+        }
+
+        // Control characters (newlines, tabs, etc.) are valid inside JSON strings
+        // We only track braces when not inside a string
+        if (!inString) {
+          if (char === '{') braceCount++;
+          if (char === '}') {
+            braceCount--;
+            if (braceCount === 0) {
+              endBrace = j;
+              break;
+            }
+          }
+        }
+      }
+
+      if (endBrace > startBrace) {
+        // Found a complete JSON object
+        const jsonStr = text.substring(startBrace, endBrace + 1);
+        // Validate it's actually JSON by trying to parse it
+        // Don't modify the string - JSON should already be valid
+        try {
+          const parsed = JSON.parse(jsonStr);
+          // Additional validation: ensure it's a meaningful object
+          if (typeof parsed === 'object' && parsed !== null) {
+            jsonObjects.push(jsonStr);
+          }
+        } catch (parseError) {
+          // Not valid JSON, skip it
+          // Log debug info for troubleshooting
+          const errorMsg = parseError instanceof Error ? parseError.message : String(parseError);
+          if (errorMsg.includes('control character')) {
+            logger.debug(`[CursorChatOpener] Skipping JSON object with control character issue: ${errorMsg.substring(0, 100)}`);
+          }
+        }
+        i = endBrace + 1;
+      } else {
+        // Incomplete JSON, move past this brace
+        i = startBrace + 1;
+      }
+    }
+
+    return jsonObjects;
+  }
+
+  /**
+   * Extract JSON from markdown code blocks
+   * Looks for ```json ... ``` or ``` ... ``` blocks containing JSON
+   * Handles control characters properly without breaking JSON structure
+   */
+  private extractJsonFromCodeBlocks(text: string): string | null {
+    // Match ```json ... ``` or ``` ... ``` with JSON content
+    // Use non-greedy match to get the first complete JSON object
+    const codeBlockRegex = /```(?:json)?\s*(\{[\s\S]*?\})\s*```/g;
+    const matches = Array.from(text.matchAll(codeBlockRegex));
+
+    for (const match of matches) {
+      if (match[1]) {
+        const jsonStr = match[1];
+        // Try parsing raw JSON first (should already be valid)
+        try {
+          const parsed = JSON.parse(jsonStr);
+          // Validate it's a meaningful object
+          if (typeof parsed === 'object' && parsed !== null) {
+            return jsonStr;
+          }
+        } catch (parseError) {
+          // If parsing fails, check if it's double-escaped
+          try {
+            if (jsonStr.includes('\\\\n') || jsonStr.includes('\\\\"')) {
+              // Only unescape double-escaped sequences
+              const unescaped = jsonStr.replace(/\\\\n/g, '\\n').replace(/\\\\"/g, '\\"').replace(/\\\\\\\\/g, '\\\\');
+              const parsed = JSON.parse(unescaped);
+              if (typeof parsed === 'object' && parsed !== null) {
+                return unescaped;
+              }
+            }
+          } catch {
+            // Not valid JSON, try next match
+            continue;
+          }
+        }
+      }
+    }
+
+    return null;
+  }
+
+  /**
+   * Extract code changes from agent response
+   *
+   * The agent response may contain code changes in various formats:
+   * - Direct CodeChanges object
+   * - Text with code blocks
+   * - JSON embedded in text
+   * - Cursor agent result format: {type: "result", result: "..."}
+   */
+  private extractCodeChanges(response: any): CodeChanges | null {
+    return extractCodeChangesShared(response);
+  }
+
+  /**
+   * Parse code changes from text response with robust error handling
+   * Uses shared parser utility for consistent parsing logic
+   */
+  private parseCodeChangesFromText(text: string): CodeChanges | null {
+    return parseCodeChangesFromTextShared(text);
+  }
+
+  /**
+   * Open a file in Cursor IDE as an editor tab
+   */
+  private async openAsFile(request: ChatRequest): Promise<ChatOpenResult> {
+    if (!this.cursorPath) {
+      return {
+        success: false,
+        method: 'file',
+        message: 'Cursor CLI not found',
+      };
+    }
+
+    try {
+      // Create a temporary instruction file
+      const filePath = await this.createInstructionFile(request);
+
+      // Open the file in Cursor using the CLI
+      const args = this.config.openAsTab ? ['-r', filePath] : [filePath];
+
+      const child = spawn(this.cursorPath, args, {
+        detached: true,
+        stdio: 'ignore',
+      });
+
+      child.unref();
+
+      logger.info(`[CursorChatOpener] Opened instruction file in Cursor: ${path.basename(filePath)}`);
+
+      return {
+        success: true,
+        method: 'file',
+        message: `Opened instruction file: ${filePath}`,
+        command: `cursor ${this.config.openAsTab ? '-r ' : ''}"${filePath}"`,
+      };
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      logger.error(`[CursorChatOpener] File method failed: ${errorMessage}`);
+      return {
+        success: false,
+        method: 'file',
+        message: errorMessage,
+      };
+    }
+  }
+
+  /**
+   * Get manual instructions for opening the chat
+   */
+  private getManualInstructions(request: ChatRequest): ChatOpenResult {
+    const workspacePath = this.config.workspacePath || process.cwd();
+    const prompt = this.buildPromptFromRequest(request);
+
+    const commands = [
+      `# Create a new chat:`,
+      `cursor agent create-chat`,
+      ``,
+      `# Or start agent with prompt:`,
+      `cursor agent --workspace "${workspacePath}" "${prompt}"`,
+    ];
+
+    return {
+      success: true,
+      method: 'manual',
+      message: `Manual commands to open chat:\n${commands.join('\n')}`,
+      command: commands.join('\n'),
+    };
+  }
+
+  /**
+   * Build a prompt string from a chat request
+   */
+  private buildPromptFromRequest(request: ChatRequest): string {
+    const parts: string[] = [];
+
+    if (request.agentName) {
+      parts.push(`[Agent: ${request.agentName}]`);
+    }
+
+    if (request.question) {
+      parts.push(request.question);
+    }
+
+    if (request.context) {
+      if (request.context.prdId) {
+        parts.push(`PRD: ${request.context.prdId}`);
+      }
+      if (request.context.taskId) {
+        parts.push(`Task: ${request.context.taskId}`);
+      }
+    }
+
+    return parts.join(' | ');
+  }
+
+  /**
+   * Create an instruction file for manual chat opening
+   */
+  private async createInstructionFile(request: ChatRequest): Promise<string> {
+    const instructionsDir = path.join(process.cwd(), '.cursor', 'chat-instructions');
+    await fs.promises.mkdir(instructionsDir, { recursive: true });
+
+    const fileName = `${request.id}.md`;
+    const filePath = path.join(instructionsDir, fileName);
+
+    const content = this.generateInstructionContent(request);
+    await fs.promises.writeFile(filePath, content, 'utf-8');
+
+    return filePath;
+  }
+
+  /**
+   * Generate markdown content for instruction file
+   */
+  private generateInstructionContent(request: ChatRequest): string {
+    const lines: string[] = [
+      `# Chat Request: ${request.id}`,
+      ``,
+      `## Agent: ${request.agentName || 'DevLoopCodeGen'}`,
+      ``,
+      `## Question`,
+      ``,
+      request.question || 'No question provided',
+      ``,
+      `## Model: ${request.model || 'Auto'}`,
+      `## Mode: ${request.mode || 'Ask'}`,
+      ``,
+    ];
+
+    if (request.context) {
+      lines.push(`## Context`);
+      lines.push(``);
+      if (request.context.prdId) {
+        lines.push(`- PRD: ${request.context.prdId}`);
+      }
+      if (request.context.phaseId) {
+        lines.push(`- Phase: ${request.context.phaseId}`);
+      }
+      if (request.context.taskId) {
+        lines.push(`- Task: ${request.context.taskId}`);
+      }
+      lines.push(``);
+    }
+
+    lines.push(`---`);
+    lines.push(``);
+    lines.push(`## Instructions`);
+    lines.push(``);
+    lines.push(`Open a new Cursor chat and paste the question above, or run:`);
+    lines.push(``);
+    lines.push('```bash');
+    lines.push(`cursor agent "${request.question || 'Start working on the task'}"`);
+    lines.push('```');
+    lines.push(``);
+    lines.push(`Created: ${request.createdAt || new Date().toISOString()}`);
+
+    return lines.join('\n');
+  }
+
+  /**
+   * Open a file directly in Cursor
+   */
+  async openFile(filePath: string, options?: { reuseWindow?: boolean; goto?: string }): Promise<boolean> {
+    if (!this.cursorPath) {
+      logger.warn('[CursorChatOpener] Cursor CLI not found');
+      return false;
+    }
+
+    try {
+      const args: string[] = [];
+
+      if (options?.reuseWindow) {
+        args.push('-r');
+      }
+
+      if (options?.goto) {
+        args.push('-g', `${filePath}:${options.goto}`);
+      } else {
+        args.push(filePath);
+      }
+
+      const child = spawn(this.cursorPath, args, {
+        detached: true,
+        stdio: 'ignore',
+      });
+
+      child.unref();
+
+      logger.info(`[CursorChatOpener] Opened file: ${filePath}`);
+      return true;
+    } catch (error) {
+      logger.error(`[CursorChatOpener] Failed to open file: ${error}`);
+      return false;
+    }
+  }
+
+  /**
+   * Start an agent with a specific prompt
+   */
+  async startAgentWithPrompt(prompt: string, options?: {
+    workspace?: string;
+    model?: string;
+    browser?: boolean;
+  }): Promise<{ success: boolean; message: string }> {
+    if (!this.cursorPath) {
+      return { success: false, message: 'Cursor CLI not found' };
+    }
+
+    try {
+      const args = ['agent'];
+
+      if (options?.workspace) {
+        args.push('--workspace', options.workspace);
+      } else {
+        args.push('--workspace', process.cwd());
+      }
+
+      if (options?.model) {
+        args.push('--model', options.model);
+      }
+
+      if (options?.browser) {
+        args.push('--browser');
+      }
+
+      args.push(prompt);
+
+      const child = spawn(this.cursorPath, args, {
+        detached: true,
+        stdio: 'ignore',
+      });
+
+      child.unref();
+
+      logger.info(`[CursorChatOpener] Started agent with prompt: ${prompt.substring(0, 50)}...`);
+      return { success: true, message: 'Agent started successfully' };
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      return { success: false, message: errorMessage };
+    }
+  }
+
+  /**
+   * Resume the latest chat session
+   */
+  async resumeLatestChat(): Promise<{ success: boolean; message: string }> {
+    if (!this.cursorPath) {
+      return { success: false, message: 'Cursor CLI not found' };
+    }
+
+    try {
+      const child = spawn(this.cursorPath, ['agent', 'resume'], {
+        detached: true,
+        stdio: 'ignore',
+      });
+
+      child.unref();
+
+      logger.info('[CursorChatOpener] Resumed latest chat session');
+      return { success: true, message: 'Resumed latest chat' };
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      return { success: false, message: errorMessage };
+    }
+  }
+
+  /**
+   * Find the Cursor CLI executable
+   */
+  private findCursorExecutable(): string | null {
+    // Check environment variable first
+    if (process.env.CURSOR_PATH && fs.existsSync(process.env.CURSOR_PATH)) {
+      return process.env.CURSOR_PATH;
+    }
+
+    // Try common paths based on platform
+    const possiblePaths: string[] = [];
+
+    if (process.platform === 'darwin') {
+      possiblePaths.push(
+        '/opt/homebrew/bin/cursor',
+        '/usr/local/bin/cursor',
+        '/Applications/Cursor.app/Contents/Resources/app/bin/cursor',
+      );
+    } else if (process.platform === 'linux') {
+      possiblePaths.push(
+        '/usr/bin/cursor',
+        '/usr/local/bin/cursor',
+        `${process.env.HOME}/.local/bin/cursor`,
+      );
+    } else if (process.platform === 'win32') {
+      possiblePaths.push(
+        `${process.env.LOCALAPPDATA}\\Programs\\Cursor\\resources\\app\\bin\\cursor.cmd`,
+        `${process.env.LOCALAPPDATA}\\Programs\\Cursor\\cursor.exe`,
+        'C:\\Program Files\\Cursor\\cursor.exe',
+      );
+    }
+
+    // Check each path
+    for (const cursorPath of possiblePaths) {
+      if (fs.existsSync(cursorPath)) {
+        logger.debug(`[CursorChatOpener] Found Cursor at: ${cursorPath}`);
+        return cursorPath;
+      }
+    }
+
+    // Try to find via `which` command
+    try {
+      const result = execSync('which cursor 2>/dev/null', { encoding: 'utf-8' });
+      const cursorPath = result.trim();
+      if (cursorPath && fs.existsSync(cursorPath)) {
+        logger.debug(`[CursorChatOpener] Found Cursor via which: ${cursorPath}`);
+        return cursorPath;
+      }
+    } catch (error) {
+      // which command failed, continue
+    }
+
+    logger.warn('[CursorChatOpener] Cursor CLI not found');
+    return null;
+  }
+
+  /**
+   * Check if Cursor CLI is available
+   */
+  isCursorAvailable(): boolean {
+    return this.cursorPath !== null;
+  }
+
+  /**
+   * Get the path to Cursor CLI
+   */
+  getCursorPath(): string | null {
+    return this.cursorPath;
+  }
+
+  /**
+   * Get Cursor agent version
+   */
+  async getAgentVersion(): Promise<string | null> {
+    if (!this.cursorPath) {
+      return null;
+    }
+
+    try {
+      const { stdout } = await execAsync(`"${this.cursorPath}" agent --version`);
+      return stdout.trim();
+    } catch (error) {
+      return null;
+    }
+  }
+}
+
+/**
+ * Create a default chat opener instance
+ */
+export function createChatOpener(config?: CursorChatOpenerConfig): CursorChatOpener {
+  return new CursorChatOpener(config);
+}
+
+/**
+ * Quick function to open a chat with minimal configuration
+ */
+export async function quickOpenChat(request: ChatRequest): Promise<ChatOpenResult> {
+  const opener = new CursorChatOpener();
+  return opener.openChat(request);
+}
+
+/**
+ * Quick function to create a new empty chat
+ */
+export async function quickCreateChat(): Promise<{ success: boolean; chatId?: string; error?: string }> {
+  const opener = new CursorChatOpener();
+  return opener.createChat();
+}
+
+/**
+ * Quick function to start agent with prompt
+ */
+export async function quickStartAgent(prompt: string, workspace?: string): Promise<{ success: boolean; message: string }> {
+  const opener = new CursorChatOpener({ workspacePath: workspace });
+  return opener.startAgentWithPrompt(prompt, { workspace });
+}
+
+/**
+ * Quick function to open chat for IDE composer
+ */
+export async function quickOpenForIdeComposer(request: ChatRequest): Promise<ChatOpenResult> {
+  const opener = new CursorChatOpener({ openStrategy: 'ide', preferIdeChat: true });
+  return opener.openForIdeComposer(request);
+}
+
+/**
+ * Quick function to create a composer-ready prompt file
+ */
+export async function quickCreatePromptFile(request: ChatRequest): Promise<string> {
+  const opener = new CursorChatOpener();
+  return opener.createComposerPromptFile(request);
+}
+
