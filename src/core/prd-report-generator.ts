@@ -354,3 +354,6 @@ ${Object.entries(metrics.errors.byCategory).map(([cat, count]) => `- ${cat}: ${c
   }
 }
 
+
+
+
