@@ -1131,11 +1131,18 @@ export class WorkflowEngine {
       if (requiredFiles.length > 0) {
         const incorrectlyLocatedFiles: string[] = [];
         for (const requiredPath of requiredFiles) {
-          // Skip validation for incomplete paths (just filenames without directory component)
-          // These are extracted from task details and may not have full paths
+          // Skip validation for incomplete paths:
+          // 1. Just filenames without directory component
+          // 2. Module-relative paths (e.g., src/Service/...) that don't start with docroot/ or config/
           if (!requiredPath.includes('/')) {
             if (this.debug) {
-              console.log(`[WorkflowEngine] Skipping validation for incomplete path: ${requiredPath}`);
+              console.log(`[WorkflowEngine] Skipping validation for incomplete path (no dir): ${requiredPath}`);
+            }
+            continue;
+          }
+          if (!requiredPath.startsWith('docroot/') && !requiredPath.startsWith('config/') && !requiredPath.startsWith('./')) {
+            if (this.debug) {
+              console.log(`[WorkflowEngine] Skipping validation for module-relative path: ${requiredPath}`);
             }
             continue;
           }
