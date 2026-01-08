@@ -1116,7 +1116,17 @@ export class WorkflowEngine {
 
       // NEW: Post-apply validation - verify required files from task details were created at correct paths
       const taskDetails = (task as any).details || '';
-      const requiredFiles = this.extractRequiredFilePaths(taskDetails);
+      let requiredFiles = this.extractRequiredFilePaths(taskDetails);
+
+      // Also check targetFiles from PRD (more reliable than extracting from task details)
+      const { targetFiles: prdTargetFilesStr } = await this.getCodebaseContext(task);
+      if (prdTargetFilesStr) {
+        const prdTargetFiles = prdTargetFilesStr.split('\n').filter(f => f.trim() && !f.includes('...'));
+        // Merge PRD targetFiles with extracted paths, prefer PRD paths (they're more complete)
+        const allRequiredFiles = [...new Set([...prdTargetFiles, ...requiredFiles])];
+        // Prefer longer paths (more complete) - PRD paths are usually full paths
+        requiredFiles = allRequiredFiles.sort((a, b) => b.length - a.length);
+      }
 
       if (requiredFiles.length > 0) {
         const incorrectlyLocatedFiles: string[] = [];
