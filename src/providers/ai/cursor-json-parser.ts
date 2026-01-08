@@ -101,7 +101,14 @@ export function extractCodeChanges(response: any): CodeChanges | null {
       const parsedText = JSON.parse(response.text);
       // If it's a result object, extract from result field
       if (parsedText.type === 'result' && parsedText.result) {
-        const extracted = parseCodeChangesFromText(parsedText.result);
+        // The result field may contain escaped JSON that needs to be unescaped first
+        let resultText = parsedText.result;
+        // If result contains escaped JSON code blocks, unescape them
+        if (typeof resultText === 'string' && resultText.includes('\\n')) {
+          // Unescape common patterns: \\n -> newline, \\" -> quote
+          resultText = resultText.replace(/\\n/g, '\n').replace(/\\"/g, '"').replace(/\\\\/g, '\\');
+        }
+        const extracted = parseCodeChangesFromText(resultText);
         if (extracted) {
           logger.debug(`[CursorJsonParser] Extracted CodeChanges from response.text (result object): ${extracted.files.length} files`);
           return extracted;
