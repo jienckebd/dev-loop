@@ -614,12 +614,12 @@ export class WorkflowEngine {
             // Generate investigation tasks if needed
             if (classification.needsInvestigation) {
               // Get target files first (needed for investigation tasks)
-              const { targetFiles } = await this.getCodebaseContext(task);
+              const { targetFiles: invTargetFiles } = await this.getCodebaseContext(task);
 
               const invTasks = this.investigationTaskGenerator.generateInvestigationTasks(combinedDescription, {
                 framework,
                 components: this.extractComponentsFromError(combinedDescription),
-                targetFiles: targetFiles?.split('\n').filter(f => f.trim()),
+                targetFiles: invTargetFiles?.split('\n').filter(f => f.trim()),
                 previousFixAttempts: await this.getPreviousFixAttempts(task.id),
               });
 
