@@ -840,6 +840,22 @@ export class WorkflowEngine {
         if (requiredFiles.length > 0) {
           const missingFiles: string[] = [];
           for (const requiredPath of requiredFiles) {
+            // Skip validation for incomplete paths:
+            // 1. Just filenames without directory component
+            // 2. Module-relative paths (e.g., src/Service/...) that don't start with docroot/ or config/
+            if (!requiredPath.includes('/')) {
+              if (this.debug) {
+                console.log(`[WorkflowEngine] Skipping early validation for incomplete path: ${requiredPath}`);
+              }
+              continue;
+            }
+            if (!requiredPath.startsWith('docroot/') && !requiredPath.startsWith('config/') && !requiredPath.startsWith('./')) {
+              if (this.debug) {
+                console.log(`[WorkflowEngine] Skipping early validation for module-relative path: ${requiredPath}`);
+              }
+              continue;
+            }
+
             const fullPath = path.resolve(process.cwd(), requiredPath);
             if (!await fs.pathExists(fullPath)) {
               missingFiles.push(requiredPath);
