@@ -188,6 +188,12 @@ export class TaskMasterBridge {
   async createTask(task: Omit<Task, 'status'> & { status?: TaskStatus }): Promise<Task> {
     try {
       const tasks = await this.loadTasks();
+
+      // Defensive check - ensure tasks is an array
+      if (!Array.isArray(tasks)) {
+        throw new Error(`loadTasks returned non-array: ${typeof tasks}`);
+      }
+
       const newTask: Task = {
         ...task,
         status: task.status || 'pending',
@@ -403,6 +409,12 @@ export class TaskMasterBridge {
   private async saveTasks(tasks: Task[]): Promise<void> {
     await fs.ensureDir(path.dirname(this.tasksPath));
 
+    // Defensive check - ensure tasks is an array
+    if (!Array.isArray(tasks)) {
+      console.error('[TaskBridge] saveTasks received non-array:', typeof tasks);
+      throw new Error('saveTasks: tasks must be an array');
+    }
+
     // Always use master format to preserve Task Master CLI compatibility
     const originalFormat = 'master';
     console.log(`[TaskBridge] Saving ${tasks.length} tasks in ${originalFormat} format`);
@@ -414,17 +426,20 @@ export class TaskMasterBridge {
     for (const task of tasks) {
       if (task.parentId) {
         // This is a subtask - add to parent's subtasks
-        const parentId = task.parentId;
+        const parentId = String(task.parentId);
         if (!subtaskMap.has(parentId)) {
           subtaskMap.set(parentId, []);
         }
         // Remove parentId and restore original ID
         const { parentId: _, id, ...subtaskData } = task;
         const originalSubtaskId = id.toString().split('.').pop() || id;
-        subtaskMap.get(parentId)!.push({
-          ...subtaskData,
-          id: originalSubtaskId,
-        } as Task);
+        const subtaskArray = subtaskMap.get(parentId);
+        if (subtaskArray) {
+          subtaskArray.push({
+            ...subtaskData,
+            id: originalSubtaskId,
+          } as Task);
+        }
       } else {
         mainTasks.push(task);
       }

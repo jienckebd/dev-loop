@@ -1144,9 +1144,11 @@ export class WorkflowEngine {
           errorDescription += '\n\nSmoke Test Errors (Runtime HTTP Validation):\n' + smokeErrors;
 
           // Include response previews for debugging
-          for (const result of smokeTestResult.results.filter(r => !r.success)) {
-            if (result.responsePreview) {
-              errorDescription += `\n\n--- Response from ${result.url} (HTTP ${result.status}) ---\n${result.responsePreview.substring(0, 1000)}`;
+          if (smokeTestResult.results && Array.isArray(smokeTestResult.results)) {
+            for (const result of smokeTestResult.results.filter(r => !r.success)) {
+              if (result.responsePreview) {
+                errorDescription += `\n\n--- Response from ${result.url} (HTTP ${result.status}) ---\n${result.responsePreview.substring(0, 1000)}`;
+              }
             }
           }
         }
