@@ -138,7 +138,21 @@ async function loadChatRequests(): Promise<ChatRequestsFile> {
     // Load file if it exists
     if (fs.existsSync(requestsPath)) {
       const content = await fs.promises.readFile(requestsPath, 'utf-8');
-      return JSON.parse(content) as ChatRequestsFile;
+      const parsed = JSON.parse(content);
+
+      // Handle case where file is an array (legacy or incorrectly reset)
+      if (Array.isArray(parsed)) {
+        logger.warn(`[ChatRequests] chat-requests.json is an array, converting to { requests: [] } format`);
+        return { requests: parsed };
+      }
+
+      // Ensure the file has a requests array
+      if (!parsed.requests || !Array.isArray(parsed.requests)) {
+        logger.warn(`[ChatRequests] chat-requests.json missing requests array, returning empty`);
+        return { requests: [] };
+      }
+
+      return parsed as ChatRequestsFile;
     }
   } catch (error) {
     logger.warn(`[ChatRequests] Failed to load requests file: ${error}`);

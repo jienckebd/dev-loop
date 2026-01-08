@@ -268,7 +268,7 @@ export async function archiveCommand(options: ArchiveOptions): Promise<void> {
     // Reset cursor chat requests file
     if (movedFiles.includes(cursorChatRequestsPath)) {
       await fs.ensureDir(path.dirname(cursorChatRequestsPath));
-      await fs.writeJson(cursorChatRequestsPath, [], { spaces: 2 });
+      await fs.writeJson(cursorChatRequestsPath, { requests: [] }, { spaces: 2 });
       console.log(chalk.gray(`  Reset ${path.relative(projectRoot, cursorChatRequestsPath)}`));
     }
 
