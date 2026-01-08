@@ -16,6 +16,7 @@ import { SessionContext } from './session-manager';
 import { extractCodeChanges, parseCodeChangesFromText, JsonParsingContext } from './json-parser';
 import { ObservationTracker } from '../../core/observation-tracker';
 import { getParallelMetricsTracker } from '../../core/parallel-metrics';
+import { AgentIPCServer, IPCMessage } from '../../core/agent-ipc';
 
 const execAsync = promisify(exec);
 
@@ -77,6 +78,7 @@ export class CursorChatOpener {
   private cursorPath: string | null = null;
   private sessionManager: CursorSessionManager | null = null;
   private observationTracker: ObservationTracker;
+  private ipcServer: AgentIPCServer | null = null;
 
   constructor(config?: CursorChatOpenerConfig) {
     this.observationTracker = new ObservationTracker();
@@ -710,6 +712,13 @@ export class CursorChatOpener {
       const phaseId = request.context?.phaseId ?? undefined;
       parallelMetrics.startAgent(agentId, taskId, prdId, phaseId, enhancedPrompt?.length || 0);
 
+      // Start IPC server for structured communication with background agent
+      const ipcSessionId = session?.sessionId || `ipc-${Date.now()}`;
+      const ipcServer = new AgentIPCServer(ipcSessionId, (this.config as any).debug);
+      await ipcServer.start();
+      const socketPath = ipcServer.getSocketPath();
+      logger.debug(`[CursorChatOpener] IPC server started at ${socketPath}`);
+
       // Use spawn with stdin for long prompts (more reliable than command-line args)
       // Add timeout to prevent hanging (default 5 minutes for background agents)
       // Code generation should complete in < 5 minutes; test generation may take longer
@@ -717,9 +726,12 @@ export class CursorChatOpener {
       const configTimeout = (this.config as any).backgroundAgentTimeout;
       const timeoutMs = configTimeout ? configTimeout * 60 * 1000 : 5 * 60 * 1000; // Default: 5 minutes
       const timeoutPromise = new Promise<ChatOpenResult>((resolve) => {
-        setTimeout(() => {
+        setTimeout(async () => {
           // Track agent timeout in parallel metrics
           parallelMetrics.completeAgent(agentId, 'timeout', 0);
+
+          // Clean up IPC server on timeout
+          await ipcServer.stop();
 
           resolve({
             success: false,
@@ -731,10 +743,20 @@ export class CursorChatOpener {
 
       return Promise.race([
         timeoutPromise,
-        new Promise<ChatOpenResult>((resolve) => {
+        new Promise<ChatOpenResult>(async (resolve) => {
+          // Pass IPC socket path to child via environment variables
+          const childEnv = {
+            ...process.env,
+            DEVLOOP_IPC_SOCKET: socketPath,
+            DEVLOOP_SESSION_ID: ipcSessionId,
+            DEVLOOP_REQUEST_ID: request.id,
+            DEVLOOP_DEBUG: (this.config as any).debug ? 'true' : 'false',
+          };
+
           const child = spawn(this.cursorPath!, args, {
             cwd: workspacePath,
             stdio: ['pipe', 'pipe', 'pipe'],
+            env: childEnv,
           });
 
           let stdout = '';
@@ -770,7 +792,7 @@ export class CursorChatOpener {
             }
           }, timeoutMs);
 
-          child.on('close', (code) => {
+          child.on('close', async (code) => {
             clearTimeout(timeoutHandle);
           if (code !== 0 && stderr) {
             logger.warn(`[CursorChatOpener] Background agent exited with code ${code}: ${stderr.substring(0, 200)}`);
@@ -876,6 +898,9 @@ export class CursorChatOpener {
             );
           }
 
+          // Clean up IPC server
+          await ipcServer.stop();
+
           if (success) {
             logger.info(`[CursorChatOpener] Background agent completed successfully${session ? ` (session: ${session.sessionId})` : ''}`);
 
@@ -904,9 +929,12 @@ export class CursorChatOpener {
           }
         });
 
-          child.on('error', (spawnError) => {
+          child.on('error', async (spawnError) => {
             clearTimeout(timeoutHandle);
             logger.error(`[CursorChatOpener] Background agent spawn error: ${spawnError.message}`);
+
+            // Clean up IPC server
+            await ipcServer.stop();
 
             // Track agent failure in parallel metrics
             parallelMetrics.completeAgent(agentId, 'failed', 0);

@@ -389,10 +389,67 @@ export class WorkflowEngine {
     return undefined;
   }
 
+  /**
+   * Load PRD maxConcurrency from config or PRD set metadata
+   * Used in watch mode to ensure parallel execution is enabled
+   */
+  private async loadPrdMaxConcurrencyFromConfig(): Promise<void> {
+    try {
+      // Check if there's a PRD set configured in the planning directory
+      const planningDir = (this.config as any).taskMaster?.planningDir || '.taskmaster/planning';
+      const cwd = process.cwd();
+      const fullPlanningDir = path.join(cwd, planningDir);
+
+      // Look for any active PRD set with index.md.yml
+      if (fs.existsSync(fullPlanningDir)) {
+        const entries = fs.readdirSync(fullPlanningDir, { withFileTypes: true });
+        for (const entry of entries) {
+          if (entry.isDirectory()) {
+            const indexPath = path.join(fullPlanningDir, entry.name, 'index.md.yml');
+            if (fs.existsSync(indexPath)) {
+              try {
+                const content = fs.readFileSync(indexPath, 'utf-8');
+                // Parse YAML frontmatter to extract execution config
+                const yamlMatch = content.match(/^---\n([\s\S]*?)\n---/);
+                if (yamlMatch) {
+                  // Simple YAML parse for maxConcurrency
+                  const maxConcurrencyMatch = yamlMatch[1].match(/maxConcurrency:\s*(\d+)/);
+                  if (maxConcurrencyMatch) {
+                    const maxConcurrency = parseInt(maxConcurrencyMatch[1], 10);
+                    if (maxConcurrency > 0) {
+                      (this as any).currentPrdMaxConcurrency = maxConcurrency;
+                      logger.debug(`[WorkflowEngine] Loaded maxConcurrency=${maxConcurrency} from ${entry.name}/index.md.yml`);
+                      return;
+                    }
+                  }
+                }
+              } catch (parseError) {
+                // Skip this PRD set
+              }
+            }
+          }
+        }
+      }
+
+      // Fallback to config.autonomous.maxConcurrency or default to 1
+      (this as any).currentPrdMaxConcurrency = (this.config as any).autonomous?.maxConcurrency || 1;
+      logger.debug(`[WorkflowEngine] Using default maxConcurrency=${(this as any).currentPrdMaxConcurrency}`);
+    } catch (error) {
+      // Default to 1 on any error
+      (this as any).currentPrdMaxConcurrency = 1;
+    }
+  }
+
   async runOnce(): Promise<WorkflowResult> {
     try {
       // Update state: FetchingTask
       await this.updateState({ status: 'fetching-task' });
+
+      // Load PRD metadata if not already loaded (for watch mode)
+      // This ensures maxConcurrency from PRD is respected
+      if (!(this as any).currentPrdMaxConcurrency) {
+        await this.loadPrdMaxConcurrencyFromConfig();
+      }
 
       // Fetch next pending task
       const tasks = await this.taskBridge.getPendingTasks();

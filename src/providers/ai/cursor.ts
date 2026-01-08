@@ -16,6 +16,36 @@ import { extractCodeChanges, parseCodeChangesFromText, JsonParsingContext } from
 import { ObservationTracker } from '../../core/observation-tracker';
 import * as path from 'path';
 
+/**
+ * Custom error class for JSON parsing failures that should halt execution
+ * This error indicates that the AI response could not be parsed and the
+ * system should stop attempting workarounds.
+ */
+export class JsonParsingHaltError extends Error {
+  public readonly taskId: string;
+  public readonly taskTitle: string;
+  public readonly retryCount: number;
+  public readonly responseSample: string;
+  public readonly debugInfo: Record<string, any>;
+
+  constructor(
+    message: string,
+    taskId: string,
+    taskTitle: string,
+    retryCount: number,
+    responseSample: string,
+    debugInfo: Record<string, any> = {}
+  ) {
+    super(message);
+    this.name = 'JsonParsingHaltError';
+    this.taskId = taskId;
+    this.taskTitle = taskTitle;
+    this.retryCount = retryCount;
+    this.responseSample = responseSample;
+    this.debugInfo = debugInfo;
+  }
+}
+
 export class CursorProvider implements AIProvider {
   public name = 'cursor';
   private config: AIProviderConfig & { model?: string };
@@ -119,12 +149,19 @@ export class CursorProvider implements AIProvider {
                 }
               }
             }
-            logger.error(`[CursorProvider] All retries failed to extract CodeChanges`);
+            // HALT: JSON parsing failed after all retries
+            const haltError = this.createJsonParsingHaltError(context, maxRetries, result.response);
+            logger.error(haltError.message);
+            throw haltError;
           }
         } else {
           logger.warn(`[CursorProvider] Background agent failed: ${result.message}`);
         }
       } catch (error) {
+        // Check if this is already a halt error (re-throw without modification)
+        if (error instanceof JsonParsingHaltError) {
+          throw error;
+        }
         const errorMessage = error instanceof Error ? error.message : String(error);
         logger.error(`[CursorProvider] Background agent error: ${errorMessage}`);
         // Fall through to fallback
@@ -137,8 +174,8 @@ export class CursorProvider implements AIProvider {
       return this.fallbackToFileBased(prompt, context, model);
     }
 
-    // 4. If all methods failed, throw error
-    throw new Error('Failed to generate code via Cursor AI: Background agent failed and fallback disabled');
+    // 4. HALT: All methods failed - throw actionable error
+    throw this.createFinalHaltError(context, useBackgroundAgent, fallbackToFileBased);
   }
 
   /**
@@ -176,55 +213,84 @@ export class CursorProvider implements AIProvider {
     lines.push('Instructions:');
     lines.push(prompt);
     lines.push('');
-    lines.push('CRITICAL: You must generate code changes and return them as JSON. Use this exact format:');
+    lines.push('## CRITICAL: Response Format Requirements (STRICT)');
+    lines.push('');
+    lines.push('**YOU MUST RETURN ONLY VALID JSON. NO NARRATIVE TEXT, NO EXPLANATIONS, NO MARKDOWN OUTSIDE THE JSON BLOCK.**');
+    lines.push('');
+    lines.push('Your ENTIRE response must be exactly this format:');
+    lines.push('');
     lines.push('```json');
     lines.push(JSON.stringify({
       files: [
         {
           path: 'relative/path/to/file',
           content: 'complete file content',
-          operation: 'create' // or 'update', 'delete', 'patch'
+          operation: 'create'
         }
       ],
       summary: 'brief summary of changes'
     }, null, 2));
     lines.push('```');
     lines.push('');
-    lines.push('IMPORTANT: Return ONLY the JSON code block above. Do not ask questions - generate the code changes now.');
+    lines.push('### FORBIDDEN:');
+    lines.push('- ❌ Starting with "Here are the code changes..." or any narrative');
+    lines.push('- ❌ Adding explanations before or after the JSON');
+    lines.push('- ❌ Asking questions - generate the code NOW');
+    lines.push('- ❌ Using multiple code blocks - use exactly ONE ```json block');
+    lines.push('- ❌ Adding comments like "// operation type" inside JSON values');
+    lines.push('');
+    lines.push('### REQUIRED:');
+    lines.push('- ✅ Start IMMEDIATELY with ```json');
+    lines.push('- ✅ Valid JSON structure with "files" array and "summary" string');
+    lines.push('- ✅ Each file has "path", "content", and "operation" fields');
+    lines.push('- ✅ End with ``` and nothing else');
+    lines.push('');
+    lines.push('If no changes needed, return: ```json\n{"files": [], "summary": "No changes required"}\n```');
 
     return lines.join('\n');
   }
 
   /**
    * Build a strict JSON-only prompt for retry attempts
-   * Uses minimal context to increase chance of JSON-only response
+   * Uses minimal context and extremely strict format enforcement
    */
   private buildStrictJsonPrompt(context: TaskContext): string {
     const lines: string[] = [];
 
-    lines.push('RESPOND WITH JSON ONLY. NO EXPLANATIONS.');
+    lines.push('# STRICT JSON-ONLY MODE');
+    lines.push('');
+    lines.push('**YOUR PREVIOUS RESPONSE FAILED BECAUSE IT CONTAINED NARRATIVE TEXT.**');
+    lines.push('');
+    lines.push('DO NOT WRITE ANY TEXT. DO NOT EXPLAIN. DO NOT ASK QUESTIONS.');
     lines.push('');
     lines.push(`Task: ${context.task.title}`);
     lines.push(`Description: ${context.task.description}`);
     lines.push('');
-    lines.push('Generate the code changes. Return ONLY this JSON structure:');
+    lines.push('# OUTPUT FORMAT (EXACT)');
+    lines.push('');
+    lines.push('Your response must be EXACTLY this - nothing before, nothing after:');
     lines.push('');
     lines.push('```json');
     lines.push('{');
     lines.push('  "files": [');
     lines.push('    {');
-    lines.push('      "path": "path/to/file.ext",');
-    lines.push('      "content": "complete file content here",');
+    lines.push('      "path": "exact/path/to/file.ext",');
+    lines.push('      "content": "complete file content",');
     lines.push('      "operation": "create"');
     lines.push('    }');
     lines.push('  ],');
-    lines.push('  "summary": "what was changed"');
+    lines.push('  "summary": "description"');
     lines.push('}');
     lines.push('```');
     lines.push('');
-    lines.push('If no changes are needed, return: {"files": [], "summary": "No changes required"}');
+    lines.push('## RULES (VIOLATION = FAILURE):');
+    lines.push('1. First 7 characters of your response MUST be: ```json');
+    lines.push('2. Last 3 characters MUST be: ```');
+    lines.push('3. NO text before ```json');
+    lines.push('4. NO text after closing ```');
+    lines.push('5. Valid JSON only between the markers');
     lines.push('');
-    lines.push('START YOUR RESPONSE WITH ```json');
+    lines.push('GENERATE THE CODE NOW. RESPOND WITH ```json FIRST CHARACTER.');
 
     return lines.join('\n');
   }
@@ -388,6 +454,107 @@ Provide a JSON response with:
       warnings: [],
       summary: 'Error analysis via Cursor AI failed',
     };
+  }
+
+  /**
+   * Create a halt error for JSON parsing failures
+   * Provides actionable debugging information
+   */
+  private createJsonParsingHaltError(
+    context: TaskContext,
+    retryCount: number,
+    response: any
+  ): JsonParsingHaltError {
+    const responseSample = typeof response === 'string'
+      ? response.substring(0, 1000)
+      : JSON.stringify(response).substring(0, 1000);
+
+    const debugInfo: Record<string, any> = {
+      responseType: typeof response,
+      responseKeys: typeof response === 'object' && response !== null
+        ? Object.keys(response)
+        : [],
+      hasText: !!response?.text,
+      hasResult: !!response?.result,
+      hasFiles: !!response?.files,
+      prdId: context.prdId,
+      phaseId: context.phaseId,
+    };
+
+    const message = [
+      `JSON PARSING HALT: Failed to extract CodeChanges after ${retryCount} retries.`,
+      '',
+      '=== ROOT CAUSE ===',
+      'The AI agent returned narrative text instead of the required JSON format.',
+      'Dev-loop has halted to prevent further attempts and wasted API calls.',
+      '',
+      '=== TASK INFO ===',
+      `Task ID: ${context.task.id}`,
+      `Task Title: ${context.task.title}`,
+      `PRD: ${context.prdId || 'default'}`,
+      `Phase: ${context.phaseId || 'none'}`,
+      '',
+      '=== DEBUG INFO ===',
+      `Response type: ${debugInfo.responseType}`,
+      `Response keys: ${debugInfo.responseKeys.join(', ') || 'N/A'}`,
+      '',
+      '=== RESPONSE SAMPLE (first 500 chars) ===',
+      responseSample.substring(0, 500),
+      '',
+      '=== HOW TO FIX ===',
+      '1. Check .devloop/observations.json for JSON parsing failure patterns',
+      '2. Review the prompt templates in src/providers/ai/cursor.ts',
+      '3. Verify the AI model is respecting JSON format instructions',
+      '4. Consider using a different model or adjusting prompts',
+      '',
+      '=== FILES TO EXAMINE ===',
+      '- node_modules/dev-loop/src/providers/ai/cursor.ts (prompts)',
+      '- node_modules/dev-loop/src/providers/ai/json-parser.ts (parsing)',
+      '- .devloop/observations.json (failure tracking)',
+    ].join('\n');
+
+    return new JsonParsingHaltError(
+      message,
+      context.task.id,
+      context.task.title,
+      retryCount,
+      responseSample,
+      debugInfo
+    );
+  }
+
+  /**
+   * Create a final halt error when all methods failed
+   */
+  private createFinalHaltError(
+    context: TaskContext,
+    useBackgroundAgent: boolean,
+    fallbackToFileBased: boolean
+  ): Error {
+    const message = [
+      'CODE GENERATION HALT: All methods failed to generate code.',
+      '',
+      '=== CONFIGURATION ===',
+      `Background Agent Enabled: ${useBackgroundAgent}`,
+      `Fallback to File-Based Enabled: ${fallbackToFileBased}`,
+      '',
+      '=== TASK INFO ===',
+      `Task ID: ${context.task.id}`,
+      `Task Title: ${context.task.title}`,
+      '',
+      '=== TROUBLESHOOTING ===',
+      '1. Verify Cursor CLI is installed and accessible',
+      '2. Check if cursor agent --print command works manually',
+      '3. Verify network connectivity to AI services',
+      '4. Check dev-loop logs for specific error messages',
+      '',
+      '=== CONFIGURATION OPTIONS ===',
+      'In devloop.config.js, set:',
+      '  cursor.agents.useBackgroundAgent: true',
+      '  cursor.agents.fallbackToFileBased: true (for backup)',
+    ].join('\n');
+
+    return new Error(message);
   }
 
 }
