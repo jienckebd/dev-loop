@@ -138,6 +138,30 @@ export class TaskMasterBridge {
         return deps.every((depId: string | number) => completedTaskIds.has(String(depId)));
       });
 
+      // Debug logging for contribution mode
+      if (readyTasks.length === 0 && pending.length > 0) {
+        console.log(`[TaskBridge] getPendingTasks: ${pending.length} pending tasks, but ${eligibleTasks.length} eligible after retry filter`);
+        console.log(`[TaskBridge] Completed task IDs:`, Array.from(completedTaskIds).slice(0, 10));
+        const blockedByDeps = eligibleTasks.filter(t => {
+          const deps = (t as any).dependencies || [];
+          if (deps.length === 0) return false;
+          return !deps.every((depId: string | number) => completedTaskIds.has(String(depId)));
+        });
+        if (blockedByDeps.length > 0) {
+          console.log(`[TaskBridge] ${blockedByDeps.length} tasks blocked by dependencies:`, blockedByDeps.map(t => ({ id: t.id, deps: (t as any).dependencies })).slice(0, 5));
+        }
+        // Show tasks with no dependencies that should be ready
+        const noDepTasks = eligibleTasks.filter(t => {
+          const deps = (t as any).dependencies || [];
+          return deps.length === 0;
+        });
+        if (noDepTasks.length > 0) {
+          console.log(`[TaskBridge] ${noDepTasks.length} tasks with no dependencies (should be ready):`, noDepTasks.map(t => ({ id: t.id, title: t.title?.substring(0, 50) })));
+        } else if (eligibleTasks.length > 0) {
+          console.log(`[TaskBridge] All ${eligibleTasks.length} eligible tasks have dependencies`);
+        }
+      }
+
       // Sort by priority and prefer original tasks over fix tasks
       return readyTasks.sort((a, b) => {
         // First, prefer in-progress tasks (to resume them)
