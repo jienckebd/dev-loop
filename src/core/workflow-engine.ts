@@ -1119,9 +1119,9 @@ export class WorkflowEngine {
       let requiredFiles = this.extractRequiredFilePaths(taskDetails);
 
       // Also check targetFiles from PRD (more reliable than extracting from task details)
-      const { targetFiles: prdTargetFilesStr } = await this.getCodebaseContext(task);
-      if (prdTargetFilesStr) {
-        const prdTargetFiles = prdTargetFilesStr.split('\n').filter(f => f.trim() && !f.includes('...'));
+      // targetFiles is already available from getCodebaseContext call earlier in this function
+      if (targetFiles) {
+        const prdTargetFiles = targetFiles.split('\n').filter(f => f.trim() && !f.includes('...'));
         // Merge PRD targetFiles with extracted paths, prefer PRD paths (they're more complete)
         const allRequiredFiles = [...new Set([...prdTargetFiles, ...requiredFiles])];
         // Prefer longer paths (more complete) - PRD paths are usually full paths
