@@ -8,21 +8,10 @@
 import * as fs from 'fs-extra';
 import * as path from 'path';
 import { logger } from '../../core/logger';
+import { SessionManager, SessionContext, HistoryEntry, Session, BaseSessionManager } from './session-manager';
 
-export interface SessionContext {
-  prdId?: string;
-  phaseId?: number;
-  prdSetId?: string;
-  taskIds: string[];
-}
-
-export interface SessionHistoryEntry {
-  requestId: string;
-  prompt: string;
-  response?: any;
-  timestamp: string;
-  success?: boolean;
-  error?: string;
+export interface SessionHistoryEntry extends HistoryEntry {
+  // Cursor-specific fields can be added here if needed
 }
 
 export interface CursorSession {
@@ -49,13 +38,18 @@ export interface CursorSessionManagerConfig {
 
 /**
  * Manages Cursor background agent sessions for context persistence
+ * Implements provider-agnostic SessionManager interface
  */
-export class CursorSessionManager {
+export class CursorSessionManager extends BaseSessionManager implements SessionManager {
   private config: Required<CursorSessionManagerConfig>;
   private sessionsPath: string;
-  private sessions: Map<string, CursorSession> = new Map();
+  protected sessions: Map<string, CursorSession> = new Map();
 
   constructor(config: CursorSessionManagerConfig = {}) {
+    super({
+      maxSessionAge: config.maxSessionAge || 3600000,
+      maxHistoryItems: config.maxHistoryItems || 50,
+    });
     this.config = {
       sessionsPath: config.sessionsPath || '.devloop/cursor-sessions.json',
       maxSessionAge: config.maxSessionAge || 3600000, // 1 hour default
@@ -126,7 +120,7 @@ export class CursorSessionManager {
    * Create a new session for a given context
    */
   createSession(context: SessionContext): CursorSession {
-    const sessionId = this.generateSessionId(context);
+    const sessionId = super.generateSessionId(context);
 
     const session: CursorSession = {
       sessionId,
@@ -164,14 +158,13 @@ export class CursorSessionManager {
       return this.createSession(context);
     }
 
-    const sessionId = this.generateSessionId(context);
+    const sessionId = super.generateSessionId(context);
     let session: CursorSession | undefined = this.sessions.get(sessionId);
 
       // Check if session exists and is not too old
       if (session) {
-        const age = Date.now() - new Date(session.lastUsed).getTime();
-        if (age > this.config.maxSessionAge) {
-          logger.debug(`[CursorSessionManager] Session ${sessionId} is too old (${Math.round(age / 1000)}s), creating new one`);
+        if (this.isSessionTooOld(session)) {
+          logger.debug(`[CursorSessionManager] Session ${sessionId} is too old, creating new one`);
           this.sessions.delete(sessionId);
           session = undefined;
         } else {
@@ -212,7 +205,14 @@ export class CursorSessionManager {
   }
 
   /**
-   * Add an entry to session history
+   * Add an entry to session history (implements SessionManager interface)
+   */
+  addHistory(sessionId: string, entry: HistoryEntry): void {
+    this.addToHistory(sessionId, entry.requestId, entry.prompt, entry.response, entry.success, entry.error);
+  }
+
+  /**
+   * Add an entry to session history (Cursor-specific method)
    */
   addToHistory(sessionId: string, requestId: string, prompt: string, response?: any, success?: boolean, error?: string): void {
     const session = this.sessions.get(sessionId);
@@ -243,10 +243,8 @@ export class CursorSessionManager {
       }
     }
 
-    // Limit history size
-    if (session.history.length > this.config.maxHistoryItems) {
-      session.history = session.history.slice(-this.config.maxHistoryItems);
-    }
+    // Intelligent history pruning
+    this.pruneHistory(sessionId, this.config.maxHistoryItems);
 
     this.saveSessions();
     logger.debug(`[CursorSessionManager] Added history entry to session ${sessionId} (${session.history.length} entries)`);
@@ -314,21 +312,6 @@ export class CursorSessionManager {
     return deleted;
   }
 
-  /**
-   * Generate a session ID from context
-   */
-  private generateSessionId(context: SessionContext): string {
-    const parts: string[] = [];
-    if (context.prdSetId) parts.push(`set-${context.prdSetId}`);
-    if (context.prdId) parts.push(`prd-${context.prdId}`);
-    if (context.phaseId !== undefined) parts.push(`phase-${context.phaseId}`);
-
-    if (parts.length === 0) {
-      return 'default-session';
-    }
-
-    return parts.join('-');
-  }
 
   /**
    * Build prompt with conversation history for context
@@ -380,6 +363,65 @@ export class CursorSessionManager {
       stats[sessionId] = session.stats;
     }
     return stats;
+  }
+
+  /**
+   * Prune session history intelligently
+   *
+   * Strategy:
+   * - Keep the most recent entries (configurable, default 10)
+   * - Optionally summarize older entries instead of discarding them
+   * - Remove oldest entries when limit exceeded
+   */
+  pruneHistory(sessionId: string, maxItems?: number): void {
+    const session = this.sessions.get(sessionId);
+    if (!session) {
+      return;
+    }
+
+    const limit = maxItems || this.config.maxHistoryItems;
+    const originalLength = session.history.length;
+
+    if (originalLength <= limit) {
+      return; // No pruning needed
+    }
+
+    // Keep most recent entries
+    const recentEntries = session.history.slice(-limit);
+
+    // Optionally summarize older entries (if enabled in config)
+    const summarizeOldHistory = (this.config as any).summarizeOldHistory !== false;
+    if (summarizeOldHistory && originalLength > limit) {
+      const oldEntries = session.history.slice(0, -limit);
+      if (oldEntries.length > 0) {
+        // Create a summary entry for old history
+        const summaryEntry: SessionHistoryEntry = {
+          requestId: `summary-${Date.now()}`,
+          prompt: `[Summary of ${oldEntries.length} previous interactions]`,
+          timestamp: new Date().toISOString(),
+          success: true,
+          response: {
+            summary: `Previous ${oldEntries.length} interactions completed. Key outcomes: ${oldEntries.filter(e => e.success).length} successful, ${oldEntries.filter(e => !e.success).length} failed.`,
+            totalFiles: oldEntries.reduce((sum, e) => sum + (e.response?.files?.length || 0), 0),
+          },
+        };
+        // Keep summary + recent entries (if we have room)
+        if (recentEntries.length < limit) {
+          session.history = [summaryEntry, ...recentEntries];
+        } else {
+          // Replace oldest recent entry with summary if we're at limit
+          session.history = [summaryEntry, ...recentEntries.slice(1)];
+        }
+      } else {
+        session.history = recentEntries;
+      }
+    } else {
+      // Simple pruning: just keep recent entries
+      session.history = recentEntries;
+    }
+
+    this.saveSessions();
+    logger.debug(`[CursorSessionManager] Pruned history for session ${sessionId}: ${originalLength} -> ${session.history.length} entries`);
   }
 }
 

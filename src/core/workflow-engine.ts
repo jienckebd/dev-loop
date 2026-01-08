@@ -27,6 +27,7 @@ import { PatternMetrics } from './pattern-metrics';
 import { TestResultsTracker } from './test-results-tracker';
 import { ErrorAnalyzer } from './error-analyzer';
 import { CostCalculator } from './cost-calculator';
+import { getParallelMetricsTracker } from './parallel-metrics';
 import { RunMetrics } from './debug-metrics';
 import { logger } from './logger';
 import { PrdContextManager, PrdContext, Requirement } from './prd-context';
@@ -403,33 +404,29 @@ export class WorkflowEngine {
       // Filter tasks: find code-generation tasks vs validation-only tasks
       const validationOnlyStrategies = ['browser', 'drush', 'playwright', 'manual'];
 
-      // Find the first code task (testStrategy is 'code', undefined, or not in validation list)
-      let task: Task | undefined;
-      const skippedValidationTasks: string[] = [];
-
-      for (const t of tasks) {
+      // Filter to code tasks only
+      const codeTasks = tasks.filter(t => {
         const testStrategy = (t as any).testStrategy as string | undefined;
-        if (testStrategy && validationOnlyStrategies.includes(testStrategy)) {
-          // This is a validation/testing task - skip and log
-          skippedValidationTasks.push(`${t.id} (${testStrategy}): ${t.title}`);
-          continue;
-        }
-        // Found a code task
-        task = t;
-        break;
-      }
+        return !testStrategy || !validationOnlyStrategies.includes(testStrategy);
+      });
+
+      const skippedValidationTasks = tasks.filter(t => {
+        const testStrategy = (t as any).testStrategy as string | undefined;
+        return testStrategy && validationOnlyStrategies.includes(testStrategy);
+      });
 
       // Log skipped validation tasks
       if (skippedValidationTasks.length > 0) {
         console.log(`\n[INFO] Skipping ${skippedValidationTasks.length} validation task(s) - require external execution:`);
         for (const skipped of skippedValidationTasks) {
-          console.log(`  - ${skipped}`);
+          const testStrategy = (skipped as any).testStrategy as string | undefined;
+          console.log(`  - ${skipped.id} (${testStrategy}): ${skipped.title}`);
         }
         console.log('');
       }
 
       // If no code tasks found, report what's blocking
-      if (!task) {
+      if (codeTasks.length === 0) {
         logger.info('[WorkflowEngine] No code-generation tasks available');
         if (skippedValidationTasks.length > 0) {
           console.log('[INFO] All pending tasks are validation tasks that require external execution.');
@@ -445,6 +442,93 @@ export class WorkflowEngine {
         };
       }
 
+      // NEW: Group tasks by dependency level for parallel execution
+      const dependencyLevels = await this.taskBridge.groupTasksByDependencyLevel(codeTasks);
+      const maxConcurrency = (this.config as any).autonomous?.maxConcurrency || 1;
+
+      logger.info(`[WorkflowEngine] Found ${codeTasks.length} code task(s) in ${dependencyLevels.length} dependency level(s), max concurrency: ${maxConcurrency}`);
+
+      // Process each dependency level sequentially
+      for (let levelIndex = 0; levelIndex < dependencyLevels.length; levelIndex++) {
+        const level = dependencyLevels[levelIndex];
+        logger.info(`[WorkflowEngine] Processing dependency level ${levelIndex + 1}/${dependencyLevels.length} with ${level.length} task(s)`);
+
+        // Execute tasks in this level in parallel (respecting maxConcurrency)
+        const tasksToRun = level.slice(0, maxConcurrency);
+        const remainingTasks = level.slice(maxConcurrency);
+
+        if (remainingTasks.length > 0) {
+          logger.info(`[WorkflowEngine] Executing ${tasksToRun.length} task(s) in parallel, ${remainingTasks.length} task(s) queued for next iteration`);
+        }
+
+        // Execute tasks in parallel
+        const results = await Promise.allSettled(
+          tasksToRun.map(task => this.executeSingleTask(task))
+        );
+
+        // Process results
+        for (let i = 0; i < results.length; i++) {
+          const result = results[i];
+          const task = tasksToRun[i];
+
+          if (result.status === 'fulfilled') {
+            const workflowResult = result.value;
+            // If task completed successfully, continue
+            if (workflowResult.completed) {
+              logger.info(`[WorkflowEngine] Task ${task.id} completed successfully`);
+            } else if (workflowResult.error) {
+              logger.warn(`[WorkflowEngine] Task ${task.id} failed: ${workflowResult.error}`);
+            }
+            // Return first result (for backward compatibility with single-task execution)
+            if (i === 0) {
+              return workflowResult;
+            }
+          } else {
+            logger.error(`[WorkflowEngine] Task ${task.id} execution rejected: ${result.reason}`);
+            // Return error for first failed task
+            if (i === 0) {
+              return {
+                completed: false,
+                noTasks: false,
+                taskId: task.id,
+                error: result.reason instanceof Error ? result.reason.message : String(result.reason),
+              };
+            }
+          }
+        }
+
+        // If we have remaining tasks in this level, they'll be processed in next runOnce() call
+        // (after current level's tasks complete)
+        if (remainingTasks.length > 0) {
+          logger.info(`[WorkflowEngine] ${remainingTasks.length} task(s) in level ${levelIndex + 1} will be processed in next iteration`);
+          // Return after processing first batch to allow next iteration
+          return {
+            completed: false,
+            noTasks: false,
+            taskId: tasksToRun[0]?.id,
+          };
+        }
+      }
+
+      // All levels processed
+      await this.updateState({ status: 'idle' });
+      return { completed: true, noTasks: false };
+    } catch (error) {
+      logger.error(`[WorkflowEngine] Error in runOnce: ${error instanceof Error ? error.message : String(error)}`);
+      await this.updateState({ status: 'idle' });
+      return {
+        completed: false,
+        noTasks: false,
+        error: error instanceof Error ? error.message : String(error),
+      };
+    }
+  }
+
+  /**
+   * Execute a single task (extracted from runOnce for parallel execution)
+   */
+  private async executeSingleTask(task: Task): Promise<WorkflowResult> {
+    try {
       await this.updateState({
         status: 'executing-ai',
         currentTask: task,
@@ -564,6 +648,17 @@ export class WorkflowEngine {
         }
       }
 
+      // NEW: Early validation - validate task requirements before code generation
+      const earlyValidationResult = await this.validateTaskRequirements(task);
+      if (!earlyValidationResult.valid) {
+        logger.warn('[WorkflowEngine] Early validation found issues:');
+        for (const error of earlyValidationResult.errors) {
+          logger.warn(`  - ${error.message}`);
+        }
+        // Don't fail completely, but log warnings
+        // Some issues might be acceptable (e.g., files that will be created)
+      }
+
       // Generate code using AI
       const { codebaseContext, targetFiles, existingCode } = await this.getCodebaseContext(task);
 
@@ -677,11 +772,24 @@ export class WorkflowEngine {
       // Record AI call metrics
       if (this.debugMetrics) {
         this.debugMetrics.recordTiming('aiCall', aiCallDuration);
-        // Record token usage if available
-        if ('getLastTokens' in this.aiProvider && typeof this.aiProvider.getLastTokens === 'function') {
+
+        // Record token usage from parallel metrics tracker
+        const parallelMetrics = getParallelMetricsTracker();
+        const currentExecution = parallelMetrics.getCurrentExecution();
+        if (currentExecution) {
+          const totalInput = currentExecution.tokens.totalInput;
+          const totalOutput = currentExecution.tokens.totalOutput;
+          if (totalInput > 0 || totalOutput > 0) {
+            this.debugMetrics.recordTokens(totalInput, totalOutput);
+          }
+        }
+
+        // Fallback: try legacy getLastTokens method if no tokens from parallel metrics
+        const parallelTokensRecorded = currentExecution && (currentExecution.tokens.totalInput > 0 || currentExecution.tokens.totalOutput > 0);
+        if (!parallelTokensRecorded && 'getLastTokens' in this.aiProvider && typeof this.aiProvider.getLastTokens === 'function') {
           const tokens = (this.aiProvider as any).getLastTokens();
           if (tokens.input || tokens.output) {
-            this.debugMetrics.recordTokens(tokens.input || 0, tokens.output || 0);
+            this.debugMetrics!.recordTokens(tokens.input || 0, tokens.output || 0);
           }
         }
       }
@@ -845,6 +953,21 @@ export class WorkflowEngine {
             this.debugMetrics.completeRun('failed');
           }
 
+          // Track validation failure in observation tracker
+          if (this.observationTracker) {
+            try {
+              const projectType = this.detectProjectType() || 'unknown';
+              await this.observationTracker.trackFailurePattern(
+                `Validation failed: ${errorDescription}`,
+                projectType
+              );
+            } catch (err) {
+              if (this.debug) {
+                console.warn('[WorkflowEngine] Could not track validation failure:', err);
+              }
+            }
+          }
+
           await this.updateState({ status: 'idle' });
           return {
             completed: false,
@@ -928,6 +1051,21 @@ export class WorkflowEngine {
         if (this.debugMetrics) {
           this.debugMetrics.recordTiming('total', totalDuration);
           this.debugMetrics.completeRun('failed');
+        }
+
+        // Track patch failure in observation tracker
+        if (this.observationTracker) {
+          try {
+            const projectType = this.detectProjectType() || 'unknown';
+            await this.observationTracker.trackFailurePattern(
+              `Patch failed: ${patchErrors.substring(0, 500)}`,
+              projectType
+            );
+          } catch (err) {
+            if (this.debug) {
+              console.warn('[WorkflowEngine] Could not track patch failure:', err);
+            }
+          }
         }
 
         await this.updateState({ status: 'idle' });
@@ -1125,6 +1263,7 @@ export class WorkflowEngine {
         (smokeTestResult && !smokeTestResult.success);
 
       if (hasErrors) {
+        try {
         // Create fix task
         await this.updateState({ status: 'creating-fix-task' });
 
@@ -1353,6 +1492,13 @@ export class WorkflowEngine {
           taskId: task.id,
           error: fixTask ? 'Tests failed or errors found in logs' : 'Max retries exceeded, task blocked',
         };
+        } catch (hasErrorsBlockError) {
+          console.error('[WorkflowEngine] Error in hasErrors block:', hasErrorsBlockError);
+          if (hasErrorsBlockError instanceof Error && hasErrorsBlockError.stack) {
+            console.error('[WorkflowEngine] Stack trace:', hasErrorsBlockError.stack);
+          }
+          throw hasErrorsBlockError;
+        }
       }
 
       // Update state: MarkingDone
@@ -2071,9 +2217,39 @@ export class WorkflowEngine {
     }
 
     // Pattern 3: Dynamic class/function discovery via grep/ripgrep
+    // NEW: Scope discovery to PRD/phase target module if available
+    const prdId = (this as any).currentPrdId;
+    const phaseId = (this as any).currentPhaseId;
+    const prdSetId = (this as any).currentPrdSetId;
+
+    // Determine target module from PRD/phase context
+    let scopedSearchDirs = searchDirs;
+    let moduleName: string | undefined = undefined;
+    if (prdId || phaseId) {
+      // Extract module name from PRD ID or task details
+      const extractedModuleName = this.extractModuleNameFromContext(prdId, phaseId, task);
+      moduleName = extractedModuleName ?? undefined;
+      if (moduleName) {
+        // Scope search to target module directory
+        const moduleDir = `docroot/modules/share/${moduleName}`;
+        if (fs.existsSync(path.resolve(process.cwd(), moduleDir))) {
+          scopedSearchDirs = [moduleDir, ...searchDirs]; // Prioritize module directory
+          if (this.debug) {
+            console.log(`[DEBUG] Scoping file discovery to module: ${moduleName} (${moduleDir})`);
+          }
+        }
+      }
+    }
+
     const identifiers = this.extractIdentifiersFromTask(taskText);
     if (identifiers.length > 0) {
-      const discoveredFiles = await this.discoverFilesForIdentifiers(identifiers, searchDirs, excludeDirs, extensions);
+      const discoveredFiles = await this.discoverFilesForIdentifiers(
+        identifiers,
+        scopedSearchDirs,
+        excludeDirs,
+        extensions,
+        moduleName // Pass module name for enhanced scoring
+      );
       for (const file of discoveredFiles) {
         if (!mentionedFiles.includes(file)) {
           mentionedFiles.push(file);
@@ -2311,13 +2487,45 @@ export class WorkflowEngine {
   }
 
   /**
+   * Extract module name from PRD/phase context or task details
+   */
+  private extractModuleNameFromContext(prdId?: string, phaseId?: number, task?: Task): string | null {
+    // Try to extract from PRD ID (e.g., "PERF-PHASE-1" -> "bd_perf")
+    if (prdId) {
+      const moduleMatch = prdId.match(/([a-z_]+)/i);
+      if (moduleMatch) {
+        const candidate = moduleMatch[1].toLowerCase();
+        // Check if it's a valid module directory
+        const moduleDir = path.resolve(process.cwd(), `docroot/modules/share/${candidate}`);
+        if (fs.existsSync(moduleDir)) {
+          return candidate;
+        }
+      }
+    }
+
+    // Try to extract from task details
+    if (task?.details) {
+      const detailsLower = task.details.toLowerCase();
+      // Look for module paths in task details
+      const modulePathMatch = detailsLower.match(/modules\/share\/([a-z_]+)/);
+      if (modulePathMatch) {
+        return modulePathMatch[1];
+      }
+    }
+
+    return null;
+  }
+
+  /**
    * Discover files containing identifier definitions using grep/ripgrep
+   * Enhanced with PRD/phase scoping and semantic relevance scoring
    */
   private async discoverFilesForIdentifiers(
     identifiers: string[],
     searchDirs: string[],
     excludeDirs: string[],
-    extensions: string[]
+    extensions: string[],
+    targetModule?: string | null
   ): Promise<string[]> {
     const discoveredFiles: Map<string, number> = new Map(); // file -> relevance score
 
@@ -2390,6 +2598,14 @@ export class WorkflowEngine {
             if (file.includes(searchDirs[i])) {
               score = 10 - i; // First dir gets 10 points, second gets 9, etc.
               break;
+            }
+          }
+
+          // NEW: Boost score for files in target module (PRD/phase scoping)
+          if (targetModule && file.includes(`modules/share/${targetModule}`)) {
+            score += 20; // Significant boost for target module files
+            if (this.debug) {
+              console.log(`[DEBUG] Boosted score for target module file: ${file} (+20)`);
             }
           }
 
@@ -3393,6 +3609,54 @@ export class WorkflowEngine {
    * Extract required file paths from task details
    * Looks for patterns like "Create config/default/file.yml" or "File: path/to/file"
    */
+  /**
+   * Early validation of task requirements before code generation
+   * Validates file paths, checks for obvious issues, fails fast on problems
+   */
+  private async validateTaskRequirements(task: Task): Promise<{ valid: boolean; errors: Array<{ message: string; suggestion?: string }> }> {
+    const errors: Array<{ message: string; suggestion?: string }> = [];
+    const taskText = `${task.title} ${task.description} ${task.details || ''}`;
+
+    // Extract file paths from task
+    const filePaths = this.extractRequiredFilePaths(task.details || '');
+
+    // Validate file paths
+    for (const filePath of filePaths) {
+      const fullPath = path.resolve(process.cwd(), filePath);
+      const dir = path.dirname(fullPath);
+
+      // Check if directory exists (for new files)
+      if (!await fs.pathExists(dir)) {
+        errors.push({
+          message: `Directory does not exist for file: ${filePath}`,
+          suggestion: `Create directory: ${path.dirname(filePath)}`,
+        });
+      }
+
+      // Check for invalid characters in path
+      if (filePath.includes('..') || filePath.includes('//')) {
+        errors.push({
+          message: `Invalid file path: ${filePath}`,
+          suggestion: 'Use relative paths without .. or //',
+        });
+      }
+    }
+
+    // Check for obvious syntax issues in task description
+    if (taskText.includes('```') && !taskText.includes('```\n')) {
+      // Potential code block formatting issue
+      errors.push({
+        message: 'Task description may contain malformed code blocks',
+        suggestion: 'Ensure code blocks are properly formatted with newlines',
+      });
+    }
+
+    return {
+      valid: errors.length === 0,
+      errors,
+    };
+  }
+
   private extractRequiredFilePaths(taskDetails: string): string[] {
     const filePaths: string[] = [];
 
