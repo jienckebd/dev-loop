@@ -1131,6 +1131,15 @@ export class WorkflowEngine {
       if (requiredFiles.length > 0) {
         const incorrectlyLocatedFiles: string[] = [];
         for (const requiredPath of requiredFiles) {
+          // Skip validation for incomplete paths (just filenames without directory component)
+          // These are extracted from task details and may not have full paths
+          if (!requiredPath.includes('/')) {
+            if (this.debug) {
+              console.log(`[WorkflowEngine] Skipping validation for incomplete path: ${requiredPath}`);
+            }
+            continue;
+          }
+
           const fullPath = path.resolve(process.cwd(), requiredPath);
           const fileExists = await fs.pathExists(fullPath);
 
