@@ -4,11 +4,12 @@ import { MetricsData, RunMetrics } from './debug-metrics';
 
 export interface Observation {
   id: string;
-  type: 'failure-pattern' | 'efficiency-issue' | 'validation-trend' | 'token-spike';
+  type: 'failure-pattern' | 'efficiency-issue' | 'validation-trend' | 'token-spike' | 'json-parsing-failure';
   severity: 'low' | 'medium' | 'high';
   description: string;
   occurrences: number;
   affectedProjects: string[];
+  affectedProviders?: string[]; // Track which AI providers have this issue
   firstSeen: string;
   lastSeen: string;
   suggestedImprovements: string[];
@@ -32,10 +33,23 @@ export class ObservationTracker {
   }
 
   private loadObservations(): ObservationData {
+    const defaultData: ObservationData = {
+      version: '1.0',
+      observations: [],
+    };
+
     try {
       if (fs.existsSync(this.observationsPath)) {
         const content = fs.readFileSync(this.observationsPath, 'utf-8');
-        return JSON.parse(content);
+        const parsed = JSON.parse(content);
+        // Ensure observations array exists (file may contain {} or missing field)
+        if (!parsed.observations || !Array.isArray(parsed.observations)) {
+          parsed.observations = [];
+        }
+        return {
+          version: parsed.version || defaultData.version,
+          observations: parsed.observations,
+        };
       }
     } catch (error) {
       if (this.debug) {
@@ -43,10 +57,7 @@ export class ObservationTracker {
       }
     }
 
-    return {
-      version: '1.0',
-      observations: [],
-    };
+    return defaultData;
   }
 
   private saveObservations(): void {
@@ -248,6 +259,253 @@ export class ObservationTracker {
     });
 
     return Array.from(suggestions);
+  }
+
+  /**
+   * Track a JSON parsing failure with provider context
+   */
+  async trackJsonParsingFailure(
+    responseSample: string,
+    extractionAttempts: string[],
+    projectType: string,
+    providerName: string,
+    taskId?: string,
+    prdId?: string,
+    phaseId?: number
+  ): Promise<void> {
+    // Extract a signature from the response for grouping similar failures
+    const signature = this.extractJsonFailureSignature(responseSample);
+    const now = new Date().toISOString();
+
+    // Check if similar observation exists (same signature + same provider)
+    const existing = this.observations.observations.find(obs =>
+      obs.type === 'json-parsing-failure' &&
+      obs.description === signature &&
+      obs.affectedProviders?.includes(providerName)
+    );
+
+    if (existing) {
+      existing.occurrences++;
+      existing.lastSeen = now;
+      if (!existing.affectedProjects.includes(projectType)) {
+        existing.affectedProjects.push(projectType);
+      }
+      // Add task context to evidence if not already present
+      if (taskId) {
+        const taskEvidence = `Task: ${taskId}`;
+        if (!existing.evidence?.includes(taskEvidence)) {
+          existing.evidence = existing.evidence || [];
+          existing.evidence.push(taskEvidence);
+        }
+      }
+      this.saveObservations();
+
+      if (this.debug) {
+        console.log(`[ObservationTracker] Updated JSON parsing failure observation (occurrences: ${existing.occurrences})`);
+      }
+      return;
+    }
+
+    // Create new observation
+    const evidence: string[] = [
+      `Provider: ${providerName}`,
+      `Response sample: ${responseSample.substring(0, 500)}${responseSample.length > 500 ? '...' : ''}`,
+      `Attempted strategies: [${extractionAttempts.join(', ')}]`,
+    ];
+
+    if (taskId) evidence.push(`Task: ${taskId}`);
+    if (prdId) evidence.push(`PRD: ${prdId}`);
+    if (phaseId !== undefined) evidence.push(`Phase: ${phaseId}`);
+
+    const observation: Observation = {
+      id: `json-parsing-failure-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+      type: 'json-parsing-failure',
+      severity: this.assessJsonFailureSeverity(responseSample),
+      description: signature,
+      occurrences: 1,
+      affectedProjects: [projectType],
+      affectedProviders: [providerName],
+      firstSeen: now,
+      lastSeen: now,
+      suggestedImprovements: this.suggestImprovementsForJsonFailure(responseSample, providerName),
+      evidence,
+    };
+
+    this.observations.observations.push(observation);
+    this.saveObservations();
+
+    if (this.debug) {
+      console.log(`[ObservationTracker] Tracked new JSON parsing failure from ${providerName}`);
+    }
+  }
+
+  /**
+   * Extract a signature from JSON failure response for grouping
+   */
+  private extractJsonFailureSignature(responseSample: string): string {
+    // Try to identify the response format
+    if (!responseSample || responseSample.trim().length === 0) {
+      return 'Empty response';
+    }
+
+    // Check for common patterns
+    if (responseSample.includes('"type":"result"')) {
+      return 'Nested result object without extractable CodeChanges';
+    }
+
+    if (responseSample.includes('```json') || responseSample.includes('```')) {
+      return 'JSON code block with malformed structure';
+    }
+
+    if (responseSample.includes('"files"') && !responseSample.includes('"summary"')) {
+      return 'Files array present but missing summary';
+    }
+
+    if (responseSample.includes('No code changes') || responseSample.includes('no changes')) {
+      return 'No-changes response without proper JSON format';
+    }
+
+    // Extract first 100 chars as signature
+    const firstLine = responseSample.split('\n')[0]?.substring(0, 100) || 'Unknown format';
+    return `Unrecognized format: ${firstLine}`;
+  }
+
+  /**
+   * Assess severity of JSON parsing failure
+   */
+  private assessJsonFailureSeverity(responseSample: string): 'low' | 'medium' | 'high' {
+    // Empty response is high severity
+    if (!responseSample || responseSample.trim().length === 0) {
+      return 'high';
+    }
+
+    // If response contains files array, it's medium (structure exists but extraction failed)
+    if (responseSample.includes('"files"')) {
+      return 'medium';
+    }
+
+    // If response mentions "complete" or "no changes", it's low (valid response, just not JSON)
+    const lower = responseSample.toLowerCase();
+    if (lower.includes('complete') || lower.includes('no changes') || lower.includes('already exists')) {
+      return 'low';
+    }
+
+    return 'medium';
+  }
+
+  /**
+   * Suggest improvements for JSON parsing failures
+   */
+  private suggestImprovementsForJsonFailure(responseSample: string, providerName: string): string[] {
+    const suggestions: string[] = [];
+
+    if (!responseSample || responseSample.trim().length === 0) {
+      suggestions.push('Investigate why provider returned empty response');
+      suggestions.push('Add retry logic for empty responses');
+    }
+
+    if (responseSample.includes('"files"') && !responseSample.includes('"summary"')) {
+      suggestions.push('Enhance prompt to require summary field in JSON output');
+      suggestions.push('Add fallback to generate summary from files array');
+    }
+
+    if (responseSample.includes('```') && !responseSample.includes('```json')) {
+      suggestions.push('Update prompt to require ```json language tag');
+    }
+
+    if (responseSample.includes('no changes') || responseSample.includes('complete')) {
+      suggestions.push('Add pattern recognition for "no changes needed" responses');
+    }
+
+    suggestions.push(`Provider-specific: ${providerName}`);
+    suggestions.push('Consider adding stricter JSON validation in prompts');
+
+    return suggestions;
+  }
+
+  /**
+   * Get JSON parsing failure rate (overall or per provider)
+   */
+  async getJsonParsingFailureRate(providerName?: string): Promise<number> {
+    const jsonFailures = this.observations.observations.filter(obs => {
+      if (obs.type !== 'json-parsing-failure') return false;
+      if (providerName && !obs.affectedProviders?.includes(providerName)) return false;
+      return true;
+    });
+
+    const totalOccurrences = jsonFailures.reduce((sum, obs) => sum + obs.occurrences, 0);
+    // This is a simple count-based rate; for accurate rate, we'd need total attempts
+    // For now, return as a normalized value based on observation count
+    return totalOccurrences;
+  }
+
+  /**
+   * Get common JSON parsing failure patterns
+   */
+  async getCommonJsonFailurePatterns(providerName?: string): Promise<Observation[]> {
+    let observations = this.observations.observations.filter(obs =>
+      obs.type === 'json-parsing-failure'
+    );
+
+    if (providerName) {
+      observations = observations.filter(obs =>
+        obs.affectedProviders?.includes(providerName)
+      );
+    }
+
+    // Sort by occurrences (most common first)
+    return observations.sort((a, b) => b.occurrences - a.occurrences);
+  }
+
+  /**
+   * Get JSON failure suggestions (provider-specific or universal)
+   */
+  async getJsonFailureSuggestions(providerName?: string): Promise<string[]> {
+    const patterns = await this.getCommonJsonFailurePatterns(providerName);
+    const suggestions = new Set<string>();
+
+    patterns.forEach(obs => {
+      obs.suggestedImprovements.forEach(suggestion => {
+        suggestions.add(suggestion);
+      });
+    });
+
+    return Array.from(suggestions);
+  }
+
+  /**
+   * Compare JSON parsing success rates across providers
+   */
+  async getProviderComparison(): Promise<Record<string, { occurrences: number; patterns: number }>> {
+    const comparison: Record<string, { occurrences: number; patterns: number }> = {};
+
+    const jsonFailures = this.observations.observations.filter(obs =>
+      obs.type === 'json-parsing-failure'
+    );
+
+    for (const obs of jsonFailures) {
+      if (!obs.affectedProviders) continue;
+      for (const provider of obs.affectedProviders) {
+        if (!comparison[provider]) {
+          comparison[provider] = { occurrences: 0, patterns: 0 };
+        }
+        comparison[provider].occurrences += obs.occurrences;
+        comparison[provider].patterns++;
+      }
+    }
+
+    return comparison;
+  }
+
+  /**
+   * Get failures unique to a specific provider
+   */
+  async getProviderSpecificFailures(providerName: string): Promise<Observation[]> {
+    return this.observations.observations.filter(obs =>
+      obs.type === 'json-parsing-failure' &&
+      obs.affectedProviders?.length === 1 &&
+      obs.affectedProviders[0] === providerName
+    );
   }
 
   private getUniqueProjectTypes(runs: RunMetrics[]): string[] {

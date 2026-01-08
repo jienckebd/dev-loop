@@ -71,6 +71,30 @@ Metrics are collected at four levels:
 - Observations by severity
 - Observation resolution rate
 
+### Parallel Execution Metrics
+
+Parallel metrics track concurrent agent execution:
+- Max concurrent agents
+- Average concurrency
+- Parallel efficiency (vs sequential)
+- Agent overlap time
+- Coordination statistics
+- Agent breakdown by task/PRD/phase
+
+View parallel metrics:
+```bash
+dev-loop metrics --parallel
+```
+
+### Session Management Metrics
+
+Session metrics track provider-agnostic session usage:
+- Session history length
+- History pruning statistics
+- Session boundary enforcement
+- Context snapshotting effectiveness
+- Session lifecycle statistics
+
 ### Patterns
 - Pattern matches
 - Pattern effectiveness
@@ -105,6 +129,12 @@ dev-loop metrics --features
 
 # Show schema operation metrics
 dev-loop metrics --schema
+
+# Show parallel execution metrics
+dev-loop metrics --parallel
+
+# Show observation metrics
+dev-loop metrics --observations
 
 # Output as JSON
 dev-loop metrics --json
@@ -162,6 +192,7 @@ Metrics are stored in:
 - `.devloop/schema-metrics.json` - Schema operation metrics
 - `.devloop/observation-metrics.json` - Observation metrics
 - `.devloop/pattern-metrics.json` - Pattern metrics
+- `.devloop/parallel-metrics.json` - Parallel execution metrics
 - `.devloop/test-results/` - Test results tracking
 - `.devloop/error-analysis.json` - Error analysis data
 
@@ -184,6 +215,7 @@ module.exports = {
     schemaMetricsPath: '.devloop/schema-metrics.json',
     observationMetricsPath: '.devloop/observation-metrics.json',
     patternMetricsPath: '.devloop/pattern-metrics.json',
+    parallelMetricsPath: '.devloop/parallel-metrics.json',
     testResultsPath: '.devloop/test-results',
     reportsPath: '.devloop/reports',
     costTracking: {

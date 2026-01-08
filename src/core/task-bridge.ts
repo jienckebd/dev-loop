@@ -113,11 +113,19 @@ export class TaskMasterBridge {
   async getPendingTasks(): Promise<Task[]> {
     try {
       const tasks = await this.loadTasks();
+      // Filter out tasks with null/undefined IDs before processing
+      const validTasks = tasks.filter((t) => t.id != null);
+      if (validTasks.length < tasks.length) {
+        console.warn(`[TaskBridge] Filtered out ${tasks.length - validTasks.length} tasks with null/undefined IDs`);
+      }
       // Include both "pending" and "in-progress" tasks (in-progress means it was interrupted)
-      const pending = tasks.filter((t) => t.status === 'pending' || t.status === 'in-progress');
+      const pending = validTasks.filter((t) => t.status === 'pending' || t.status === 'in-progress');
 
       // Filter out tasks that have exceeded max retries
-      const eligibleTasks = pending.filter(t => !this.hasExceededMaxRetries(t.id));
+      const eligibleTasks = pending.filter(t => {
+        if (!t.id) return false; // Skip tasks without IDs
+        return !this.hasExceededMaxRetries(t.id);
+      });
 
       // Filter out tasks whose dependencies haven't been completed
       const completedTaskIds = new Set(
@@ -192,6 +200,13 @@ export class TaskMasterBridge {
       // Defensive check - ensure tasks is an array
       if (!Array.isArray(tasks)) {
         throw new Error(`loadTasks returned non-array: ${typeof tasks}`);
+      }
+
+      // Check for duplicate task ID - skip if task with same ID already exists
+      const existingTask = tasks.find(t => t.id === task.id);
+      if (existingTask) {
+        console.log(`[TaskBridge] Task ${task.id} already exists (status: ${existingTask.status}), skipping creation`);
+        return existingTask;
       }
 
       const newTask: Task = {
@@ -423,33 +438,52 @@ export class TaskMasterBridge {
     const mainTasks: Task[] = [];
     const subtaskMap = new Map<string, Task[]>();
 
-    for (const task of tasks) {
-      if (task.parentId) {
-        // This is a subtask - add to parent's subtasks
-        const parentId = String(task.parentId);
-        if (!subtaskMap.has(parentId)) {
-          subtaskMap.set(parentId, []);
+    try {
+      for (const task of tasks) {
+        if (task.parentId) {
+          // This is a subtask - add to parent's subtasks
+          const parentId = String(task.parentId);
+          if (!subtaskMap.has(parentId)) {
+            subtaskMap.set(parentId, []);
+          }
+          // Remove parentId and restore original ID
+          const { parentId: _, id, ...subtaskData } = task;
+          // Defensive check for null/undefined IDs
+          if (!id) {
+            console.warn(`[TaskBridge] Skipping subtask with null/undefined ID for parent ${parentId}`);
+            continue;
+          }
+          const originalSubtaskId = String(id).split('.').pop() || String(id);
+          const subtaskArray = subtaskMap.get(parentId);
+          if (subtaskArray) {
+            subtaskArray.push({
+              ...subtaskData,
+              id: originalSubtaskId,
+            } as Task);
+          }
+        } else {
+          mainTasks.push(task);
         }
-        // Remove parentId and restore original ID
-        const { parentId: _, id, ...subtaskData } = task;
-        const originalSubtaskId = id.toString().split('.').pop() || id;
-        const subtaskArray = subtaskMap.get(parentId);
-        if (subtaskArray) {
-          subtaskArray.push({
-            ...subtaskData,
-            id: originalSubtaskId,
-          } as Task);
-        }
-      } else {
-        mainTasks.push(task);
       }
-    }
 
-    // Attach subtasks back to parent tasks
-    for (const task of mainTasks) {
-      if (subtaskMap.has(task.id.toString())) {
-        task.subtasks = subtaskMap.get(task.id.toString())!;
+      // Attach subtasks back to parent tasks
+      for (const task of mainTasks) {
+        // Defensive check for null/undefined IDs
+        if (!task.id) {
+          console.warn(`[TaskBridge] Skipping task with null/undefined ID: ${JSON.stringify(task.title || 'unknown')}`);
+          continue;
+        }
+        const taskIdKey = String(task.id);
+        if (subtaskMap.has(taskIdKey)) {
+          task.subtasks = subtaskMap.get(taskIdKey)!;
+        }
       }
+    } catch (processError) {
+      console.error('[TaskBridge] Error processing tasks for save:', processError);
+      if (processError instanceof Error && processError.stack) {
+        console.error('[TaskBridge] Stack:', processError.stack);
+      }
+      throw processError;
     }
 
     // Always save in master format for Task Master CLI compatibility
@@ -490,6 +524,99 @@ export class TaskMasterBridge {
     } catch {
       // Ignore errors - task-master-ai might be used programmatically
     }
+  }
+
+  /**
+   * Group tasks by dependency level for parallel execution
+   *
+   * Returns an array of arrays, where each inner array contains tasks
+   * that can be executed in parallel (same dependency level).
+   *
+   * Level 0: Tasks with no dependencies
+   * Level 1: Tasks that depend only on level 0 tasks
+   * Level 2: Tasks that depend on level 0 or 1 tasks
+   * etc.
+   */
+  async groupTasksByDependencyLevel(tasks: Task[]): Promise<Task[][]> {
+    const levels: Task[][] = [];
+    const processed = new Set<string>();
+    const taskMap = new Map<string, Task>();
+
+    // Build task map for quick lookup
+    for (const task of tasks) {
+      taskMap.set(String(task.id), task);
+    }
+
+    // Helper to check if all dependencies are satisfied (completed or in a previous level)
+    const allDependenciesSatisfied = (task: Task, satisfiedIds: Set<string>): boolean => {
+      if (!task.dependencies || task.dependencies.length === 0) {
+        return true;
+      }
+      return task.dependencies.every(depId => satisfiedIds.has(String(depId)));
+    };
+
+    // Get all completed task IDs (these are always "satisfied")
+    const allTasks = await this.getAllTasks();
+    const completedTaskIds = new Set(
+      allTasks
+        .filter(t => t.status === 'done')
+        .map(t => String(t.id))
+    );
+
+    let currentLevel = 0;
+    let remainingTasks = [...tasks];
+    const satisfiedIds = new Set<string>(completedTaskIds);
+
+    while (remainingTasks.length > 0) {
+      const levelTasks: Task[] = [];
+      const newSatisfiedIds = new Set<string>(satisfiedIds);
+
+      // Find tasks that can be executed at this level
+      for (const task of remainingTasks) {
+        const taskId = String(task.id);
+        if (processed.has(taskId)) {
+          continue;
+        }
+
+        if (allDependenciesSatisfied(task, satisfiedIds)) {
+          levelTasks.push(task);
+          processed.add(taskId);
+          newSatisfiedIds.add(taskId);
+        }
+      }
+
+      if (levelTasks.length === 0) {
+        // No tasks can be executed - might be circular dependency or missing dependencies
+        // Add remaining tasks to current level to prevent infinite loop
+        console.warn(`[TaskBridge] No tasks can be executed at level ${currentLevel}. Remaining: ${remainingTasks.length}`);
+        for (const task of remainingTasks) {
+          if (!processed.has(String(task.id))) {
+            levelTasks.push(task);
+            processed.add(String(task.id));
+          }
+        }
+      }
+
+      if (levelTasks.length > 0) {
+        levels.push(levelTasks);
+        // Update satisfied IDs for next level
+        for (const task of levelTasks) {
+          satisfiedIds.add(String(task.id));
+        }
+      }
+
+      // Update remaining tasks
+      remainingTasks = remainingTasks.filter(t => !processed.has(String(t.id)));
+
+      currentLevel++;
+      if (currentLevel > 100) {
+        // Safety check to prevent infinite loops
+        console.error('[TaskBridge] Maximum dependency levels reached (100), stopping');
+        break;
+      }
+    }
+
+    return levels;
   }
 }
 

@@ -256,11 +256,28 @@ export async function archiveCommand(options: ArchiveOptions): Promise<void> {
       '.devloop/cursor-sessions.json', // Reset cursor sessions
     ];
 
+    // File-specific reset values
+    const resetValues: Record<string, any> = {
+      '.devloop/state.json': {},
+      '.devloop/metrics.json': { version: '1.0', runs: [], summary: { totalRuns: 0, successRate: 0, avgAiCallMs: 0, avgTestRunMs: 0, totalTokensInput: 0, totalTokensOutput: 0 } },
+      '.devloop/observations.json': { version: '1.0', observations: [] },
+      '.devloop/patterns.json': { version: '1.0', patterns: [] },
+      '.devloop/retry-counts.json': {},
+      '.devloop/contribution-mode.json': {},
+      '.devloop/prd-set-metrics.json': {},
+      '.devloop/prd-metrics.json': {},
+      '.devloop/phase-metrics.json': {},
+      '.devloop/feature-metrics.json': {},
+      '.devloop/pattern-metrics.json': {},
+      '.devloop/cursor-sessions.json': { version: '1.0', updatedAt: new Date().toISOString(), sessions: [] },
+    };
+
     for (const file of devloopFilesToReset) {
       const filePath = path.resolve(projectRoot, file);
       if (movedFiles.includes(filePath)) {
         await fs.ensureDir(path.dirname(filePath));
-        await fs.writeJson(filePath, {}, { spaces: 2 });
+        const resetValue = resetValues[file] || {};
+        await fs.writeJson(filePath, resetValue, { spaces: 2 });
         console.log(chalk.gray(`  Reset ${path.relative(projectRoot, filePath)}`));
       }
     }

@@ -174,6 +174,52 @@ Dev-loop validates boundaries programmatically:
    - Check task status via Task Master MCP
    - Review test results
 
+## Watching During Execution
+
+When in contribution mode, you can watch dev-loop execution in real-time:
+
+```bash
+# In one terminal: Start contribution mode
+npx dev-loop contribution start --prd <path>
+
+# In another terminal: Watch execution
+npx dev-loop watch --until-complete
+```
+
+This provides real-time feedback on:
+- Task execution progress
+- Parallel agent execution
+- Pattern learning observations
+- Error patterns and fixes
+
+## Real-Time Observation
+
+Dev-loop tracks observations during execution:
+- Failure patterns
+- Efficiency issues
+- Validation trends
+- Token spikes
+
+These observations are available immediately for enhancing dev-loop code, enabling faster feedback loops. You can use these observations to:
+- Identify patterns that need to be added to PatternLearningSystem
+- Detect performance issues that require optimization
+- Spot validation failures that need better guidance
+- Monitor token usage for cost optimization
+
+### Pattern Learning Integration
+
+Dev-loop automatically learns from execution patterns:
+- Successful patterns are reinforced
+- Failure patterns trigger guidance injection
+- Observations feed into the pattern learning system
+- Patterns are stored in `.devloop/patterns.json`
+
+You can enhance dev-loop by:
+1. Observing patterns in real-time during execution
+2. Adding patterns to PatternLearningSystem when needed
+3. Improving prompts based on observed failures
+4. Optimizing context discovery based on efficiency observations
+
 4. **Enhance Dev-Loop (if needed):**
    - If inner agent is stuck, enhance dev-loop code
    - Edit files in `node_modules/dev-loop/src/`

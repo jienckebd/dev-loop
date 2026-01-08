@@ -444,7 +444,8 @@ export class WorkflowEngine {
 
       // NEW: Group tasks by dependency level for parallel execution
       const dependencyLevels = await this.taskBridge.groupTasksByDependencyLevel(codeTasks);
-      const maxConcurrency = (this.config as any).autonomous?.maxConcurrency || 1;
+      // Use PRD-specific maxConcurrency if set, otherwise fall back to config or default to 1
+      const maxConcurrency = (this as any).currentPrdMaxConcurrency || (this.config as any).autonomous?.maxConcurrency || 1;
 
       logger.info(`[WorkflowEngine] Found ${codeTasks.length} code task(s) in ${dependencyLevels.length} dependency level(s), max concurrency: ${maxConcurrency}`);
 
@@ -802,6 +803,37 @@ export class WorkflowEngine {
       // NEW: Validate that required files from task details were actually created
       // This catches cases where AI says "no changes needed" but the required file doesn't exist
       if (changes.files?.length === 0) {
+        // Track potential JSON parsing failure at workflow level
+        // The provider-level parser may have already tracked this, but we add workflow context
+        if (this.observationTracker && changes.summary) {
+          try {
+            const projectType = this.detectProjectType() || 'unknown';
+            const prdId = context.prdId || 'unknown';
+            const phaseId = context.phaseId;
+
+            // Only track if the summary suggests potential parsing issues (not explicit "no changes")
+            const summaryLower = changes.summary.toLowerCase();
+            const isExplicitNoChanges = summaryLower.includes('no changes') ||
+              summaryLower.includes('already complete') ||
+              summaryLower.includes('already exists');
+
+            if (!isExplicitNoChanges) {
+              await this.observationTracker.trackJsonParsingFailure(
+                `Empty changes returned. Summary: ${changes.summary.substring(0, 200)}`,
+                ['workflow-level-validation'],
+                projectType,
+                this.aiProvider.name || 'unknown',
+                task.id,
+                prdId,
+                phaseId
+              );
+              logger.debug(`[WorkflowEngine] Tracked potential JSON parsing issue: empty files with non-explicit summary`);
+            }
+          } catch (trackError) {
+            logger.debug(`[WorkflowEngine] Failed to track JSON parsing failure: ${trackError}`);
+          }
+        }
+
         const taskDetails = (task as any).details || '';
         const requiredFiles = this.extractRequiredFilePaths(taskDetails);
 
@@ -2232,10 +2264,17 @@ export class WorkflowEngine {
       if (moduleName) {
         // Scope search to target module directory
         const moduleDir = `docroot/modules/share/${moduleName}`;
-        if (fs.existsSync(path.resolve(process.cwd(), moduleDir))) {
+        const modulePath = path.resolve(process.cwd(), moduleDir);
+        if (fs.existsSync(modulePath)) {
           scopedSearchDirs = [moduleDir, ...searchDirs]; // Prioritize module directory
           if (this.debug) {
-            console.log(`[DEBUG] Scoping file discovery to module: ${moduleName} (${moduleDir})`);
+            console.log(`[DEBUG] Scoping file discovery to existing module: ${moduleName} (${moduleDir})`);
+          }
+        } else {
+          // For NEW module creation, don't scope search but do set moduleName
+          // This allows the AI to create files in the correct module directory
+          if (this.debug) {
+            console.log(`[DEBUG] Target module ${moduleName} doesn't exist yet (new module creation)`);
           }
         }
       }
@@ -2488,28 +2527,51 @@ export class WorkflowEngine {
 
   /**
    * Extract module name from PRD/phase context or task details
+   * Enhanced to support PRD-declared target modules for new module creation
    */
   private extractModuleNameFromContext(prdId?: string, phaseId?: number, task?: Task): string | null {
-    // Try to extract from PRD ID (e.g., "PERF-PHASE-1" -> "bd_perf")
+    // Priority 1: Check PRD metadata for declared targetModule
+    // This is set when PRD explicitly declares which module to target
+    const prdTargetModule = (this as any).currentPrdTargetModule;
+    if (prdTargetModule) {
+      if (this.debug) {
+        console.log(`[DEBUG] Using PRD-declared target module: ${prdTargetModule}`);
+      }
+      return prdTargetModule;
+    }
+
+    // Priority 2: Extract from task details (most specific)
+    if (task?.details) {
+      const detailsLower = task.details.toLowerCase();
+      // Look for module paths in task details (e.g., "docroot/modules/share/bd_perf")
+      const modulePathMatch = detailsLower.match(/modules\/share\/([a-z_]+)/);
+      if (modulePathMatch) {
+        return modulePathMatch[1];
+      }
+    }
+
+    // Priority 3: Extract from task title/description
+    if (task) {
+      const taskText = `${task.title} ${task.description || ''}`.toLowerCase();
+      // Look for "bd_*" or "*_module" patterns
+      const moduleNameMatch = taskText.match(/\b(bd_[a-z_]+)\b/) || taskText.match(/\b([a-z]+_[a-z]+)\b.*module/);
+      if (moduleNameMatch) {
+        const candidate = moduleNameMatch[1];
+        // Return even if directory doesn't exist (for new module creation)
+        return candidate;
+      }
+    }
+
+    // Priority 4: Try to extract from PRD ID (legacy fallback)
     if (prdId) {
       const moduleMatch = prdId.match(/([a-z_]+)/i);
       if (moduleMatch) {
         const candidate = moduleMatch[1].toLowerCase();
-        // Check if it's a valid module directory
+        // Check if it's a valid module directory (only for existing modules)
         const moduleDir = path.resolve(process.cwd(), `docroot/modules/share/${candidate}`);
         if (fs.existsSync(moduleDir)) {
           return candidate;
         }
-      }
-    }
-
-    // Try to extract from task details
-    if (task?.details) {
-      const detailsLower = task.details.toLowerCase();
-      // Look for module paths in task details
-      const modulePathMatch = detailsLower.match(/modules\/share\/([a-z_]+)/);
-      if (modulePathMatch) {
-        return modulePathMatch[1];
       }
     }
 
@@ -2924,6 +2986,12 @@ export class WorkflowEngine {
     // Store PRD context in class properties for use in executeTask
     (this as any).currentPrdId = prdId;
     (this as any).currentPrdSetId = prdSetId;
+    // Store target module from PRD metadata for context scoping
+    (this as any).currentPrdTargetModule = prdMetadata?.execution?.targetModule || null;
+    // Store max concurrency from PRD execution config (overrides base config)
+    // Check for maxConcurrency in execution config (may not be in type definition)
+    const executionConfig = prdMetadata?.execution as any;
+    (this as any).currentPrdMaxConcurrency = executionConfig?.maxConcurrency || (this.config as any).autonomous?.maxConcurrency || 1;
 
     // Start PRD metrics tracking
     if (this.prdMetrics && prdMetadata) {
@@ -2971,9 +3039,10 @@ export class WorkflowEngine {
       }
     }
 
-    // Validate prerequisites before execution
+    // Validate prerequisites before execution (can be skipped via config)
+    const skipPrerequisiteValidation = (this.config as any).autonomous?.skipPrerequisiteValidation;
     const prerequisiteValidator = (this as any).prerequisiteValidator;
-    if (prerequisiteValidator && prdMetadata) {
+    if (prerequisiteValidator && prdMetadata && !skipPrerequisiteValidation) {
       console.log('[WorkflowEngine] Validating prerequisites...');
       const prereqResult = await prerequisiteValidator.validatePrerequisites(prdMetadata);
       if (!prereqResult.success) {

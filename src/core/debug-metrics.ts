@@ -91,16 +91,7 @@ export class DebugMetrics {
   }
 
   private loadMetrics(): MetricsData {
-    try {
-      if (fs.existsSync(this.metricsPath)) {
-        const content = fs.readFileSync(this.metricsPath, 'utf-8');
-        return JSON.parse(content);
-      }
-    } catch (error) {
-      console.warn(`[DebugMetrics] Failed to load metrics: ${error instanceof Error ? error.message : String(error)}`);
-    }
-
-    return {
+    const defaultMetrics: MetricsData = {
       version: '1.0',
       runs: [],
       summary: {
@@ -112,6 +103,26 @@ export class DebugMetrics {
         totalTokensOutput: 0,
       },
     };
+
+    try {
+      if (fs.existsSync(this.metricsPath)) {
+        const content = fs.readFileSync(this.metricsPath, 'utf-8');
+        const parsed = JSON.parse(content);
+        // Ensure the loaded data has all required properties
+        return {
+          version: parsed.version || defaultMetrics.version,
+          runs: Array.isArray(parsed.runs) ? parsed.runs : [],
+          summary: {
+            ...defaultMetrics.summary,
+            ...parsed.summary,
+          },
+        };
+      }
+    } catch (error) {
+      console.warn(`[DebugMetrics] Failed to load metrics: ${error instanceof Error ? error.message : String(error)}`);
+    }
+
+    return defaultMetrics;
   }
 
   private saveMetrics(): void {
@@ -268,7 +279,7 @@ export class DebugMetrics {
     commonBlockingReasons: Record<string, number>;
   } {
     const runs = this.metrics.runs.filter(r => r.evolution);
-    
+
     let totalAttempts = 0;
     let successfulCreations = 0;
     const missingPatterns: string[] = [];
@@ -328,6 +339,11 @@ export class DebugMetrics {
 
     this.currentRun.status = status;
     const run = this.currentRun as RunMetrics;
+
+    // Defensive check - ensure runs array exists
+    if (!this.metrics.runs) {
+      this.metrics.runs = [];
+    }
     this.metrics.runs.push(run);
 
     // Update summary
@@ -338,6 +354,10 @@ export class DebugMetrics {
   }
 
   private updateSummary(): void {
+    // Defensive check - ensure runs array exists
+    if (!this.metrics.runs) {
+      this.metrics.runs = [];
+    }
     const runs = this.metrics.runs;
     const completed = runs.filter(r => r.status === 'completed').length;
 

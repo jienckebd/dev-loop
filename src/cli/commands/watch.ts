@@ -5,6 +5,9 @@ import { WorkflowEngine } from '../../core/workflow-engine';
 import { PrdTracker } from '../../core/prd-tracker';
 import { writePidFile, removePidFile } from './stop';
 import { ChatRequestAutoProcessor } from '../../providers/ai/cursor-chat-auto-processor';
+import { getReportGenerator, PrdExecutionReport } from '../../core/report-generator';
+import { getParallelMetricsTracker } from '../../core/parallel-metrics';
+import { ProgressTracker } from '../../core/progress-tracker';
 
 export async function watchCommand(options: {
   config?: string;
@@ -26,6 +29,33 @@ export async function watchCommand(options: {
     spinner.start('Initializing workflow engine');
     const engine = new WorkflowEngine(config);
     spinner.succeed('Workflow engine initialized');
+
+    // Initialize progress tracker
+    const progressTracker = new ProgressTracker();
+
+    // Set up progress event listeners
+    progressTracker.on('task-start', (event) => {
+      if (debug) {
+        console.log(chalk.cyan(`[Progress] Task started: ${event.taskTitle}`));
+      }
+    });
+
+    progressTracker.on('task-complete', (event) => {
+      if (debug) {
+        console.log(chalk.green(`[Progress] Task completed: ${event.taskTitle}`));
+      }
+    });
+
+    progressTracker.on('task-fail', (event) => {
+      console.log(chalk.red(`[Progress] Task failed: ${event.taskId} - ${event.error}`));
+    });
+
+    progressTracker.on('progress', (event) => {
+      // Display progress bar periodically
+      if (event.progress && event.progress % 10 === 0) {
+        progressTracker.displayProgressBar();
+      }
+    });
 
     // NEW: Initialize and start chat auto-processor (after engine initialization, before loop)
     let chatProcessor: ChatRequestAutoProcessor | null = null;
@@ -110,10 +140,57 @@ export async function watchCommand(options: {
               console.log(chalk.green('╚════════════════════════════════════════════════════════════╝\n'));
 
               const status = await prdTracker.getCompletionStatus();
-              console.log(chalk.cyan('Final Status:'));
-              console.log(`  Total Tasks: ${status.totalTasks}`);
-              console.log(`  Completed: ${status.completedTasks} (${status.percentComplete}%)`);
-              console.log(`  Tests Passing: ${status.testsPassing ? chalk.green('Yes') : chalk.red('No')}\n`);
+
+              // Complete parallel metrics tracking and generate report
+              const parallelMetrics = getParallelMetricsTracker();
+              const executionMetrics = parallelMetrics.completeExecution();
+
+              // Generate execution report
+              try {
+                const reportGenerator = getReportGenerator();
+                const reportPath = await reportGenerator.generateReport(
+                  'prd-execution',
+                  'PRD Execution',
+                  {
+                    total: status.totalTasks,
+                    completed: status.completedTasks,
+                    failed: 0,
+                    blocked: status.blockedTasks,
+                  },
+                  undefined,
+                  executionMetrics || undefined
+                );
+
+                // Display summary
+                console.log(chalk.cyan('Final Status:'));
+                console.log(`  Total Tasks: ${status.totalTasks}`);
+                console.log(`  Completed: ${status.completedTasks} (${status.percentComplete}%)`);
+                console.log(`  Tests Passing: ${status.testsPassing ? chalk.green('Yes') : chalk.red('No')}`);
+
+                if (executionMetrics) {
+                  console.log('');
+                  console.log(chalk.cyan('Parallel Execution:'));
+                  console.log(`  Max Concurrency: ${executionMetrics.concurrency.maxConcurrent} agents`);
+                  console.log(`  Parallel Efficiency: ${(executionMetrics.coordination.parallelEfficiency * 100).toFixed(1)}%`);
+                  console.log(`  Total Agents: ${executionMetrics.agents.length}`);
+                  console.log('');
+                  console.log(chalk.cyan('Token Usage:'));
+                  const totalTokens = executionMetrics.tokens.totalInput + executionMetrics.tokens.totalOutput;
+                  console.log(`  Total: ${totalTokens.toLocaleString()} tokens`);
+                  console.log(`  Input: ${executionMetrics.tokens.totalInput.toLocaleString()}`);
+                  console.log(`  Output: ${executionMetrics.tokens.totalOutput.toLocaleString()}`);
+                }
+
+                console.log('');
+                console.log(chalk.green(`Report saved to: ${reportPath}`));
+              } catch (reportError) {
+                console.warn(chalk.yellow(`Failed to generate report: ${reportError}`));
+                // Still show basic status
+                console.log(chalk.cyan('Final Status:'));
+                console.log(`  Total Tasks: ${status.totalTasks}`);
+                console.log(`  Completed: ${status.completedTasks} (${status.percentComplete}%)`);
+                console.log(`  Tests Passing: ${status.testsPassing ? chalk.green('Yes') : chalk.red('No')}\n`);
+              }
 
               await removePidFile();
               process.exit(0);
@@ -141,6 +218,9 @@ export async function watchCommand(options: {
         consecutiveNoTasks = 0;
         statusSpinner.fail(`Iteration ${iteration}: Failed`);
         console.error(chalk.red(`  Error: ${error instanceof Error ? error.message : String(error)}`));
+        if (error instanceof Error && error.stack) {
+          console.error(chalk.gray(`  Stack: ${error.stack}`));
+        }
         await new Promise((resolve) => setTimeout(resolve, 5000)); // Wait 5 seconds before retry
       }
     }

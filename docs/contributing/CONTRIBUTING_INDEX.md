@@ -30,13 +30,20 @@ Quick reference for AI agents contributing to dev-loop code. This index is only 
 | Submit pull request | [`PULL_REQUEST.md`](PULL_REQUEST.md) | Medium | Before submitting PR |
 | Add new CLI command | [`ARCHITECTURE.md`](ARCHITECTURE.md) → CLI section | Medium | When adding command |
 | Add new MCP tool | [`ARCHITECTURE.md`](ARCHITECTURE.md) → MCP section | Medium | When adding tool |
-| Add framework plugin | [`ARCHITECTURE.md`](ARCHITECTURE.md) → Plugins section | Medium | When adding plugin |
+| Add framework plugin | [`ARCHITECTURE.md`](ARCHITECTURE.md) → Framework Plugins section | Medium | When adding plugin |
+| Add parallel execution support | [`ARCHITECTURE.md`](ARCHITECTURE.md) → Parallel Execution System | Medium | When adding parallel execution |
+| Add session management | [`ARCHITECTURE.md`](ARCHITECTURE.md) → Session Management System | Medium | When adding session management |
+| Add timeout/retry logic | [`ARCHITECTURE.md`](ARCHITECTURE.md) → AI Provider Reliability | Medium | When adding timeout/retry handling |
 
 ## Component → Documentation
 
 | Component | Documentation | Sections | When to Load |
 |-----------|---------------|----------|--------------|
 | Core components | [`ARCHITECTURE.md`](ARCHITECTURE.md) | Core Components | Understanding core logic |
+| Parallel execution | [`ARCHITECTURE.md`](ARCHITECTURE.md) | Parallel Execution System | Working with parallel execution |
+| Session management | [`ARCHITECTURE.md`](ARCHITECTURE.md) | Session Management System | Working with session management |
+| Context discovery | [`ARCHITECTURE.md`](ARCHITECTURE.md) | Context Discovery System | Working with context discovery |
+| AI provider reliability | [`ARCHITECTURE.md`](ARCHITECTURE.md) | AI Provider Reliability | Working with timeouts, retries, JSON parsing |
 | Framework plugins | [`ARCHITECTURE.md`](ARCHITECTURE.md) | Framework Plugins | Working with plugins |
 | MCP integration | [`ARCHITECTURE.md`](ARCHITECTURE.md) | MCP Integration | Adding MCP tools |
 | Configuration | [`ARCHITECTURE.md`](ARCHITECTURE.md) | Configuration | Modifying config system |

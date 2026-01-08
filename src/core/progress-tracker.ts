@@ -1,204 +1,252 @@
+/**
+ * Progress Tracker
+ *
+ * Provides real-time progress tracking for dev-loop operations,
+ * including task status updates, progress bars, and event emission.
+ */
+
+import { EventEmitter } from 'events';
+import { Task, TaskStatus } from '../types';
 import { logger } from './logger';
-import * as fs from 'fs-extra';
-import * as path from 'path';
 
-export interface PhaseMetrics {
-  phaseId: number;
-  tasksCompleted: number;
-  testsPassed: number;
-  testsFailed: number;
-  validationGatesPassed: number;
-  validationGatesFailed: number;
-  timeSpent: number;
-  errorCount: number;
-  retryCount: number;
+export interface ProgressEvent {
+  type: 'task-start' | 'task-complete' | 'task-fail' | 'task-update' | 'progress';
+  taskId?: string;
+  taskTitle?: string;
+  status?: TaskStatus;
+  progress?: number;
+  total?: number;
+  message?: string;
+  error?: string;
+  timestamp: number;
 }
 
-export interface TaskMetrics {
-  taskId: string;
-  duration: number;
-  testsPassed: number;
-  testsFailed: number;
-  errors: string[];
-}
-
-export interface ProgressReport {
-  prdId: string;
-  phases: PhaseMetrics[];
-  totalTasksCompleted: number;
-  totalTestsPassed: number;
-  totalTestsFailed: number;
-  totalTimeSpent: number;
-  overallProgress: number;
-}
-
-export interface ComparisonResult {
-  current: ProgressReport;
-  baseline?: ProgressReport;
-  regressions: string[];
-  improvements: string[];
+export interface ProgressBarOptions {
+  total: number;
+  current: number;
+  width?: number;
+  showPercentage?: boolean;
+  showCount?: boolean;
 }
 
 /**
- * ProgressTracker tracks progress and collects metrics for PRD execution.
- *
- * Supports:
- * - Phase-level metrics
- * - Task-level metrics
- * - Progress reports
- * - Baseline comparison
+ * Progress tracker for dev-loop operations
  */
-export class ProgressTracker {
-  private metricsPath: string;
-  private debug: boolean;
-  private metrics: Map<string, ProgressReport> = new Map();
+export class ProgressTracker extends EventEmitter {
+  private activeTasks: Map<string, { task: Task; startTime: number }> = new Map();
+  private completedTasks: number = 0;
+  private failedTasks: number = 0;
+  private totalTasks: number = 0;
 
-  constructor(metricsPath: string = '.devloop/metrics', debug: boolean = false) {
-    this.metricsPath = metricsPath;
-    this.debug = debug;
+  /**
+   * Track task start
+   */
+  trackTaskStart(task: Task): void {
+    this.activeTasks.set(task.id, {
+      task,
+      startTime: Date.now(),
+    });
+
+    this.emit('task-start', {
+      type: 'task-start',
+      taskId: task.id,
+      taskTitle: task.title,
+      status: task.status,
+      timestamp: Date.now(),
+    } as ProgressEvent);
+
+    logger.info(`[ProgressTracker] Task started: ${task.id} - ${task.title}`);
   }
 
   /**
-   * Track phase completion.
+   * Track task completion
    */
-  async trackPhaseCompletion(prdId: string, phaseId: number, metrics: PhaseMetrics): Promise<void> {
-    const report = await this.getProgressReport(prdId);
+  trackTaskComplete(taskId: string, success: boolean = true): void {
+    const activeTask = this.activeTasks.get(taskId);
+    if (!activeTask) {
+      logger.warn(`[ProgressTracker] Task ${taskId} not found in active tasks`);
+      return;
+    }
 
-    // Update or add phase metrics
-    const existingPhase = report.phases.find(p => p.phaseId === phaseId);
-    if (existingPhase) {
-      Object.assign(existingPhase, metrics);
+    const duration = Date.now() - activeTask.startTime;
+    this.activeTasks.delete(taskId);
+
+    if (success) {
+      this.completedTasks++;
     } else {
-      report.phases.push(metrics);
+      this.failedTasks++;
     }
 
-    // Update totals
-    report.totalTasksCompleted = report.phases.reduce((sum, p) => sum + p.tasksCompleted, 0);
-    report.totalTestsPassed = report.phases.reduce((sum, p) => sum + p.testsPassed, 0);
-    report.totalTestsFailed = report.phases.reduce((sum, p) => sum + p.testsFailed, 0);
-    report.totalTimeSpent = report.phases.reduce((sum, p) => sum + p.timeSpent, 0);
+    this.emit('task-complete', {
+      type: success ? 'task-complete' : 'task-fail',
+      taskId,
+      taskTitle: activeTask.task.title,
+      status: success ? 'done' : 'blocked',
+      timestamp: Date.now(),
+      message: success ? 'Task completed successfully' : 'Task failed',
+    } as ProgressEvent);
 
-    // Calculate overall progress (simplified)
-    const totalPhases = Math.max(...report.phases.map(p => p.phaseId), 0);
-    report.overallProgress = totalPhases > 0 ? (report.phases.length / totalPhases) * 100 : 0;
+    logger.info(`[ProgressTracker] Task ${success ? 'completed' : 'failed'}: ${taskId} (${duration}ms)`);
 
-    await this.saveProgressReport(prdId, report);
+    // Emit progress update
+    this.emitProgress();
   }
 
   /**
-   * Track task completion.
+   * Track task failure
    */
-  async trackTaskCompletion(prdId: string, taskId: string, metrics: TaskMetrics): Promise<void> {
-    // Task metrics are aggregated into phase metrics
-    // This method can be used for detailed task tracking if needed
-    if (this.debug) {
-      logger.debug(`[ProgressTracker] Task ${taskId} completed: ${metrics.duration}ms`);
-    }
+  trackTaskFail(taskId: string, error: string): void {
+    this.trackTaskComplete(taskId, false);
+
+    this.emit('task-fail', {
+      type: 'task-fail',
+      taskId,
+      error,
+      timestamp: Date.now(),
+    } as ProgressEvent);
   }
 
   /**
-   * Track validation result.
+   * Track task status update
    */
-  async trackValidationResult(prdId: string, validationType: string, result: { success: boolean }): Promise<void> {
-    // Validation results are tracked in phase metrics
-    if (this.debug) {
-      logger.debug(`[ProgressTracker] Validation ${validationType}: ${result.success ? 'PASS' : 'FAIL'}`);
-    }
+  trackTaskUpdate(taskId: string, status: TaskStatus, message?: string): void {
+    const activeTask = this.activeTasks.get(taskId);
+
+    this.emit('task-update', {
+      type: 'task-update',
+      taskId,
+      taskTitle: activeTask?.task.title,
+      status,
+      message,
+      timestamp: Date.now(),
+    } as ProgressEvent);
+
+    logger.debug(`[ProgressTracker] Task update: ${taskId} -> ${status}${message ? `: ${message}` : ''}`);
   }
 
   /**
-   * Get progress report.
+   * Set total number of tasks
    */
-  async getProgressReport(prdId: string): Promise<ProgressReport> {
-    if (this.metrics.has(prdId)) {
-      return this.metrics.get(prdId)!;
-    }
-
-    // Try to load from file
-    const reportPath = path.join(this.metricsPath, `${prdId}.json`);
-    if (await fs.pathExists(reportPath)) {
-      try {
-        const report = await fs.readJson(reportPath) as ProgressReport;
-        this.metrics.set(prdId, report);
-        return report;
-      } catch (error: any) {
-        if (this.debug) {
-          logger.debug(`[ProgressTracker] Failed to load report: ${error.message}`);
-        }
-      }
-    }
-
-    // Create new report
-    const report: ProgressReport = {
-      prdId,
-      phases: [],
-      totalTasksCompleted: 0,
-      totalTestsPassed: 0,
-      totalTestsFailed: 0,
-      totalTimeSpent: 0,
-      overallProgress: 0,
-    };
-
-    this.metrics.set(prdId, report);
-    return report;
+  setTotalTasks(total: number): void {
+    this.totalTasks = total;
+    this.emitProgress();
+    logger.info(`[ProgressTracker] Total tasks: ${total}`);
   }
 
   /**
-   * Compare with baseline.
+   * Get current progress percentage
    */
-  async compareWithBaseline(prdId: string, baselinePath?: string): Promise<ComparisonResult> {
-    const current = await this.getProgressReport(prdId);
-    let baseline: ProgressReport | undefined;
-
-    if (baselinePath) {
-      try {
-        baseline = await fs.readJson(baselinePath) as ProgressReport;
-      } catch (error: any) {
-        if (this.debug) {
-          logger.debug(`[ProgressTracker] Failed to load baseline: ${error.message}`);
-        }
-      }
+  getProgress(): number {
+    if (this.totalTasks === 0) {
+      return 0;
     }
+    const completed = this.completedTasks + this.failedTasks;
+    return Math.round((completed / this.totalTasks) * 100);
+  }
 
-    const regressions: string[] = [];
-    const improvements: string[] = [];
-
-    if (baseline) {
-      // Compare metrics
-      if (current.totalTestsFailed > baseline.totalTestsFailed) {
-        regressions.push(`Test failures increased from ${baseline.totalTestsFailed} to ${current.totalTestsFailed}`);
-      } else if (current.totalTestsFailed < baseline.totalTestsFailed) {
-        improvements.push(`Test failures decreased from ${baseline.totalTestsFailed} to ${current.totalTestsFailed}`);
-      }
-
-      if (current.totalTimeSpent > baseline.totalTimeSpent * 1.1) {
-        regressions.push(`Execution time increased by more than 10%`);
-      } else if (current.totalTimeSpent < baseline.totalTimeSpent * 0.9) {
-        improvements.push(`Execution time decreased by more than 10%`);
-      }
-    }
-
+  /**
+   * Get progress summary
+   */
+  getProgressSummary(): {
+    total: number;
+    completed: number;
+    failed: number;
+    active: number;
+    progress: number;
+  } {
     return {
-      current,
-      baseline,
-      regressions,
-      improvements,
+      total: this.totalTasks,
+      completed: this.completedTasks,
+      failed: this.failedTasks,
+      active: this.activeTasks.size,
+      progress: this.getProgress(),
     };
   }
 
   /**
-   * Save progress report.
+   * Emit progress event
    */
-  private async saveProgressReport(prdId: string, report: ProgressReport): Promise<void> {
-    this.metrics.set(prdId, report);
+  private emitProgress(): void {
+    const summary = this.getProgressSummary();
 
-    const reportPath = path.join(this.metricsPath, `${prdId}.json`);
-    await fs.ensureDir(path.dirname(reportPath));
-    await fs.writeJson(reportPath, report, { spaces: 2 });
+    this.emit('progress', {
+      type: 'progress',
+      progress: summary.progress,
+      total: summary.total,
+      message: `${summary.completed + summary.failed}/${summary.total} tasks completed (${summary.progress}%)`,
+      timestamp: Date.now(),
+    } as ProgressEvent);
+  }
+
+  /**
+   * Generate progress bar string
+   */
+  generateProgressBar(options: ProgressBarOptions): string {
+    const {
+      total,
+      current,
+      width = 40,
+      showPercentage = true,
+      showCount = true,
+    } = options;
+
+    const percentage = total > 0 ? Math.round((current / total) * 100) : 0;
+    const filled = Math.round((current / total) * width);
+    const empty = width - filled;
+
+    const bar = '█'.repeat(filled) + '░'.repeat(empty);
+
+    let result = `[${bar}]`;
+
+    if (showPercentage) {
+      result += ` ${percentage}%`;
+    }
+
+    if (showCount) {
+      result += ` (${current}/${total})`;
+    }
+
+    return result;
+  }
+
+  /**
+   * Display progress bar to console
+   */
+  displayProgressBar(): void {
+    const summary = this.getProgressSummary();
+    if (summary.total === 0) {
+      return;
+    }
+
+    const bar = this.generateProgressBar({
+      total: summary.total,
+      current: summary.completed + summary.failed,
+      width: 30,
+      showPercentage: true,
+      showCount: true,
+    });
+
+    const activeInfo = summary.active > 0 ? ` | ${summary.active} active` : '';
+    const failedInfo = summary.failed > 0 ? ` | ${summary.failed} failed` : '';
+
+    process.stdout.write(`\r${bar}${activeInfo}${failedInfo}`);
+  }
+
+  /**
+   * Reset tracker
+   */
+  reset(): void {
+    this.activeTasks.clear();
+    this.completedTasks = 0;
+    this.failedTasks = 0;
+    this.totalTasks = 0;
+    logger.debug('[ProgressTracker] Reset');
+  }
+
+  /**
+   * Get active tasks
+   */
+  getActiveTasks(): Task[] {
+    return Array.from(this.activeTasks.values()).map(t => t.task);
   }
 }
-
-
-
-
-

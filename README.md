@@ -363,6 +363,14 @@ cursor: {
 - `devloop_logs(analyze: true)` - Get categorized background agent errors
 - `devloop_metrics()` - View execution metrics including background agent operations
 
+### Reliability Features
+
+Dev-loop includes comprehensive reliability features for Cursor background agents:
+
+- **Timeout handling** - Configurable timeouts with progressive extension and heartbeat monitoring
+- **Retry logic** - Automatic retries with strict JSON prompts on failure (3 attempts by default)
+- **Enhanced JSON parsing** - Robust extraction from various response formats, including "already complete" detection
+
 ### Background Agent JSON Parsing
 
 Dev-loop uses a robust JSON parsing strategy to extract code changes from Cursor background agent responses. The parser handles various response formats and edge cases:
@@ -374,11 +382,14 @@ Dev-loop uses a robust JSON parsing strategy to extract code changes from Cursor
    - JSON code blocks (```json ... ```)
    - CodeChanges structure in text
    - Files key extraction with brace counting
+   - Triple-escaped JSON handling
+   - "Already complete" response detection
 
 **Key Improvements:**
 - **Fixed control character errors**: No longer incorrectly unescapes valid JSON escape sequences
 - **Better error handling**: Detailed logging with context snippets for debugging
 - **Shared parser utility**: Centralized parsing logic in `cursor-json-parser.ts` for consistency
+- **Prefix stripping**: Automatically removes prefixes like "Here is the JSON:"
 
 **Architecture:**
 ```
@@ -390,7 +401,7 @@ CursorProvider
 
 The refactored architecture eliminates code duplication by centralizing JSON parsing logic in a shared utility module used by both `CursorProvider` and `CursorChatOpener`.
 
-See [`docs/CURSOR_MULTI_AGENT.md`](docs/CURSOR_MULTI_AGENT.md) for complete documentation.
+See [`docs/CURSOR_INTEGRATION.md`](docs/CURSOR_INTEGRATION.md) for detailed documentation on timeout handling, retry logic, and session management.
 
 ## MCP Integration
 
@@ -480,6 +491,12 @@ stateDiagram-v2
 | **CodeContextProvider** | Extract file signatures, imports, error context |
 | **ValidationGate** | Pre-apply validation, syntax checking |
 | **PatternLearningSystem** | Learn from outcomes, inject guidance |
+| **ParallelMetrics** | Parallel execution tracking and concurrency metrics ([Architecture](docs/contributing/ARCHITECTURE.md#parallel-execution-system)) |
+| **ProgressTracker** | Real-time progress updates during execution ([Architecture](docs/contributing/ARCHITECTURE.md#session-management-system)) |
+| **SessionBoundaryManager** | Provider-agnostic session boundary enforcement ([Architecture](docs/contributing/ARCHITECTURE.md#session-management-system)) |
+| **ContextBuilder** | Unified context building for all AI providers ([Architecture](docs/contributing/ARCHITECTURE.md#context-discovery-system)) |
+| **TimeoutHandler** | Provider-agnostic timeout handling ([Architecture](docs/contributing/ARCHITECTURE.md#ai-provider-reliability)) |
+| **ReportGenerator** | Comprehensive execution reporting ([Architecture](docs/contributing/ARCHITECTURE.md#parallel-execution-system)) |
 
 ### Provider Interfaces
 
@@ -922,8 +939,12 @@ npm test             # Test
 - Proactive pattern application
 - Context gap detection
 
+### Complete (Previously Planned)
+- **Parallel task execution** (dependency level grouping, concurrent execution)
+- **Provider-agnostic session management** (boundary specifications, context snapshotting)
+- **AI provider reliability** (timeout handling, retry logic, enhanced JSON parsing)
+
 ### Planned
-- Parallel task execution
 - Git workflow integration
 - Rich HTML reports
 - Shell completion scripts

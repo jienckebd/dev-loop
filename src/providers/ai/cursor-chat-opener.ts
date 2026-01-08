@@ -11,8 +11,11 @@ import { spawn, execSync, exec } from 'child_process';
 import { promisify } from 'util';
 import { logger } from '../../core/logger';
 import { ChatRequest, Config, CodeChanges } from '../../types';
-import { CursorSessionManager, SessionContext } from './cursor-session-manager';
-import { extractCodeChanges as extractCodeChangesShared, parseCodeChangesFromText as parseCodeChangesFromTextShared } from './cursor-json-parser';
+import { CursorSessionManager } from './cursor-session-manager';
+import { SessionContext } from './session-manager';
+import { extractCodeChanges, parseCodeChangesFromText, JsonParsingContext } from './json-parser';
+import { ObservationTracker } from '../../core/observation-tracker';
+import { getParallelMetricsTracker } from '../../core/parallel-metrics';
 
 const execAsync = promisify(exec);
 
@@ -73,8 +76,10 @@ export class CursorChatOpener {
   private config: CursorChatOpenerConfig;
   private cursorPath: string | null = null;
   private sessionManager: CursorSessionManager | null = null;
+  private observationTracker: ObservationTracker;
 
   constructor(config?: CursorChatOpenerConfig) {
+    this.observationTracker = new ObservationTracker();
     // Merge config with defaults, handling sessionManagement specially
     const defaultSessionManagement = {
       enabled: true,
@@ -697,6 +702,14 @@ export class CursorChatOpener {
         logger.debug(`[CursorChatOpener] Prompt length: ${enhancedPrompt.length} chars (will be passed via stdin)${session ? `, ${session.history.length} history entries` : ''}`);
       }
 
+      // Track agent in parallel metrics
+      const parallelMetrics = getParallelMetricsTracker();
+      const agentId = `agent-${request.id || Date.now()}`;
+      const taskId = request.context?.taskId || request.id || 'unknown';
+      const prdId = request.context?.prdId || 'unknown';
+      const phaseId = request.context?.phaseId ?? undefined;
+      parallelMetrics.startAgent(agentId, taskId, prdId, phaseId, enhancedPrompt?.length || 0);
+
       // Use spawn with stdin for long prompts (more reliable than command-line args)
       // Add timeout to prevent hanging (default 5 minutes for background agents)
       // Code generation should complete in < 5 minutes; test generation may take longer
@@ -705,6 +718,9 @@ export class CursorChatOpener {
       const timeoutMs = configTimeout ? configTimeout * 60 * 1000 : 5 * 60 * 1000; // Default: 5 minutes
       const timeoutPromise = new Promise<ChatOpenResult>((resolve) => {
         setTimeout(() => {
+          // Track agent timeout in parallel metrics
+          parallelMetrics.completeAgent(agentId, 'timeout', 0);
+
           resolve({
             success: false,
             method: 'agent',
@@ -839,7 +855,13 @@ export class CursorChatOpener {
           }
 
           // Track session history
-          const codeChanges = this.extractCodeChanges(parsedResponse);
+          const parsingContext: JsonParsingContext = {
+            providerName: 'cursor',
+            taskId: request.context?.taskId || request.id,
+            prdId: request.context?.prdId,
+            phaseId: request.context?.phaseId ?? undefined,
+          };
+          const codeChanges = this.extractCodeChangesFromResponse(parsedResponse, this.observationTracker, parsingContext);
           const success = code === 0 || stdout.trim().length > 0;
           const error = success ? undefined : (stderr || `Background agent exited with code ${code}`);
 
@@ -857,6 +879,9 @@ export class CursorChatOpener {
           if (success) {
             logger.info(`[CursorChatOpener] Background agent completed successfully${session ? ` (session: ${session.sessionId})` : ''}`);
 
+            // Track agent completion in parallel metrics
+            parallelMetrics.completeAgent(agentId, 'completed', stdout.length);
+
             resolve({
               success: true,
               method: 'agent',
@@ -867,6 +892,10 @@ export class CursorChatOpener {
             });
           } else {
             logger.error(`[CursorChatOpener] Background agent failed with code ${code}${session ? ` (session: ${session.sessionId})` : ''}`);
+
+            // Track agent failure in parallel metrics
+            parallelMetrics.completeAgent(agentId, 'failed', stdout.length);
+
             resolve({
               success: false,
               method: 'agent',
@@ -875,13 +904,17 @@ export class CursorChatOpener {
           }
         });
 
-          child.on('error', (error) => {
+          child.on('error', (spawnError) => {
             clearTimeout(timeoutHandle);
-            logger.error(`[CursorChatOpener] Background agent spawn error: ${error.message}`);
+            logger.error(`[CursorChatOpener] Background agent spawn error: ${spawnError.message}`);
+
+            // Track agent failure in parallel metrics
+            parallelMetrics.completeAgent(agentId, 'failed', 0);
+
             resolve({
               success: false,
               method: 'agent',
-              message: error.message,
+              message: spawnError.message,
             });
           });
         }),
@@ -889,6 +922,12 @@ export class CursorChatOpener {
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : String(error);
       logger.error(`[CursorChatOpener] Background agent failed: ${errorMessage}`);
+
+      // Track agent failure in parallel metrics (create fallback agentId)
+      const parallelMetrics = getParallelMetricsTracker();
+      const fallbackAgentId = `agent-${request.id || Date.now()}`;
+      parallelMetrics.completeAgent(fallbackAgentId, 'failed', 0);
+
       return {
         success: false,
         method: 'agent',
@@ -1032,16 +1071,20 @@ export class CursorChatOpener {
    * - JSON embedded in text
    * - Cursor agent result format: {type: "result", result: "..."}
    */
-  private extractCodeChanges(response: any): CodeChanges | null {
-    return extractCodeChangesShared(response);
+  private extractCodeChangesFromResponse(
+    response: any,
+    observationTracker?: ObservationTracker,
+    context?: JsonParsingContext
+  ): CodeChanges | null {
+    return extractCodeChanges(response, observationTracker, context);
   }
 
   /**
    * Parse code changes from text response with robust error handling
    * Uses shared parser utility for consistent parsing logic
    */
-  private parseCodeChangesFromText(text: string): CodeChanges | null {
-    return parseCodeChangesFromTextShared(text);
+  private parseCodeChangesFromTextResponse(text: string): CodeChanges | null {
+    return parseCodeChangesFromText(text);
   }
 
   /**

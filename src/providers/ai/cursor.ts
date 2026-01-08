@@ -12,15 +12,19 @@ import { executeCursorGenerateCode } from '../../mcp/tools/cursor-ai';
 import { generateAgentConfig } from './cursor-agent-generator';
 import { createChatRequest } from './cursor-chat-requests';
 import { CursorChatOpener } from './cursor-chat-opener';
-import { extractCodeChanges, parseCodeChangesFromText } from './cursor-json-parser';
+import { extractCodeChanges, parseCodeChangesFromText, JsonParsingContext } from './json-parser';
+import { ObservationTracker } from '../../core/observation-tracker';
 import * as path from 'path';
 
 export class CursorProvider implements AIProvider {
   public name = 'cursor';
   private config: AIProviderConfig & { model?: string };
+  private observationTracker: ObservationTracker;
 
-  constructor(config: AIProviderConfig) {
+  constructor(config: AIProviderConfig, observationTracker?: ObservationTracker) {
     this.config = config as any;
+    // Create a default ObservationTracker if not provided
+    this.observationTracker = observationTracker || new ObservationTracker();
   }
 
   async generateCode(prompt: string, context: TaskContext): Promise<CodeChanges> {
@@ -31,7 +35,7 @@ export class CursorProvider implements AIProvider {
     // Check configuration for background agent mode
     const useBackgroundAgent = agentsConfig.useBackgroundAgent !== false; // Default to true
     const createObservabilityChats = agentsConfig.createObservabilityChats === true; // Only true if explicitly true
-    const fallbackToFileBased = agentsConfig.fallbackToFileBased !== false; // Default to true
+    const fallbackToFileBased = agentsConfig.fallbackToFileBased === true; // Only true if explicitly true
     const agentOutputFormat = agentsConfig.agentOutputFormat || 'json';
 
     // Extract PRD/phase context
@@ -89,12 +93,33 @@ export class CursorProvider implements AIProvider {
         const result = await chatOpener.openChat(chatRequest);
 
         if (result.success && result.response) {
-          const codeChanges = this.extractCodeChanges(result.response);
+          const codeChanges = this.extractCodeChangesFromResponse(result.response, context);
           if (codeChanges) {
             logger.info(`[CursorProvider] Successfully received code changes from background agent: ${codeChanges.files.length} files`);
             return codeChanges;
           } else {
             logger.warn(`[CursorProvider] Background agent succeeded but no CodeChanges extracted`);
+            // Retry with stricter JSON instruction (up to 2 retries)
+            const maxRetries = 2;
+            for (let retryAttempt = 1; retryAttempt <= maxRetries; retryAttempt++) {
+              logger.info(`[CursorProvider] Retry ${retryAttempt}/${maxRetries} with stricter JSON instruction`);
+
+              const retryRequest = {
+                ...chatRequest,
+                id: `retry-${retryAttempt}-${chatRequest.id}`,
+                question: this.buildStrictJsonPrompt(context),
+              };
+
+              const retryResult = await chatOpener.openChat(retryRequest);
+              if (retryResult.success && retryResult.response) {
+                const retryChanges = this.extractCodeChangesFromResponse(retryResult.response, context);
+                if (retryChanges) {
+                  logger.info(`[CursorProvider] Retry ${retryAttempt} succeeded: ${retryChanges.files.length} files`);
+                  return retryChanges;
+                }
+              }
+            }
+            logger.error(`[CursorProvider] All retries failed to extract CodeChanges`);
           }
         } else {
           logger.warn(`[CursorProvider] Background agent failed: ${result.message}`);
@@ -171,6 +196,40 @@ export class CursorProvider implements AIProvider {
   }
 
   /**
+   * Build a strict JSON-only prompt for retry attempts
+   * Uses minimal context to increase chance of JSON-only response
+   */
+  private buildStrictJsonPrompt(context: TaskContext): string {
+    const lines: string[] = [];
+
+    lines.push('RESPOND WITH JSON ONLY. NO EXPLANATIONS.');
+    lines.push('');
+    lines.push(`Task: ${context.task.title}`);
+    lines.push(`Description: ${context.task.description}`);
+    lines.push('');
+    lines.push('Generate the code changes. Return ONLY this JSON structure:');
+    lines.push('');
+    lines.push('```json');
+    lines.push('{');
+    lines.push('  "files": [');
+    lines.push('    {');
+    lines.push('      "path": "path/to/file.ext",');
+    lines.push('      "content": "complete file content here",');
+    lines.push('      "operation": "create"');
+    lines.push('    }');
+    lines.push('  ],');
+    lines.push('  "summary": "what was changed"');
+    lines.push('}');
+    lines.push('```');
+    lines.push('');
+    lines.push('If no changes are needed, return: {"files": [], "summary": "No changes required"}');
+    lines.push('');
+    lines.push('START YOUR RESPONSE WITH ```json');
+
+    return lines.join('\n');
+  }
+
+  /**
    * Create observability chat (visible agent for monitoring)
    * This runs in parallel and doesn't block execution
    */
@@ -228,15 +287,22 @@ export class CursorProvider implements AIProvider {
    * Extract CodeChanges from background agent response
    * Uses shared parser utility for consistent parsing logic
    */
-  private extractCodeChanges(response: any): CodeChanges | null {
-    return extractCodeChanges(response);
+  private extractCodeChangesFromResponse(response: any, taskContext: TaskContext): CodeChanges | null {
+    const parsingContext: JsonParsingContext = {
+      providerName: 'cursor',
+      taskId: taskContext.task.id,
+      prdId: taskContext.prdId,
+      phaseId: taskContext.phaseId ?? undefined,
+      projectType: (this.config as any).projectType,
+    };
+    return extractCodeChanges(response, this.observationTracker, parsingContext);
   }
 
   /**
    * Parse code changes from text response
    * Uses shared parser utility for consistent parsing logic
    */
-  private parseCodeChangesFromText(text: string): CodeChanges | null {
+  private parseCodeChangesFromTextResponse(text: string): CodeChanges | null {
     return parseCodeChangesFromText(text);
   }
 

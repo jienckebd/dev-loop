@@ -33,6 +33,10 @@ export interface PrdMetadata {
     maxIterations?: number;
     timeoutMinutes?: number;
     waitForPrds?: boolean;
+    /** Target module for code generation (used for context scoping) */
+    targetModule?: string;
+    /** Expected target files pattern for validation */
+    targetFilesPattern?: string;
   };
   requirements?: {
     idPattern?: string;

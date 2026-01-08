@@ -2,7 +2,7 @@
 
 ## Overview
 
-The `archive` command moves Task Master and dev-loop JSON state files to an archive location, preserving execution history and freeing up space in the active state directories.
+The `archive` command moves Task Master and dev-loop JSON state files to an archive location, preserving execution history and freeing up space in the active state directories. The enhanced archive command also cleans up background agent processes, deletes Cursor agent files, and resets cursor sessions.
 
 ## Usage
 
@@ -133,12 +133,49 @@ To restore archived state files:
 2. Ensure file structure matches original paths
 3. Restart dev-loop to use restored state
 
+## Enhanced Archive Command
+
+The archive command now performs comprehensive cleanup:
+
+1. **Kills background agent processes** - Terminates any hanging Cursor background agent processes
+   ```bash
+   pkill -f "cursor.*agent"
+   ```
+
+2. **Deletes Cursor agent files** - Removes agent configuration files from `.cursor/agents/*.md`
+   - These files are not archived, they are deleted completely
+   - Agent files are optional and can be regenerated
+
+3. **Resets cursor sessions** - Resets `.devloop/cursor-sessions.json` to initial state
+   - Archives existing sessions first
+   - Creates fresh session file for next execution
+
+4. **Archives chat requests and instructions** - Moves Cursor chat files to archive:
+   - `files-private/cursor/chat-requests.json`
+   - `files-private/cursor/chat-instructions/`
+   - `files-private/cursor/completed/`
+
+5. **Resets all state files** - Archives and resets all dev-loop and task-master state files
+
+### Background Agent Cleanup
+
+The archive command automatically terminates hanging background agent processes:
+
+```bash
+npx dev-loop archive
+# Automatically kills: pkill -f "cursor.*agent"
+```
+
+This prevents background processes from consuming resources after execution completes or if execution is interrupted.
+
 ## Notes
 
-- Archiving does not delete original files (they are copied, not moved)
+- Archiving does not delete original files (they are copied, not moved), except for agent files which are deleted
 - Compressed archives require `tar` command to be available
 - Archive timestamps use ISO format for easy sorting
 - Archives preserve all execution history and metrics
+- Background agent processes are terminated to prevent resource leaks
+- Cursor agent files (`.cursor/agents/*.md`) are deleted, not archived
 
 
 

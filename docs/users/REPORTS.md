@@ -105,6 +105,26 @@ dev-loop report --prd browser_validation_test --compare previous_prd
 - Common errors
 - Suggested fixes
 
+### Parallel Execution Analysis
+
+Reports include parallel execution analysis:
+- Max concurrency achieved
+- Average concurrency
+- Parallel efficiency percentage
+- Agent breakdown by task/PRD/phase
+- Overlap time statistics
+- Coordination metrics (wait time, sequential time, overlap time)
+
+### Session Management Metrics
+
+Reports track session management:
+- Session history length
+- History pruning statistics
+- Session boundary enforcement
+- Context snapshotting effectiveness
+- Session lifecycle statistics
+- Provider-agnostic session usage
+
 ### Recommendations
 - Optimization suggestions
 - Areas for improvement
