@@ -381,6 +381,45 @@ export function parseCodeChangesFromText(text: string): CodeChanges | null {
     }
   }
 
+  // NEW: Check for "already complete" responses without code changes
+  // If the text indicates the task is complete with no changes needed, create an empty CodeChanges
+  const completePhrases = [
+    'phase is complete',
+    'already complete',
+    'no changes needed',
+    'no changes required',
+    'already exists',
+    'all.*files.*exist',
+    'already implemented',
+    'nothing to change',
+    'task is complete',
+    'module creation phase is complete',
+    'content type.*phase is complete',
+    'plugin system.*complete',
+    'already done',
+    'no modifications needed',
+    'no code changes',
+  ];
+
+  const lowerText = text.toLowerCase();
+  for (const phrase of completePhrases) {
+    const regex = new RegExp(phrase, 'i');
+    if (regex.test(lowerText)) {
+      // Extract a summary from the text
+      let summary = 'Task already complete - no changes needed';
+      // Try to extract first meaningful sentence
+      const sentences = text.split(/[.!?\n]/).filter(s => s.trim().length > 20);
+      if (sentences.length > 0) {
+        summary = sentences[0].trim().substring(0, 500);
+      }
+      logger.debug(`[CursorJsonParser] Detected "already complete" response, returning empty CodeChanges`);
+      return {
+        files: [],
+        summary: summary,
+      };
+    }
+  }
+
   return null;
 }
 
