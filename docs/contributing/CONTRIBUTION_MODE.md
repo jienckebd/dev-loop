@@ -250,9 +250,9 @@ Use MCP tools to query events:
 
 ```typescript
 // Poll for new events since last check
-const { events } = await devloop_events_poll({ 
+const { events } = await devloop_events_poll({
   sinceTimestamp: lastCheckTime,
-  filterSeverity: 'warn' 
+  filterSeverity: 'warn'
 });
 
 // Check for filtered files

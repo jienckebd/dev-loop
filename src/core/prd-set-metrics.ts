@@ -7,11 +7,14 @@
 import * as fs from 'fs-extra';
 import * as path from 'path';
 import { PrdSetMetricsData, PrdMetricsData } from './hierarchical-metrics';
+import type { ConfigOverlay } from '../config/schema';
 
 export interface PrdSetMetadata {
   setId: string;
   prdPaths: string[];
   startTime?: string;
+  // Config overlay for the entire PRD set (merged with project config)
+  configOverlay?: ConfigOverlay;
 }
 import { logger } from './logger';
 

@@ -127,8 +127,8 @@ function validateContributionModeBoundaries(
     return { valid: true };
   }
 
-  const boundaries = agentType === 'outer' 
-    ? state.outerAgentBoundaries 
+  const boundaries = agentType === 'outer'
+    ? state.outerAgentBoundaries
     : state.innerAgentBoundaries;
 
   // Check if path matches any forbidden pattern
@@ -148,7 +148,7 @@ function validateContributionModeBoundaries(
   }
 
   // Check if path matches at least one allowed pattern
-  const matchesAllowed = boundaries.allowed.some(pattern => 
+  const matchesAllowed = boundaries.allowed.some(pattern =>
     matchesPattern(filePath, pattern)
   );
 
@@ -221,7 +221,7 @@ class ValidationGate {
     if (violations.length > 0) {
       return {
         valid: false,
-        errors: violations.map(v => 
+        errors: violations.map(v =>
           `Boundary violation: ${v.filePath} (${v.agentType} agent) - ${v.reason}`
         )
       };
@@ -248,13 +248,13 @@ Validate boundaries when starting contribution mode:
 async function startContributionMode(prdPath: string): Promise<ContributionModeState> {
   // Load project rules
   const projectRules = await loadProjectRules('.cursor/rules/dev-loop.mdc');
-  
+
   // Extract boundaries from project rules
   const boundaries = extractBoundaries(projectRules);
-  
+
   // Merge with default boundaries
   const mergedBoundaries = mergeBoundaries(boundaries, getDefaultBoundaries());
-  
+
   // Create state file
   const state: ContributionModeState = {
     active: true,
@@ -287,12 +287,12 @@ Validate boundaries for MCP tool calls:
 async function handleMCPToolCall(tool: string, params: any, state: ContributionModeState) {
   // Determine agent type based on tool
   const agentType = tool.startsWith('devloop_contribution_') ? 'outer' : 'inner';
-  
+
   // If tool modifies files, validate boundaries
   if (tool === 'apply_code_changes' || tool === 'edit_file') {
     const filePath = params.filePath;
     const validation = validateContributionModeBoundaries(filePath, agentType, state);
-    
+
     if (!validation.valid) {
       throw new Error(`Boundary violation: ${validation.violations?.[0]?.reason}`);
     }
@@ -311,12 +311,12 @@ Validate boundaries for CLI commands:
 async function handleCLICommand(command: string, args: any, state: ContributionModeState) {
   // Determine agent type based on command
   const agentType = command === 'contribution' ? 'outer' : 'inner';
-  
+
   // If command modifies files, validate boundaries
   if (command === 'apply' || command === 'edit') {
     const filePath = args.file;
     const validation = validateContributionModeBoundaries(filePath, agentType, state);
-    
+
     if (!validation.valid) {
       console.error(`Boundary violation: ${validation.violations?.[0]?.reason}`);
       process.exit(1);

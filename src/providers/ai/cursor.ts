@@ -12,7 +12,7 @@ import { executeCursorGenerateCode } from '../../mcp/tools/cursor-ai';
 import { generateAgentConfig } from './cursor-agent-generator';
 import { createChatRequest } from './cursor-chat-requests';
 import { CursorChatOpener } from './cursor-chat-opener';
-import { extractCodeChanges, parseCodeChangesFromText, JsonParsingContext } from './json-parser';
+import { extractCodeChanges, parseCodeChangesFromText, JsonParsingContext, extractCodeChangesWithAiFallback, shouldUseAiFallback } from './json-parser';
 import { ObservationTracker } from '../../core/observation-tracker';
 import * as path from 'path';
 
@@ -149,7 +149,45 @@ export class CursorProvider implements AIProvider {
                 }
               }
             }
-            // HALT: JSON parsing failed after all retries
+
+            // AI Fallback: Use AI to extract from the original response
+            if (shouldUseAiFallback(result.response)) {
+              logger.info(`[CursorProvider] Attempting AI-assisted extraction fallback`);
+              try {
+                const aiFallbackChanges = await extractCodeChangesWithAiFallback(
+                  result.response,
+                  async (prompt: string) => {
+                    // Use a simpler agent call for extraction
+                    const extractRequest = {
+                      id: `ai-extract-${chatRequest.id}`,
+                      agentName: chatRequest.agentName,
+                      question: prompt,
+                      model: 'claude-3-5-sonnet', // Use a capable model for extraction
+                      mode: 'Ask' as const,
+                      status: 'pending' as const,
+                      createdAt: new Date().toISOString(),
+                    };
+                    const extractResult = await chatOpener.openChat(extractRequest);
+                    if (extractResult.success && extractResult.response) {
+                      return typeof extractResult.response === 'string'
+                        ? extractResult.response
+                        : JSON.stringify(extractResult.response);
+                    }
+                    return '';
+                  },
+                  { providerName: 'cursor', taskId: context.task.id }
+                );
+
+                if (aiFallbackChanges && aiFallbackChanges.files.length > 0) {
+                  logger.info(`[CursorProvider] AI fallback succeeded: ${aiFallbackChanges.files.length} files`);
+                  return aiFallbackChanges;
+                }
+              } catch (fallbackError) {
+                logger.warn(`[CursorProvider] AI fallback failed: ${fallbackError}`);
+              }
+            }
+
+            // HALT: JSON parsing failed after all retries and AI fallback
             const haltError = this.createJsonParsingHaltError(context, maxRetries, result.response);
             logger.error(haltError.message);
             throw haltError;
@@ -215,11 +253,10 @@ export class CursorProvider implements AIProvider {
     lines.push('');
     lines.push('## CRITICAL: Response Format Requirements (STRICT)');
     lines.push('');
-    lines.push('**YOU MUST RETURN ONLY VALID JSON. NO NARRATIVE TEXT, NO EXPLANATIONS, NO MARKDOWN OUTSIDE THE JSON BLOCK.**');
+    lines.push('**YOU MUST RETURN PURE JSON. NO MARKDOWN CODE BLOCKS, NO NARRATIVE TEXT.**');
     lines.push('');
-    lines.push('Your ENTIRE response must be exactly this format:');
+    lines.push('Your ENTIRE response must be exactly this JSON object (NO ```json wrapper, NO markdown):');
     lines.push('');
-    lines.push('```json');
     lines.push(JSON.stringify({
       files: [
         {
@@ -230,22 +267,21 @@ export class CursorProvider implements AIProvider {
       ],
       summary: 'brief summary of changes'
     }, null, 2));
-    lines.push('```');
     lines.push('');
     lines.push('### FORBIDDEN:');
-    lines.push('- ❌ Starting with "Here are the code changes..." or any narrative');
-    lines.push('- ❌ Adding explanations before or after the JSON');
-    lines.push('- ❌ Asking questions - generate the code NOW');
-    lines.push('- ❌ Using multiple code blocks - use exactly ONE ```json block');
-    lines.push('- ❌ Adding comments like "// operation type" inside JSON values');
+    lines.push('- ❌ Markdown code blocks (```json ... ```) - causes parsing failures');
+    lines.push('- ❌ Escaped JSON strings or nested JSON');
+    lines.push('- ❌ Narrative text before or after JSON');
+    lines.push('- ❌ Explanations, questions, or comments');
+    lines.push('- ❌ Multiple JSON objects - return exactly ONE');
     lines.push('');
     lines.push('### REQUIRED:');
-    lines.push('- ✅ Start IMMEDIATELY with ```json');
-    lines.push('- ✅ Valid JSON structure with "files" array and "summary" string');
+    lines.push('- ✅ Pure JSON object starting with { character');
+    lines.push('- ✅ Valid structure with "files" array and "summary" string');
     lines.push('- ✅ Each file has "path", "content", and "operation" fields');
-    lines.push('- ✅ End with ``` and nothing else');
+    lines.push('- ✅ End with } character and nothing else');
     lines.push('');
-    lines.push('If no changes needed, return: ```json\n{"files": [], "summary": "No changes required"}\n```');
+    lines.push('If no changes needed, return: {"files": [], "summary": "No changes required"}');
 
     return lines.join('\n');
   }
@@ -259,18 +295,17 @@ export class CursorProvider implements AIProvider {
 
     lines.push('# STRICT JSON-ONLY MODE');
     lines.push('');
-    lines.push('**YOUR PREVIOUS RESPONSE FAILED BECAUSE IT CONTAINED NARRATIVE TEXT.**');
+    lines.push('**YOUR PREVIOUS RESPONSE FAILED BECAUSE JSON PARSING FAILED.**');
     lines.push('');
-    lines.push('DO NOT WRITE ANY TEXT. DO NOT EXPLAIN. DO NOT ASK QUESTIONS.');
+    lines.push('DO NOT USE MARKDOWN CODE BLOCKS. DO NOT WRAP IN ```json. PURE JSON ONLY.');
     lines.push('');
     lines.push(`Task: ${context.task.title}`);
     lines.push(`Description: ${context.task.description}`);
     lines.push('');
     lines.push('# OUTPUT FORMAT (EXACT)');
     lines.push('');
-    lines.push('Your response must be EXACTLY this - nothing before, nothing after:');
+    lines.push('Your response must be EXACTLY this pure JSON object - NO markdown, NO wrapping:');
     lines.push('');
-    lines.push('```json');
     lines.push('{');
     lines.push('  "files": [');
     lines.push('    {');
@@ -281,16 +316,15 @@ export class CursorProvider implements AIProvider {
     lines.push('  ],');
     lines.push('  "summary": "description"');
     lines.push('}');
-    lines.push('```');
     lines.push('');
     lines.push('## RULES (VIOLATION = FAILURE):');
-    lines.push('1. First 7 characters of your response MUST be: ```json');
-    lines.push('2. Last 3 characters MUST be: ```');
-    lines.push('3. NO text before ```json');
-    lines.push('4. NO text after closing ```');
-    lines.push('5. Valid JSON only between the markers');
+    lines.push('1. First character of your response MUST be: {');
+    lines.push('2. Last character MUST be: }');
+    lines.push('3. NO markdown code blocks (```json causes escaping issues)');
+    lines.push('4. NO text before or after the JSON object');
+    lines.push('5. Valid JSON that can be parsed with JSON.parse()');
     lines.push('');
-    lines.push('GENERATE THE CODE NOW. RESPOND WITH ```json FIRST CHARACTER.');
+    lines.push('GENERATE THE CODE NOW. START WITH { CHARACTER IMMEDIATELY.');
 
     return lines.join('\n');
   }

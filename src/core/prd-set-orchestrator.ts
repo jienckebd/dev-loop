@@ -1,4 +1,4 @@
-import { Config } from '../config/schema';
+import { Config, ConfigOverlay } from '../config/schema';
 import { WorkflowEngine, PrdExecutionResult } from './workflow-engine';
 import { PrdSet } from './prd-coordinator';
 import { DiscoveredPrdSet } from './prd-set-discovery';
@@ -9,12 +9,15 @@ import { ValidationScriptExecutor } from './validation-script-executor';
 import { PrdSetProgressTracker } from './prd-set-progress-tracker';
 import { PrdSetErrorHandler } from './prd-set-error-handler';
 import { PrdSetMetrics } from './prd-set-metrics';
+import { createConfigContext, applyPrdSetConfig, ConfigContext } from './config-merger';
 import { logger } from './logger';
 
 export interface PrdSetMetadata {
   setId: string;
   prdPaths: string[];
   startTime?: string;
+  // Config overlay for the entire PRD set
+  configOverlay?: ConfigOverlay;
 }
 
 export interface PrdSetExecutionOptions {
@@ -34,8 +37,11 @@ export interface PrdSetExecutionResult {
  * PRD Set Orchestrator
  *
  * Orchestrates autonomous execution of entire PRD sets with dependency-aware scheduling.
+ * Supports hierarchical configuration merging (Project -> PRD Set -> PRD -> Phase).
  */
 export class PrdSetOrchestrator {
+  private baseConfig: Config;
+  private configContext: ConfigContext;
   private workflowEngine: WorkflowEngine;
   private coordinator: PrdCoordinator;
   private graphBuilder: DependencyGraphBuilder;
@@ -46,6 +52,8 @@ export class PrdSetOrchestrator {
   private debug: boolean;
 
   constructor(config: Config, debug: boolean = false) {
+    this.baseConfig = config;
+    this.configContext = createConfigContext(config);
     this.workflowEngine = new WorkflowEngine(config);
     this.coordinator = new PrdCoordinator('.devloop/prd-set-state.json', debug);
     this.graphBuilder = new DependencyGraphBuilder(debug);
@@ -63,6 +71,13 @@ export class PrdSetOrchestrator {
 
     // Finalize any stale in-progress PRD sets from previous runs
     this.prdSetMetrics.finalizeInProgressSets();
+  }
+
+  /**
+   * Get the current effective config (with PRD set overlay applied)
+   */
+  getEffectiveConfig(): Config {
+    return this.configContext.effectiveConfig;
   }
 
   /**
@@ -92,6 +107,16 @@ export class PrdSetOrchestrator {
 
     if (this.debug) {
       logger.debug(`[PrdSetOrchestrator] Starting execution of PRD set: ${discoveredSet.setId}`);
+    }
+
+    // Apply PRD set config overlay if available
+    if (discoveredSet.configOverlay) {
+      applyPrdSetConfig(this.configContext, discoveredSet.configOverlay);
+      logger.debug(`[PrdSetOrchestrator] Applied PRD set config overlay for ${discoveredSet.setId}`);
+
+      // Update workflow engine with effective config
+      // Note: WorkflowEngine uses config internally, so we may need to recreate it
+      // For now, we store the effective config for use by individual PRD executions
     }
 
     // Initialize PRD set coordination

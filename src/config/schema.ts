@@ -209,7 +209,7 @@ const configSchema = z.object({
       timeoutMinutes: z.number().default(60),
       waitForPrds: z.boolean().default(false),      // Block until dependent PRDs complete
     }).optional(),
-    // NEW: Requirements structure and phases
+    // Requirements structure and phases (now supports phase-level config overlays)
     requirements: z.object({
       idPattern: z.string().default('REQ-{id}'),
       phases: z.array(z.object({
@@ -219,6 +219,18 @@ const configSchema = z.object({
         pattern: z.string().optional(),            // "REQ-4{number}"
         parallel: z.boolean().default(false),
         dependsOn: z.array(z.number()).optional(), // Phase IDs
+        status: z.string().optional(),
+        deferredReason: z.string().optional(),
+        note: z.string().optional(),
+        file: z.string().optional(),
+        checkpoint: z.boolean().optional(),
+        validation: z.object({
+          after: z.array(z.string()).optional(),
+          tests: z.array(z.string()).optional(),
+          assertions: z.array(z.string()).optional(),
+        }).optional(),
+        // Phase config overlay (NEW) - allows phase-specific config overrides
+        config: z.lazy(() => configOverlaySchema).optional(),
       })).optional(),
       dependencies: z.record(z.array(z.string())).optional(), // Explicit requirement dependencies
     }).optional(),
@@ -236,8 +248,8 @@ const configSchema = z.object({
       externalModules: z.array(z.string()).optional(),  // Drupal modules
       prds: z.array(z.string()).optional(),             // Other PRDs that must complete first
     }).optional(),
-    // NEW: Config overlay from PRD (merged at runtime)
-    configOverlay: z.record(z.any()).optional(),
+    // Config overlay from PRD (merged at runtime) - now uses typed overlay schema
+    configOverlay: z.lazy(() => configOverlaySchema).optional(),
 
     // NEW: Product identity and Schema.org mapping
     product: z.object({
@@ -1088,6 +1100,251 @@ const configSchema = z.object({
 
 export type Config = z.infer<typeof configSchema>;
 
+// =============================================================================
+// CONFIGURATION OVERLAY SCHEMAS
+// =============================================================================
+// These schemas support hierarchical configuration merging:
+// Project Config -> Framework Config -> PRD Set Config -> PRD Config -> Phase Config
+// Later levels override earlier levels. Overlays use passthrough() for extensibility.
+// =============================================================================
+
+/**
+ * Framework configuration schema (strict, extracted from Config)
+ * Used for framework-specific validation
+ */
+export const frameworkConfigSchema = z.object({
+  type: z.string().optional(),
+  rules: z.array(z.string()).optional(),
+  taskPatterns: z.array(z.string()).optional(),
+  errorPathPatterns: z.array(z.string()).optional(),
+  errorGuidance: z.record(z.string(), z.string()).optional(),
+  identifierPatterns: z.array(z.string()).optional(),
+  templatePath: z.string().optional(),
+});
+
+export type FrameworkConfig = z.infer<typeof frameworkConfigSchema>;
+
+/**
+ * Configuration overlay schema (flexible, with passthrough for extensibility)
+ * All Config keys are optional in overlays. Used for PRD set, PRD, and phase config.
+ */
+export const configOverlaySchema = z.object({
+  debug: z.boolean().optional(),
+  metrics: z.object({
+    enabled: z.boolean().optional(),
+    path: z.string().optional(),
+  }).optional(),
+  ai: z.object({
+    provider: z.enum(['anthropic', 'openai', 'gemini', 'ollama', 'cursor']).optional(),
+    model: z.string().optional(),
+    fallback: z.string().optional(),
+    apiKey: z.string().optional(),
+    maxTokens: z.number().optional(),
+    maxContextChars: z.number().optional(),
+  }).optional(),
+  templates: z.object({
+    source: z.enum(['builtin', 'ai-dev-tasks', 'custom']).optional(),
+    customPath: z.string().optional(),
+  }).optional(),
+  testing: z.object({
+    runner: z.enum(['playwright', 'cypress']).optional(),
+    command: z.string().optional(),
+    timeout: z.number().optional(),
+    artifactsDir: z.string().optional(),
+  }).optional(),
+  validation: z.object({
+    enabled: z.boolean().optional(),
+    baseUrl: z.string().optional(),
+    urls: z.array(z.string()).optional(),
+    timeout: z.number().optional(),
+    authCommand: z.string().optional(),
+  }).optional(),
+  logs: z.object({
+    sources: z.array(logSourceSchema).optional(),
+    patterns: z.object({
+      error: z.union([z.string(), z.instanceof(RegExp)]).optional(),
+      warning: z.union([z.string(), z.instanceof(RegExp)]).optional(),
+    }).optional(),
+    ignorePatterns: z.array(z.string()).optional(),
+    useAI: z.boolean().optional(),
+    outputPath: z.string().optional(),
+  }).optional(),
+  intervention: z.object({
+    mode: z.enum(['autonomous', 'review', 'hybrid']).optional(),
+    approvalRequired: z.array(z.string()).optional(),
+  }).optional(),
+  taskMaster: z.object({
+    tasksPath: z.string().optional(),
+  }).optional(),
+  hooks: z.object({
+    preTest: z.array(z.string()).optional(),
+    postTest: z.array(z.string()).optional(),
+    postApply: z.array(z.string()).optional(),
+  }).optional(),
+  rules: z.object({
+    cursorRulesPath: z.string().optional(),
+  }).optional(),
+  codebase: z.object({
+    extensions: z.array(z.string()).optional(),
+    searchDirs: z.array(z.string()).optional(),
+    excludeDirs: z.array(z.string()).optional(),
+    filePathPatterns: z.array(z.string()).optional(),
+    ignoreGlobs: z.array(z.string()).optional(),
+    identifierStopwords: z.array(z.string()).optional(),
+  }).optional(),
+  framework: frameworkConfigSchema.optional(),
+  context: z.object({
+    includeSkeleton: z.boolean().optional(),
+    includeImports: z.boolean().optional(),
+    maxHelperSignatures: z.number().optional(),
+  }).optional(),
+  preValidation: z.object({
+    enabled: z.boolean().optional(),
+    maxRetries: z.number().optional(),
+    validateSyntax: z.boolean().optional(),
+    validateReferences: z.boolean().optional(),
+  }).optional(),
+  patternLearning: z.object({
+    enabled: z.boolean().optional(),
+    patternsPath: z.string().optional(),
+    useBuiltinPatterns: z.boolean().optional(),
+  }).optional(),
+  autonomous: z.object({
+    enabled: z.boolean().optional(),
+    skipInvestigation: z.boolean().optional(),
+    testGeneration: z.object({
+      framework: z.enum(['playwright', 'cypress', 'jest']).optional(),
+      testDir: z.string().optional(),
+      baseTestTemplate: z.string().optional(),
+    }).optional(),
+    maxIterations: z.number().optional(),
+    maxTaskRetries: z.number().optional(),
+    stuckDetectionWindow: z.number().optional(),
+    contextPath: z.string().optional(),
+    maxHistoryIterations: z.number().optional(),
+    testEvolutionInterval: z.number().optional(),
+    learnFromSuccess: z.boolean().optional(),
+    learnFromFailure: z.boolean().optional(),
+  }).optional(),
+  browser: z.object({
+    headless: z.boolean().optional(),
+    timeout: z.number().optional(),
+    screenshotOnFailure: z.boolean().optional(),
+    screenshotsDir: z.string().optional(),
+    videoOnFailure: z.boolean().optional(),
+  }).optional(),
+  // PRD-level config is typically set at the PRD level, but can be overridden
+  prd: z.any().optional(),
+  drupal: z.any().optional(),
+  wizard: z.any().optional(),
+  designSystem: z.any().optional(),
+  testGeneration: z.any().optional(),
+  scan: z.any().optional(),
+  cursor: z.any().optional(),
+  aiPatterns: z.any().optional(),
+  ast: z.any().optional(),
+  playwrightMCP: z.any().optional(),
+  documentation: z.any().optional(),
+  security: z.any().optional(),
+  style: z.any().optional(),
+  health: z.any().optional(),
+  refactoring: z.any().optional(),
+}).passthrough(); // Allow unknown keys for future extensibility
+
+export type ConfigOverlay = z.infer<typeof configOverlaySchema>;
+
+/**
+ * PRD Set configuration schema (alias to ConfigOverlay)
+ * Used for PRD set level configuration
+ */
+export const prdSetConfigSchema = configOverlaySchema;
+export type PrdSetConfig = ConfigOverlay;
+
+/**
+ * Phase configuration schema (alias to ConfigOverlay)
+ * Used for phase level configuration in PRD frontmatter
+ */
+export const phaseConfigSchema = configOverlaySchema;
+export type PhaseConfig = ConfigOverlay;
+
+/**
+ * Phase definition schema with optional config overlay
+ */
+export const phaseDefinitionSchema = z.object({
+  id: z.number(),
+  name: z.string(),
+  range: z.string().optional(),
+  pattern: z.string().optional(),
+  parallel: z.boolean().optional(),
+  dependsOn: z.array(z.number()).optional(),
+  status: z.string().optional(),
+  deferredReason: z.string().optional(),
+  note: z.string().optional(),
+  file: z.string().optional(),
+  checkpoint: z.boolean().optional(),
+  validation: z.object({
+    after: z.array(z.string()).optional(),
+    tests: z.array(z.string()).optional(),
+    assertions: z.array(z.string()).optional(),
+  }).optional(),
+  // Phase config overlay (NEW)
+  config: phaseConfigSchema.optional(),
+});
+
+export type PhaseDefinition = z.infer<typeof phaseDefinitionSchema>;
+
+/**
+ * Validates config overlay at any level
+ * Returns validation result with errors and warnings
+ */
+export function validateConfigOverlay(
+  overlay: unknown,
+  level: 'project' | 'framework' | 'prd-set' | 'prd' | 'phase' = 'prd'
+): { valid: boolean; errors: string[]; warnings: string[] } {
+  const errors: string[] = [];
+  const warnings: string[] = [];
+
+  try {
+    // Use passthrough schema to allow unknown keys but validate known ones
+    const result = configOverlaySchema.safeParse(overlay);
+
+    if (!result.success) {
+      for (const issue of result.error.issues) {
+        const path = issue.path.join('.');
+        errors.push(`[${level}] ${path}: ${issue.message}`);
+      }
+    }
+
+    // Warn about unknown keys at top level (they're allowed but might be typos)
+    if (typeof overlay === 'object' && overlay !== null) {
+      const knownKeys = new Set([
+        'debug', 'metrics', 'ai', 'templates', 'testing', 'validation', 'logs',
+        'intervention', 'taskMaster', 'hooks', 'rules', 'codebase', 'framework',
+        'context', 'preValidation', 'patternLearning', 'autonomous', 'browser',
+        'prd', 'drupal', 'wizard', 'designSystem', 'testGeneration', 'scan',
+        'cursor', 'aiPatterns', 'ast', 'playwrightMCP', 'documentation',
+        'security', 'style', 'health', 'refactoring',
+      ]);
+      for (const key of Object.keys(overlay)) {
+        if (!knownKeys.has(key)) {
+          warnings.push(`[${level}] Unknown config key: ${key} (allowed but may be a typo)`);
+        }
+      }
+    }
+  } catch (error) {
+    errors.push(`[${level}] Validation error: ${error instanceof Error ? error.message : String(error)}`);
+  }
+
+  return {
+    valid: errors.length === 0,
+    errors,
+    warnings,
+  };
+}
+
 export function validateConfig(data: unknown): Config {
   return configSchema.parse(data);
 }
+
+// Export the main config schema for external use
+export { configSchema };

@@ -44,6 +44,7 @@ This guide shows how PRDs can leverage **ALL** dev-loop capabilities to maximize
 15. [Product Metadata](#15-product-metadata)
 16. [Context File Management](#16-context-file-management)
 17. [Error Guidance System](#17-error-guidance-system)
+18. [Configuration Overlays Feature](#18-configuration-overlays-feature-v13)
 
 ---
 
@@ -244,7 +245,7 @@ config:
       - "import { test, expect } from '@playwright/test';"
       - "import { AuthHelper } from '../helpers/auth';"
       - "import { DrupalAPI } from '../helpers/drupal-api';"
-    
+
     setupPattern: |                    # Test setup boilerplate
       test.beforeEach(async ({ page, request }) => {
         const baseURL = 'https://sysf.ddev.site';
@@ -252,7 +253,7 @@ config:
         const auth = new AuthHelper(page, api);
         await auth.login();
       });
-    
+
     selectors:                         # Selector documentation for AI
       form: ['main form', 'form[data-drupal-selector*="wizard"]']
       navigation:
@@ -260,21 +261,21 @@ config:
         back: 'button:has-text("Back")'
       fields:
         wizardName: "page.getByRole('textbox', { name: 'Wizard name' })"
-    
+
     template: |                        # Test template with placeholders
       test('{{REQUIREMENT_ID}}: {{REQUIREMENT_TITLE}}', async ({ page }) => {
         {{TEST_BODY}}
       });
-    
+
     isolationRules:                    # Test isolation rules
       - 'DO NOT create production data in tests'
       - 'Use unique names with timestamps: \'Test_\' + Date.now()'
       - 'Tests should NOT depend on data created by other tests'
-    
+
     antiPatterns:                      # Common mistakes to avoid
       - 'wizard.waitForWizardStep(page, 1) - WRONG: use wizard.waitForWizardStep(1)'
       - 'Using .wizard-form selector - WRONG: use "main form" selector'
-    
+
     helperMethodSignatures:            # Helper method documentation
       'waitForWizardStep': 'waitForWizardStep(stepNumber: number) - uses this.page internally'
       'fillAceEditor': 'fillAceEditor(schema: string) - uses this.page internally'
@@ -391,7 +392,7 @@ config:
       - 'Tests should VERIFY UI behavior without actually creating production data'
       - 'If a test must create entities, use UNIQUE names with timestamps: \'Test_\' + Date.now()'
       - 'CRITICAL: Failed tests leave orphaned entity types that crash the site! Always use test.afterEach cleanup.'
-    
+
     antiPatterns:
       - 'wizard.waitForWizardStep(page, 1) - WRONG: page is NOT passed to methods'
       - 'Using api.deleteEntityType() - WRONG: method does not exist, use SQL DELETE'
@@ -419,16 +420,16 @@ logs:
       command: 'ddev logs -s web --tail 100'
     # - type: file
     #   path: '/var/log/application.log'
-  
+
   patterns:                            # Error/warning patterns
     error: /Error|Exception|Fatal|CRITICAL|PHP Fatal/i
     warning: /Warning|Deprecated/i
     [custom]: /[custom pattern]/i      # Custom pattern (e.g., designSystem, wizard)
-  
+
   ignorePatterns:                      # Patterns to ignore (false positives)
     - 'views.ERROR.*non-existent config entity'  # Orphaned entities from previous tests
     - 'AI service may not be configured'         # Benign warnings
-  
+
   useAI: false                         # OPTIONAL: Use AI for log analysis (default: false)
 ```
 
@@ -967,7 +968,7 @@ entityGeneration:
     base: normalized_content         # Base template
     schemaOrg:
       type: PropertyValue
-  
+
   bundles:
     - schemaName: ColorToken
       bundleId: color
@@ -1052,7 +1053,7 @@ config:
       - 'docroot/modules/share/design_system/src/DesignSystem.php'
       - 'docroot/modules/share/bd/src/Plugin/EntityPluginBase.php'
       - 'docroot/modules/share/bd/src/Service/EntityHelper.php'
-    
+
     taskSpecific:                     # Files only for specific tasks
       'TASK-701':
         - 'docroot/modules/share/design_system/src/Plugin/Block/FieldWidget.php'
@@ -1119,26 +1120,26 @@ config:
     errorGuidance:
       # Service errors
       'Service .* not found': 'Check service name in [module].services.yml, verify class exists, run drush cr'
-      
+
       # Plugin errors
       'PluginNotFoundException': 'Check plugin annotation syntax, verify deriver class, clear cache with drush cr'
       'Plugin .* was not found': 'Plugin may be commented out. Check implementation file.'
-      
+
       # Entity errors
       'Entity type .* does not exist': 'Check bd.entity_type.*.yml exists in config/default, run drush cr'
       'EntityMalformedException': 'Entity missing required ID. Check that entity type/bundle is saved before referencing.'
-      
+
       # Path errors
       'dirname\\(DRUPAL_ROOT\\)': 'PATH ERROR: The etc/ folder is at PROJECT ROOT, not inside docroot/. Use dirname(DRUPAL_ROOT) not DRUPAL_ROOT.'
       '/docroot/etc/': 'PATH ERROR: The etc/ folder is at PROJECT ROOT, not inside docroot/.'
-      
+
       # Playwright errors
       'page.fill.*name=': 'PLAYWRIGHT SELECTOR ERROR: Drupal forms use custom widgets. Use Playwright role selectors: page.getByRole("textbox", { name: "Field Label" }) instead of name-based selectors.'
       'networkidle.*timeout': 'Replace waitForLoadState("networkidle") with waitForLoadState("domcontentloaded")'
-      
+
       # Memory errors
       'Allowed memory size': 'Find infinite loop - DO NOT restart DDEV. Check ddev logs -s web for stack trace'
-      
+
       # Module-specific errors
       'feeds_item without bundle': 'FEED TYPE ERROR: Bundle must be explicitly set in processor_configuration.values.bundle.'
       'ace_editor': 'ACE EDITOR: Use page.evaluate() to set value via ace.edit().setValue().'
@@ -1285,15 +1286,15 @@ config:
     taskPatterns: [...]
     identifierPatterns: [...]
     errorPathPatterns: [...]
-  
+
   comprehensive_example:          # ← Leverage: PRD-specific config
     testEntityId: 42
     validationUrls: ['/example/test']
-  
+
   contextFiles:                   # ← Leverage: Context management
     alwaysInclude: [...]
     taskSpecific: {...}
-  
+
   testGeneration:                 # ← Leverage: Auto-test generation
     imports: [...]
     selectors: {...}
@@ -1344,6 +1345,137 @@ When creating a PRD, consider leveraging these features:
 - [ ] **Task Dependencies**: Define requirement dependencies graph
 - [ ] **Validation**: Enable validation if testing runtime behavior
 - [ ] **PRD-Specific Config**: Add config.[prdId] for PRD-specific settings
+
+---
+
+## 18. Configuration Overlays Feature (v1.3)
+
+**Purpose**: Customize configuration at different levels (PRD set, PRD, phase) without modifying base config.
+
+### Understanding the Hierarchy
+
+Dev-loop merges configuration from multiple levels:
+
+```
+Project Config (devloop.config.js)
+    ↓ merge
+Framework Config (framework section)
+    ↓ merge
+PRD Set Config (prd-set-config.json)
+    ↓ merge
+PRD Config (frontmatter config:)
+    ↓ merge
+Phase Config (phases[].config:)
+    ↓
+Effective Config (used for execution)
+```
+
+**Key Principle**: Later levels override earlier levels. This allows PRD-specific customization without changing global settings.
+
+### When to Use Config Overlays
+
+| Scenario | Level | Example |
+|----------|-------|---------|
+| Different AI model for a project area | PRD Set | AI research PRDs use a different model |
+| Longer timeouts for complex PRD | PRD | Entity generation PRD needs 10min timeout |
+| Focused search dirs for a phase | Phase | Phase 2 only searches specific module |
+| Custom framework rules | PRD | PRD needs special validation rules |
+
+### Config Overlay Examples
+
+**PRD Set Config (`prd-set-config.json`):**
+```json
+{
+  "ai": {
+    "model": "claude-sonnet-4-20250514"
+  },
+  "framework": {
+    "rules": [
+      "All PRDs in this set target the design_system module",
+      "Use IPE builder patterns for all form modifications"
+    ]
+  }
+}
+```
+
+**PRD Config Overlay (in frontmatter):**
+```yaml
+config:
+  testing:
+    timeout: 600000  # 10 minutes for slow tests
+  codebase:
+    searchDirs:
+      - "docroot/modules/share/design_system"
+  framework:
+    rules:
+      - "Use DOM entity patterns for all styling"
+```
+
+**Phase Config Overlay:**
+```yaml
+requirements:
+  phases:
+    - id: 1
+      name: "Schema Setup"
+      config:
+        testing:
+          timeout: 300000
+    - id: 2
+      name: "Complex Processing"
+      config:
+        testing:
+          timeout: 900000  # Longer for complex tests
+        ai:
+          maxTokens: 16000  # More context for complex phase
+```
+
+### AI Agent Guidance
+
+**When creating PRDs, consider:**
+
+1. **Start with base config**: Most settings should be in `devloop.config.js`
+2. **Use overlays sparingly**: Only override what's necessary
+3. **Document overrides**: Use comments to explain why overrides exist
+4. **Prefer PRD-level over phase-level**: Only use phase config for significant differences
+
+**When writing AI prompts, understand:**
+
+1. **Effective config is merged**: The AI sees the final merged config
+2. **Array behavior matters**: Some arrays concatenate, others replace (see PRD_SCHEMA.md)
+3. **Validation applies**: Invalid overlays generate warnings
+
+**Example prompt awareness:**
+```
+When executing Phase 2 of PRD "design_system", the effective config includes:
+- Base timeout: 30000ms (from project config)
+- PRD override: 600000ms (from PRD config)
+- Phase override: 900000ms (from phase config)
+→ Effective timeout: 900000ms (phase wins)
+```
+
+### Validation Commands
+
+```bash
+# Validate PRD with config overlay
+dev-loop validate-prd <prd-path>
+
+# Validate config at specific level
+dev-loop validate-config --level project
+dev-loop validate-config --level prd-set --prd-set <set-id>
+dev-loop validate-config --level prd --prd <prd-path>
+dev-loop validate-config --level phase --prd <prd-path> --phase 2
+
+# Validate all levels
+dev-loop validate-config --level all
+```
+
+### Best Practices
+
+1. **Keep overlays minimal**: Only override what you need
+2. **Use PRD set for shared settings**: Settings that apply to multiple PRDs
+3. **Use phase config for timing**: Different timeouts, context size
+4. **Document why**: Explain non-obvious overrides in comments
+5. **Validate early**: Run validation before execution
 
 ---
 

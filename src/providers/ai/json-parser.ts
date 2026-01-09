@@ -257,7 +257,41 @@ export function extractCodeChanges(
           const hasJsonBlock = resultText.includes('```json') || resultText.includes('```\n{');
           logger.debug(`[JsonParser] Result text length: ${resultText.length}, has JSON block: ${hasJsonBlock}`);
 
-          // Multiple passes to handle triple-escaped JSON (\\\\n -> \\n -> \n)
+          // Strategy A: Detect Cursor's nested markdown format: "```json\\n{...}\\n```"
+          // This pattern occurs when Cursor stringifies a markdown code block
+          const cursorNestedEscapedPattern = /```json\\n([\s\S]*?)\\n```/;
+          const cursorNestedMatch = resultText.match(cursorNestedEscapedPattern);
+          if (cursorNestedMatch) {
+            // Extract the JSON from the escaped markdown block
+            let extractedJson = cursorNestedMatch[1];
+            // Unescape: \\n -> \n, \\" -> ", \\\\ -> \
+            extractedJson = extractedJson
+              .replace(/\\n/g, '\n')
+              .replace(/\\"/g, '"')
+              .replace(/\\\\/g, '\\');
+            attemptedStrategies.push('cursor-nested-markdown-extraction');
+            logger.debug(`[JsonParser] Extracted from Cursor nested markdown pattern`);
+
+            // Try to parse the extracted JSON directly
+            try {
+              const directParsed = JSON.parse(extractedJson);
+              if (directParsed.files && directParsed.summary !== undefined) {
+                logger.debug(`[JsonParser] Successfully parsed CodeChanges from nested markdown: ${directParsed.files.length} files`);
+                return directParsed as CodeChanges;
+              }
+            } catch {
+              // Continue with text extraction
+            }
+
+            // Try extracting from the unescaped text
+            result = parseCodeChangesFromText(extractedJson, attemptedStrategies);
+            if (result) {
+              logger.debug(`[JsonParser] Extracted CodeChanges from nested markdown via text parser: ${result.files.length} files`);
+              return result;
+            }
+          }
+
+          // Strategy B: Multiple passes to handle triple-escaped JSON (\\\\n -> \\n -> \n)
           // First pass: unescape \\n to newlines, \\" to quotes (for doubly-escaped content)
           if (resultText.includes('\\n') || resultText.includes('\\"')) {
             resultText = resultText.replace(/\\n/g, '\n').replace(/\\"/g, '"');
@@ -647,5 +681,183 @@ export function parseCodeChangesFromText(text: string, attemptedStrategies: stri
   }
 
   return null;
+}
+
+/**
+ * AI-Assisted JSON Extraction Fallback
+ *
+ * When all regex-based parsing strategies fail, use AI to extract
+ * CodeChanges from complex/nested response formats.
+ *
+ * This is a "medium-term" solution that provides reliability while
+ * the root cause (nested JSON formats) is addressed.
+ *
+ * @param response - The raw response that failed parsing
+ * @param execCommand - Function to execute AI command (injected to avoid circular deps)
+ * @param context - Parsing context for tracking
+ * @returns CodeChanges or null
+ */
+export async function extractCodeChangesWithAiFallback(
+  response: any,
+  execCommand: (prompt: string) => Promise<string>,
+  context?: JsonParsingContext
+): Promise<CodeChanges | null> {
+  // Only attempt AI fallback if response looks like it contains JSON-like content
+  const responseStr = typeof response === 'string'
+    ? response
+    : JSON.stringify(response);
+
+  // Quick check: must contain JSON indicators
+  const hasJsonIndicators =
+    responseStr.includes('"files"') ||
+    responseStr.includes('```json') ||
+    responseStr.includes('"path"') ||
+    responseStr.includes('"content"');
+
+  if (!hasJsonIndicators) {
+    logger.debug(`[JsonParser] AI fallback skipped: no JSON indicators in response`);
+    return null;
+  }
+
+  // Limit response size to avoid token waste
+  const truncatedResponse = responseStr.length > 12000
+    ? responseStr.substring(0, 12000) + '...[truncated]'
+    : responseStr;
+
+  const extractionPrompt = `You are a JSON extraction tool. Extract the CodeChanges structure from this AI response.
+
+The response may contain:
+- Nested JSON objects (response.text containing stringified JSON)
+- Markdown code blocks (\`\`\`json ... \`\`\`)
+- Escaped or double-escaped JSON (\\n, \\", etc.)
+- Narrative text before/after the JSON
+
+Find and return ONLY the valid JSON object with this EXACT structure:
+{
+  "files": [
+    {
+      "path": "path/to/file.ext",
+      "content": "file content here",
+      "operation": "create"
+    }
+  ],
+  "summary": "Description of changes"
+}
+
+CRITICAL RULES:
+1. Return ONLY the JSON object, no explanation
+2. If multiple JSON blocks exist, use the one with "files" array
+3. Properly unescape any escaped content
+4. If no valid CodeChanges found, return: {"files": [], "summary": "No code changes found"}
+
+Response to parse:
+${truncatedResponse}`;
+
+  try {
+    logger.info(`[JsonParser] Attempting AI-assisted extraction fallback`);
+
+    const aiResponse = await execCommand(extractionPrompt);
+
+    // Try to parse the AI response
+    if (aiResponse) {
+      // Extract JSON from AI response (may include markdown)
+      const jsonMatch = aiResponse.match(/\{[\s\S]*"files"[\s\S]*\}/);
+      if (jsonMatch) {
+        try {
+          const parsed = JSON.parse(jsonMatch[0]);
+          if (parsed.files && Array.isArray(parsed.files)) {
+            logger.info(`[JsonParser] AI fallback succeeded: ${parsed.files.length} files extracted`);
+
+            // Emit success event
+            emitEvent('json:ai_fallback_success', {
+              fileCount: parsed.files.length,
+              providerName: context?.providerName || 'unknown',
+              originalResponseLength: responseStr.length,
+            }, {
+              taskId: context?.taskId,
+              prdId: context?.prdId,
+              phaseId: context?.phaseId,
+              severity: 'info',
+            });
+
+            return parsed as CodeChanges;
+          }
+        } catch (parseError) {
+          logger.warn(`[JsonParser] AI fallback response not valid JSON: ${parseError}`);
+        }
+      }
+
+      // Try sanitization on AI response
+      const { sanitized } = sanitizeJsonString(aiResponse);
+      try {
+        const parsed = JSON.parse(sanitized);
+        if (parsed.files && Array.isArray(parsed.files)) {
+          logger.info(`[JsonParser] AI fallback succeeded after sanitization: ${parsed.files.length} files`);
+          return parsed as CodeChanges;
+        }
+      } catch {
+        // Continue
+      }
+    }
+
+    logger.warn(`[JsonParser] AI fallback did not return valid CodeChanges`);
+
+    // Emit failure event
+    emitEvent('json:ai_fallback_failed', {
+      providerName: context?.providerName || 'unknown',
+      originalResponseLength: responseStr.length,
+    }, {
+      taskId: context?.taskId,
+      prdId: context?.prdId,
+      phaseId: context?.phaseId,
+      severity: 'warn',
+    });
+
+  } catch (error) {
+    logger.error(`[JsonParser] AI fallback error: ${error}`);
+
+    emitEvent('json:ai_fallback_error', {
+      error: error instanceof Error ? error.message : String(error),
+      providerName: context?.providerName || 'unknown',
+    }, {
+      taskId: context?.taskId,
+      prdId: context?.prdId,
+      phaseId: context?.phaseId,
+      severity: 'error',
+    });
+  }
+
+  return null;
+}
+
+/**
+ * Check if a response is a candidate for AI fallback
+ *
+ * Returns true if:
+ * - Response contains JSON-like structures
+ * - Standard parsing has failed
+ * - Response is not obviously non-JSON
+ */
+export function shouldUseAiFallback(response: any): boolean {
+  if (!response) return false;
+
+  const responseStr = typeof response === 'string'
+    ? response
+    : JSON.stringify(response);
+
+  // Must have some JSON indicators
+  const hasJsonIndicators =
+    responseStr.includes('"files"') ||
+    responseStr.includes('```json') ||
+    (responseStr.includes('"path"') && responseStr.includes('"content"'));
+
+  // Must not be too short (likely error message)
+  const isSubstantial = responseStr.length > 100;
+
+  // Must not be obviously an error
+  const isNotError = !responseStr.toLowerCase().includes('error:') ||
+    responseStr.includes('"files"');
+
+  return hasJsonIndicators && isSubstantial && isNotError;
 }
 

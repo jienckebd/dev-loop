@@ -186,11 +186,11 @@ async function monitorEvents() {
   const { events } = await devloop_events_poll({
     sinceTimestamp: lastPollTime
   });
-  
+
   if (events.length > 0) {
     // Update poll time
     lastPollTime = events[events.length - 1].timestamp;
-    
+
     // Process events
     for (const event of events) {
       if (event.severity === 'error') {
@@ -210,16 +210,16 @@ setInterval(monitorEvents, 5000);
 async function checkBoundaryViolations() {
   // Check for filtered files
   const { filteredFiles } = await devloop_filtered_files();
-  
+
   if (filteredFiles.length > 0) {
     console.log('Files filtered due to boundary enforcement:');
     filteredFiles.forEach(f => console.log(`  - ${f}`));
   }
-  
+
   // Check for unauthorized changes
   const { issues } = await devloop_issues();
   const unauthorized = issues.filter(i => i.type === 'change:unauthorized');
-  
+
   if (unauthorized.length > 0) {
     console.log('Unauthorized changes detected and reverted:');
     unauthorized.forEach(i => console.log(`  - ${i.data.path}`));
@@ -233,10 +233,10 @@ async function checkBoundaryViolations() {
 async function checkBlockedTasks() {
   const { issues } = await devloop_issues();
   const blocked = issues.filter(i => i.type === 'task:blocked');
-  
+
   for (const event of blocked) {
     console.log(`Task ${event.data.taskId} is blocked: ${event.data.reason}`);
-    
+
     // Potentially reset the task
     // await devloop_reset({ taskId: event.data.taskId });
   }
@@ -256,7 +256,7 @@ sequenceDiagram
     WE->>ES: emit('file:filtered', data, 'warn')
     ES->>Buffer: push(event)
     Note over Buffer: Max 1000 events
-    
+
     Agent->>MCP: devloop_events_poll(since)
     MCP->>Buffer: getEvents(since)
     Buffer->>MCP: filtered events

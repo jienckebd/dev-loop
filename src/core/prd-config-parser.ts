@@ -1,7 +1,7 @@
 import * as fs from 'fs-extra';
 import * as path from 'path';
 import { parse as yamlParse } from 'yaml';
-import { Config, validateConfig } from '../config/schema';
+import { Config, validateConfig, ConfigOverlay, validateConfigOverlay } from '../config/schema';
 import { defaultConfig } from '../config/defaults';
 import { logger } from './logger';
 
@@ -47,6 +47,18 @@ export interface PrdMetadata {
       pattern?: string;
       parallel?: boolean;
       dependsOn?: number[];
+      status?: string;
+      deferredReason?: string;
+      note?: string;
+      file?: string;
+      checkpoint?: boolean;
+      validation?: {
+        after?: string[];
+        tests?: string[];
+        assertions?: string[];
+      };
+      // Phase-level config overlay (NEW)
+      config?: ConfigOverlay;
     }>;
     dependencies?: Record<string, string[]>;
   };
@@ -513,76 +525,35 @@ export class PrdConfigParser {
   /**
    * Merge PRD config overlay with base config
    *
-   * Performs deep merge, where PRD config values override base config values.
-   * Arrays are merged by appending PRD values to base values (unless they're
-   * explicitly replaced).
+   * Uses the hierarchical config merger which handles:
+   * - Deep merging for nested objects
+   * - Special array handling (concatenation for rules, searchDirs, etc.)
+   * - Validation of the merged config
+   *
+   * @deprecated Use mergeConfigHierarchy from config-merger.ts for full hierarchy support
    */
   mergeWithBaseConfig(baseConfig: Config, prdConfig: Partial<Config>): Config {
-    // Start with base config
-    const merged = JSON.parse(JSON.stringify(baseConfig)) as Config;
+    // Import the hierarchical merger
+    const { mergeConfigHierarchy } = require('./config-merger');
+    return mergeConfigHierarchy(baseConfig, undefined, undefined, prdConfig as ConfigOverlay, undefined);
+  }
 
-    // Deep merge function
-    const deepMerge = (target: any, source: any): any => {
-      if (source === null || source === undefined) {
-        return target;
-      }
-
-      if (typeof source !== 'object' || Array.isArray(source)) {
-        // For primitives and arrays, replace with source value
-        return source;
-      }
-
-      const result = { ...target };
-
-      for (const key in source) {
-        if (source.hasOwnProperty(key)) {
-          if (target[key] && typeof target[key] === 'object' && typeof source[key] === 'object' && !Array.isArray(target[key]) && !Array.isArray(source[key])) {
-            // Recursive merge for nested objects
-            result[key] = deepMerge(target[key], source[key]);
-          } else {
-            // Replace or set value
-            result[key] = source[key];
-          }
-        }
-      }
-
-      return result;
-    };
-
-    // Special handling for arrays that should be merged (not replaced)
-    // e.g., codebase.filePathPatterns, framework.rules
-    if (prdConfig.codebase?.filePathPatterns && merged.codebase?.filePathPatterns) {
-      // Merge arrays by appending (remove duplicates)
-      const existing = merged.codebase.filePathPatterns;
-      const newPatterns = prdConfig.codebase.filePathPatterns.filter(p => !existing.includes(p));
-      merged.codebase.filePathPatterns = [...existing, ...newPatterns];
-      delete prdConfig.codebase.filePathPatterns; // Remove from overlay to avoid double-merge
-    }
-
-    if (prdConfig.framework?.rules && merged.framework?.rules) {
-      // Merge framework rules arrays
-      const existing = merged.framework.rules;
-      const newRules = prdConfig.framework.rules.filter(r => !existing.includes(r));
-      merged.framework.rules = [...existing, ...newRules];
-      delete prdConfig.framework.rules;
-    }
-
-    if (prdConfig.codebase?.searchDirs && merged.codebase?.searchDirs) {
-      const existing = merged.codebase.searchDirs;
-      const newDirs = prdConfig.codebase.searchDirs.filter(d => !existing.includes(d));
-      merged.codebase.searchDirs = [...existing, ...newDirs];
-      delete prdConfig.codebase.searchDirs;
-    }
-
-    // Perform deep merge for remaining config
-    const finalMerged = deepMerge(merged, prdConfig) as Config;
-
-    // Validate the merged config
-    try {
-      return validateConfig(finalMerged);
-    } catch (error) {
-      logger.warn(`[PrdConfigParser] Merged config validation failed, using base config: ${error instanceof Error ? error.message : String(error)}`);
-      return baseConfig;
-    }
+  /**
+   * Merge PRD config with support for PRD set and phase configs
+   *
+   * @param baseConfig - Base project config
+   * @param prdSetConfig - PRD set config overlay (optional)
+   * @param prdConfig - PRD config overlay (optional)
+   * @param phaseConfig - Phase config overlay (optional)
+   * @returns Merged effective configuration
+   */
+  mergeWithHierarchy(
+    baseConfig: Config,
+    prdSetConfig?: ConfigOverlay,
+    prdConfig?: ConfigOverlay,
+    phaseConfig?: ConfigOverlay
+  ): Config {
+    const { mergeConfigHierarchy } = require('./config-merger');
+    return mergeConfigHierarchy(baseConfig, undefined, prdSetConfig, prdConfig, phaseConfig);
   }
 }

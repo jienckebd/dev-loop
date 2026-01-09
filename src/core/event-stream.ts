@@ -20,6 +20,9 @@ export type EventType =
   | 'json:parse_retry'
   | 'json:parse_success'
   | 'json:sanitized'
+  | 'json:ai_fallback_success'
+  | 'json:ai_fallback_failed'
+  | 'json:ai_fallback_error'
   // File filtering
   | 'file:filtered'
   | 'file:filtered_predictive'
@@ -240,7 +243,10 @@ class EventStreamImpl {
       e.type === 'json:parse_failed' ||
       e.type === 'json:parse_retry' ||
       e.type === 'json:parse_success' ||
-      e.type === 'json:sanitized'
+      e.type === 'json:sanitized' ||
+      e.type === 'json:ai_fallback_success' ||
+      e.type === 'json:ai_fallback_failed' ||
+      e.type === 'json:ai_fallback_error'
     );
   }
 

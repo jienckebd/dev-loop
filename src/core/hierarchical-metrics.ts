@@ -9,12 +9,15 @@
  */
 
 import { RunMetrics } from './debug-metrics';
+import type { ConfigOverlay } from '../config/schema';
 
 // PRD Set Level
 export interface PrdSetMetadata {
   setId: string;
   prdPaths: string[];
   startTime?: string;
+  // Config overlay for the entire PRD set (merged with project config)
+  configOverlay?: ConfigOverlay;
 }
 
 export interface PrdSetMetricsData {
@@ -59,8 +62,15 @@ export interface PrdMetadata {
   prdId: string;
   prdVersion: string;
   prdPath: string;
-  phases?: Array<{ id: number; name: string }>;
+  phases?: Array<{
+    id: number;
+    name: string;
+    // Phase-level config overlay (merged with PRD config)
+    config?: ConfigOverlay;
+  }>;
   features?: string[];
+  // PRD-level config overlay (merged with PRD set config)
+  configOverlay?: ConfigOverlay;
 }
 
 export interface FeatureMetrics {
@@ -207,5 +217,7 @@ export interface PhaseMetricsData {
     failing: number;
   };
   parallel: boolean; // Whether phase executed in parallel
+  // Phase-level config overlay (merged with PRD config)
+  configOverlay?: ConfigOverlay;
 }
 

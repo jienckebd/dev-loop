@@ -2,6 +2,7 @@ import chalk from 'chalk';
 import * as fs from 'fs-extra';
 import * as path from 'path';
 import { parse as parseYaml } from 'yaml';
+import { validateConfigOverlay, ConfigOverlay } from '../../config/schema';
 
 interface ValidationResult {
   errors: string[];
@@ -16,6 +17,7 @@ interface Phase {
   status?: string;
   deferredReason?: string;
   note?: string;
+  config?: ConfigOverlay;
 }
 
 interface Frontmatter {
@@ -34,6 +36,7 @@ interface Frontmatter {
   testing?: {
     directory?: string;
   };
+  config?: ConfigOverlay;
 }
 
 /**
@@ -273,6 +276,43 @@ function validatePhases(phases: Phase[]): ValidationResult {
     errors.push(`Circular dependencies detected: ${circular.join(', ')}`);
   }
 
+  // Validate phase config overlays
+  for (const phase of phases) {
+    if (phase.config) {
+      const configValidation = validateConfigOverlay(phase.config, 'phase');
+      if (!configValidation.valid) {
+        for (const err of configValidation.errors) {
+          errors.push(`Phase ${phase.id} config: ${err}`);
+        }
+      }
+      for (const warn of configValidation.warnings) {
+        warnings.push(`Phase ${phase.id} config: ${warn}`);
+      }
+    }
+  }
+
+  return { errors, warnings };
+}
+
+/**
+ * Validate PRD config overlay
+ */
+function validatePrdConfig(frontmatter: Frontmatter): ValidationResult {
+  const errors: string[] = [];
+  const warnings: string[] = [];
+
+  if (frontmatter.config) {
+    const configValidation = validateConfigOverlay(frontmatter.config, 'prd');
+    if (!configValidation.valid) {
+      for (const err of configValidation.errors) {
+        errors.push(`PRD config: ${err}`);
+      }
+    }
+    for (const warn of configValidation.warnings) {
+      warnings.push(`PRD config: ${warn}`);
+    }
+  }
+
   return { errors, warnings };
 }
 
@@ -309,9 +349,13 @@ export async function validatePrdCommand(options: {
       phaseWarnings = phaseValidation.warnings;
     }
 
+    // Validate PRD config overlay
+    const { errors: configErrors, warnings: configWarnings } =
+      validatePrdConfig(frontmatter);
+
     // Combine all errors and warnings
-    const allErrors = [...reqErrors, ...phaseErrors];
-    const allWarnings = [...reqWarnings, ...phaseWarnings];
+    const allErrors = [...reqErrors, ...phaseErrors, ...configErrors];
+    const allWarnings = [...reqWarnings, ...phaseWarnings, ...configWarnings];
 
     // Report results
     if (allErrors.length === 0 && allWarnings.length === 0) {

@@ -1458,15 +1458,158 @@ When the schema changes:
 
 ---
 
+## Hierarchical Configuration Overlays (v1.3)
+
+Dev-loop supports a hierarchical configuration system where config can be defined at multiple levels and merged together. Later levels override earlier levels.
+
+### Merge Hierarchy
+
+```
+Project Config (devloop.config.js)
+    ↓ merge
+Framework Config (framework section)
+    ↓ merge
+PRD Set Config (prd-set-config.json)
+    ↓ merge
+PRD Config (frontmatter config:)
+    ↓ merge
+Phase Config (phases[].config:)
+    ↓
+Effective Config (used for execution)
+```
+
+### ConfigOverlay Schema
+
+At PRD set, PRD, and phase levels, configuration uses a flexible overlay schema that allows overriding any base config keys:
+
+```yaml
+# ConfigOverlay - can override any Config section
+ai:
+  provider: "cursor"  # Override AI provider
+  model: "claude-sonnet-4-20250514"
+testing:
+  timeout: 300000     # Override test timeout
+codebase:
+  searchDirs:
+    - "docroot/modules/share/my_module"  # Add to search dirs
+framework:
+  rules:
+    - "Custom rule for this context"  # Add framework rules
+```
+
+### PRD Set Config
+
+PRD sets can define config overlays that apply to all PRDs in the set.
+
+**Location:** `.taskmaster/planning/{set-id}/prd-set-config.json` or `prd-set-config.yml`
+
+**Example:**
+```json
+{
+  "ai": {
+    "model": "claude-sonnet-4-20250514"
+  },
+  "framework": {
+    "rules": ["PRD set specific rule"]
+  },
+  "testing": {
+    "timeout": 300000
+  }
+}
+```
+
+### PRD Config
+
+PRDs can define config overlays in frontmatter:
+
+```yaml
+---
+prd:
+  id: my_prd
+  version: 1.0.0
+  status: ready
+
+# Config overlay for this PRD
+config:
+  testing:
+    timeout: 600000
+  codebase:
+    searchDirs:
+      - "docroot/modules/share/my_module"
+---
+```
+
+### Phase Config
+
+Individual phases can define config overlays:
+
+```yaml
+requirements:
+  phases:
+    - id: 1
+      name: "Phase 1"
+      # Phase config overlay
+      config:
+        testing:
+          timeout: 900000  # Longer timeout for this phase
+        codebase:
+          searchDirs:
+            - "docroot/modules/share/phase1_module"
+    - id: 2
+      name: "Phase 2"
+      config:
+        ai:
+          maxTokens: 16000  # More tokens for complex phase
+```
+
+### Array Merge Behavior
+
+By default, arrays in overlays **replace** base arrays. However, certain arrays are **concatenated**:
+
+| Array Path | Behavior | Description |
+|------------|----------|-------------|
+| `framework.rules` | Concatenate | Framework rules are appended |
+| `codebase.searchDirs` | Concatenate | Search directories are appended |
+| `codebase.excludeDirs` | Concatenate | Exclude directories are appended |
+| `codebase.ignoreGlobs` | Concatenate | Ignore patterns are appended |
+| `hooks.preTest` | Concatenate | Pre-test hooks are appended |
+| `hooks.postApply` | Concatenate | Post-apply hooks are appended |
+| All other arrays | Replace | Overlay value replaces base value |
+
+### Use Cases
+
+1. **Override AI model for a PRD set**: Different model for different projects
+2. **Override test timeout for complex phases**: Some phases need longer timeouts
+3. **Add search directories for specific phases**: Focus context on relevant code
+4. **Add framework rules for specific PRDs**: PRD-specific guidance for AI
+
+### Validation
+
+Config overlays are validated against the ConfigOverlay schema. Unknown keys are allowed (via passthrough) but generate warnings for potential typos.
+
+```bash
+# Validate PRD config overlay
+dev-loop validate-prd <prd-path>
+
+# Validate config at specific level
+dev-loop validate-config --level prd --prd <prd-path>
+dev-loop validate-config --level prd-set --prd-set <set-id>
+dev-loop validate-config --level phase --prd <prd-path> --phase <phase-id>
+```
+
+---
+
 ## Integration with devloop.config.js
 
-PRD frontmatter `config` sections are **merged** into `devloop.config.js` at runtime:
+PRD frontmatter `config` sections are **merged** into `devloop.config.js` at runtime using the hierarchical config merger:
 
-1. Base config from `devloop.config.js`
-2. Framework plugin default config
-3. PRD `config.framework` (overrides framework defaults)
-4. PRD `config.[prdId]` (PRD-specific config)
-5. PRD `config.contextFiles` (context management)
+1. Base config from `devloop.config.js` (strict schema validation)
+2. Framework config (extracted from base, strict schema)
+3. PRD Set config overlay (flexible, from `prd-set-config.json`)
+4. PRD config overlay (flexible, from frontmatter `config:`)
+5. Phase config overlay (flexible, from `requirements.phases[].config`)
+
+Each level merges into the previous, with later levels overriding earlier values. See above for array merge behavior.
 
 See [`PRD_FEATURES.md`](PRD_FEATURES.md) for details on leveraging config sections.
 

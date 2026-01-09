@@ -288,19 +288,52 @@ Extract ALL requirements from the PRD. Include functional requirements, non-func
         codebaseContext: '',
       });
 
-      // Parse the response - it should be JSON
-      const jsonMatch = response.files?.[0]?.content?.match(/\[[\s\S]*\]/);
-      if (jsonMatch) {
-        const requirements = JSON.parse(jsonMatch[0]) as Requirement[];
+      // Parse the response - try multiple extraction strategies
+      let jsonText: string | undefined;
+      const rawResponse = response as any; // Response may contain additional fields
 
-        // Validate and set default status
-        return requirements.map(req => ({
-          ...req,
-          status: 'pending' as const,
-          acceptanceCriteria: Array.isArray(req.acceptanceCriteria)
-            ? req.acceptanceCriteria
-            : [req.acceptanceCriteria || 'Requirement must be testable'],
-        }));
+      // Strategy 1: Check files[0].content (standard CodeChanges format)
+      if (response.files?.[0]?.content) {
+        jsonText = response.files[0].content;
+      }
+
+      // Strategy 2: Check text field (raw AI response)
+      if (!jsonText && rawResponse.text) {
+        jsonText = rawResponse.text;
+      }
+
+      // Strategy 3: Check for stringified JSON in response
+      if (!jsonText && typeof rawResponse === 'string') {
+        jsonText = rawResponse;
+      }
+
+      // Try to find JSON array in the text
+      if (jsonText) {
+        // First try to extract from ```json code block
+        const codeBlockMatch = jsonText.match(/```json\s*([\s\S]*?)```/);
+        if (codeBlockMatch) {
+          jsonText = codeBlockMatch[1];
+        }
+
+        const jsonMatch = jsonText.match(/\[[\s\S]*\]/);
+        if (jsonMatch) {
+          try {
+            const requirements = JSON.parse(jsonMatch[0]) as Requirement[];
+
+            // Validate and set default status
+            return requirements.map(req => ({
+              ...req,
+              status: 'pending' as const,
+              acceptanceCriteria: Array.isArray(req.acceptanceCriteria)
+                ? req.acceptanceCriteria
+                : [req.acceptanceCriteria || 'Requirement must be testable'],
+            }));
+          } catch (parseError) {
+            if (this.debug) {
+              console.error('[PrdParser] Failed to parse JSON array:', parseError);
+            }
+          }
+        }
       }
 
       // Fallback: try to extract from summary or full response

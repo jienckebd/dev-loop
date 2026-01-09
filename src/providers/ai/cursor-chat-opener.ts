@@ -817,8 +817,34 @@ export class CursorChatOpener {
                   // Handle Cursor agent --print response format
                   // Format: {"type":"result","result":"...","session_id":"...","request_id":"..."}
                   if (parsed.type === 'result' && parsed.result) {
-                    // The actual response is in the 'result' field
-                    parsedResponse = { text: parsed.result, raw: parsed };
+                    // Try to recursively parse the result field to handle nested JSON escaping
+                    let resultContent = parsed.result;
+
+                    // Strategy: If result is a stringified JSON object, parse it recursively
+                    if (typeof resultContent === 'string') {
+                      try {
+                        const innerParsed = JSON.parse(resultContent);
+                        // If it's another result object, recurse one more level
+                        if (innerParsed.type === 'result' && innerParsed.result) {
+                          resultContent = typeof innerParsed.result === 'string'
+                            ? innerParsed.result
+                            : innerParsed.result;
+                          logger.debug(`[CursorChatOpener] Recursively unwrapped nested result object`);
+                        } else if (innerParsed.files && innerParsed.summary) {
+                          // It's a CodeChanges object directly
+                          resultContent = innerParsed;
+                          logger.debug(`[CursorChatOpener] Extracted CodeChanges from nested JSON`);
+                        } else {
+                          // It's some other parsed content
+                          resultContent = innerParsed;
+                        }
+                      } catch {
+                        // Not JSON, continue with original string - will be parsed downstream
+                      }
+                    }
+
+                    // The actual response is in the 'result' field (potentially unwrapped)
+                    parsedResponse = { text: resultContent, raw: parsed };
                   } else {
                     parsedResponse = parsed;
                   }

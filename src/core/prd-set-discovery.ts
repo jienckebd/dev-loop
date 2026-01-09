@@ -1,9 +1,11 @@
 import * as fs from 'fs-extra';
 import * as path from 'path';
+import { parse as yamlParse } from 'yaml';
 import { PrdManifestParser, PrdSetManifest } from './prd-manifest-parser';
 import { PrdConfigParser, PrdMetadata } from './prd-config-parser';
 import { PrdSet } from './prd-coordinator';
 import { logger } from './logger';
+import { ConfigOverlay, validateConfigOverlay } from '../config/schema';
 
 export interface DiscoveredPrdSet {
   setId: string;
@@ -11,6 +13,8 @@ export interface DiscoveredPrdSet {
   directory: string;
   manifest: PrdSetManifest;
   prdSet: PrdSet;
+  // Config overlay for the entire PRD set (loaded from prd-set-config.json or YAML frontmatter)
+  configOverlay?: ConfigOverlay;
 }
 
 /**
@@ -95,13 +99,74 @@ export class PrdSetDiscovery {
       ],
     };
 
+    // Load PRD set config overlay if available
+    const configOverlay = await this.loadPrdSetConfig(directory);
+
     return {
       setId: manifest.parentPrd.id,
       indexPath,
       directory,
       manifest,
       prdSet,
+      configOverlay,
     };
+  }
+
+  /**
+   * Load PRD set config overlay from prd-set-config.json or prd-set-config.yml
+   */
+  private async loadPrdSetConfig(directory: string): Promise<ConfigOverlay | undefined> {
+    // Try JSON config first
+    const jsonConfigPath = path.join(directory, 'prd-set-config.json');
+    if (await fs.pathExists(jsonConfigPath)) {
+      try {
+        const content = await fs.readFile(jsonConfigPath, 'utf-8');
+        const config = JSON.parse(content);
+
+        // Validate the config overlay
+        const validation = validateConfigOverlay(config, 'prd-set');
+        if (!validation.valid) {
+          logger.warn(`[PrdSetDiscovery] PRD set config validation errors: ${validation.errors.join(', ')}`);
+        }
+        if (validation.warnings.length > 0) {
+          logger.debug(`[PrdSetDiscovery] PRD set config warnings: ${validation.warnings.join(', ')}`);
+        }
+
+        if (this.debug) {
+          logger.debug(`[PrdSetDiscovery] Loaded PRD set config from ${jsonConfigPath}`);
+        }
+        return config as ConfigOverlay;
+      } catch (error) {
+        logger.warn(`[PrdSetDiscovery] Failed to parse PRD set config: ${error instanceof Error ? error.message : String(error)}`);
+      }
+    }
+
+    // Try YAML config
+    const yamlConfigPath = path.join(directory, 'prd-set-config.yml');
+    if (await fs.pathExists(yamlConfigPath)) {
+      try {
+        const content = await fs.readFile(yamlConfigPath, 'utf-8');
+        const config = yamlParse(content);
+
+        // Validate the config overlay
+        const validation = validateConfigOverlay(config, 'prd-set');
+        if (!validation.valid) {
+          logger.warn(`[PrdSetDiscovery] PRD set config validation errors: ${validation.errors.join(', ')}`);
+        }
+        if (validation.warnings.length > 0) {
+          logger.debug(`[PrdSetDiscovery] PRD set config warnings: ${validation.warnings.join(', ')}`);
+        }
+
+        if (this.debug) {
+          logger.debug(`[PrdSetDiscovery] Loaded PRD set config from ${yamlConfigPath}`);
+        }
+        return config as ConfigOverlay;
+      } catch (error) {
+        logger.warn(`[PrdSetDiscovery] Failed to parse PRD set YAML config: ${error instanceof Error ? error.message : String(error)}`);
+      }
+    }
+
+    return undefined;
   }
 
   /**
@@ -189,6 +254,9 @@ export class PrdSetDiscovery {
       })),
     };
 
+    // Load PRD set config overlay if available
+    const configOverlay = await this.loadPrdSetConfig(dir);
+
     // Use parent PRD path as index path (even though it might not be named index.md.yml)
     return {
       setId: parentPrd.id,
@@ -196,6 +264,7 @@ export class PrdSetDiscovery {
       directory: dir,
       manifest,
       prdSet,
+      configOverlay,
     };
   }
 
