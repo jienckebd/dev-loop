@@ -2,7 +2,7 @@ import * as fs from 'fs-extra';
 import { AIProvider } from '../../../providers/ai/interface';
 import { Requirement } from '../coordination/context';
 import { PrdConfigParser } from './config-parser';
-import { Config } from '../../../config/schema';
+import { Config } from '../../../config/schema/core';
 
 export class PrdParser {
   private configParser: PrdConfigParser;

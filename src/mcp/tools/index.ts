@@ -1,4 +1,4 @@
-import { Config } from '../../config/schema';
+import { Config } from '../../config/schema/core';
 
 // Use 'any' type for FastMCP since it's dynamically imported
 export type FastMCPType = any;

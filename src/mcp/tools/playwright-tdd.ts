@@ -11,9 +11,9 @@
 import * as path from 'path';
 import * as fs from 'fs-extra';
 import { z } from 'zod';
-import { Config } from '../../config/schema';
-import { PlaywrightMCPIntegration, TestSpec } from '../../core/playwright-mcp-integration';
-import { Requirement } from '../../core/prd-context';
+import { Config } from '../../config/schema/core';
+import { PlaywrightMCPIntegration, TestSpec } from '../../core/utils/playwright-mcp-integration';
+import { Requirement } from '../../core/prd/coordination/context';
 
 // Tool schemas
 const writeTestSchema = z.object({

@@ -256,4 +256,3 @@ export interface ChatInstruction {
   /** CLI command for manual execution (e.g., "cursor agent '<question>'") */
   cliCommand?: string;
 }
-

@@ -2,7 +2,7 @@ import * as fs from 'fs-extra';
 import * as path from 'path';
 import { TaskMasterBridge } from '../execution/task-bridge';
 import { TestRunnerFactory } from '../../providers/test-runners/factory';
-import { Config } from '../../config/schema';
+import { Config } from '../../config/schema/core';
 
 export interface PrdCompletionStatus {
   totalTasks: number;

@@ -4,7 +4,7 @@
  */
 
 import { z } from 'zod';
-import { MetricsAnalyzer } from '../../core/metrics-analyzer';
+import { MetricsAnalyzer } from '../../core/metrics/analyzer';
 import { PrdSetMetrics } from "../../core/metrics/prd-set";
 import { PrdMetrics } from "../../core/metrics/prd";
 

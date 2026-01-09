@@ -1,6 +1,6 @@
 import inquirer from 'inquirer';
 import chalk from 'chalk';
-import { Config } from '../../config/schema';
+import { Config } from '../../config/schema/core';
 import { CodeChanges } from '../../types';
 
 export interface ApprovalResult {

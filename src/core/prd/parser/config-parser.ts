@@ -1,7 +1,9 @@
 import * as fs from 'fs-extra';
 import * as path from 'path';
 import { parse as yamlParse } from 'yaml';
-import { Config, validateConfig, ConfigOverlay, validateConfigOverlay } from '../../../config/schema';
+import { Config } from '../../../config/schema/core';
+import { validateConfig, validateConfigOverlay } from '../../../config/schema/validation';
+import { ConfigOverlay } from '../../../config/schema/overlays';
 import { defaultConfig } from '../../../config/defaults';
 import { logger } from '../../utils/logger';
 

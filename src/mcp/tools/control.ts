@@ -4,7 +4,9 @@ import * as path from 'path';
 import { parse as parseYaml } from 'yaml';
 import { TaskMasterBridge } from "../../core/execution/task-bridge";
 import { ConfigLoader, FastMCPType } from './index';
-import { validateConfigOverlay, ConfigOverlay, frameworkConfigSchema, validateConfig } from '../../config/schema';
+import { validateConfigOverlay, validateConfig } from '../../config/schema/validation';
+import { ConfigOverlay } from '../../config/schema/overlays';
+import { frameworkConfigSchema } from '../../config/schema/framework';
 import { PrdConfigParser } from "../../core/prd/parser/config-parser";
 
 export function registerControlTools(mcp: FastMCPType, getConfig: ConfigLoader): void {

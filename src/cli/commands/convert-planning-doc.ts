@@ -6,7 +6,7 @@ import { parse as yamlParse, stringify as yamlStringify } from 'yaml';
 import { PlanningDocParser, ParsedPlanningDoc } from "../../core/prd/parser/planning-doc-parser";
 import { PrdSetGenerator } from "../../core/prd/set/generator";
 import { PrdSetDiscovery } from "../../core/prd/set/discovery";
-import { validateConfigOverlay } from '../../config/schema';
+import { validateConfigOverlay } from '../../config/schema/validation';
 import { logger } from "../../core/utils/logger";
 
 interface ConvertOptions {

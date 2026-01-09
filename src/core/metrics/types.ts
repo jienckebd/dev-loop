@@ -9,7 +9,7 @@
  */
 
 import { RunMetrics } from "./debug";
-import type { ConfigOverlay } from '../../config/schema';
+import type { ConfigOverlay } from '../../config/schema/overlays';
 
 // PRD Set Level
 export interface PrdSetMetadata {

@@ -1,4 +1,4 @@
-import { Config } from '../../config/schema';
+import { Config } from '../../config/schema/core';
 import { LogAnalyzer } from './interface';
 import { PatternMatcher } from './pattern-matcher';
 import { AILogAnalyzer } from './ai-analyzer';

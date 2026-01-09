@@ -4,7 +4,7 @@
  */
 
 import { z } from 'zod';
-import { ObservationAnalyzer, AnalyzerOptions } from '../../core/observation-analyzer';
+import { ObservationAnalyzer, AnalyzerOptions } from '../../core/analysis/observation-analyzer';
 
 const AnalyzerOptionsSchema = z.object({
   prdSetId: z.string().optional().describe('Filter by PRD set ID'),

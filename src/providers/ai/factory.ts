@@ -1,4 +1,4 @@
-import { Config } from '../../config/schema';
+import { Config } from '../../config/schema/core';
 import { AIProvider, AIProviderConfig } from './interface';
 import { AnthropicProvider } from './anthropic';
 import { OpenAIProvider } from './openai';

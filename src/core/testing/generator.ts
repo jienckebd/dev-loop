@@ -2,7 +2,7 @@ import * as fs from 'fs-extra';
 import * as path from 'path';
 import { AIProvider } from '../../providers/ai/interface';
 import { PrdContext, Requirement, TestState } from '../prd/coordination/context';
-import { Config } from '../../config/schema';
+import { Config } from '../../config/schema/core';
 
 export class TestGenerator {
   private testDir: string;

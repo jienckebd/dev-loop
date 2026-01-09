@@ -18,7 +18,7 @@ import { SemanticFileDiscovery } from '../../core/analysis/code/semantic-file-di
 import { ASTParser } from '../../core/analysis/code/ast-parser';
 import { EmbeddingService } from '../../ai/embedding-service';
 import { AbstractionDetector } from "../../core/analysis/code/abstraction-detector";
-import { Config } from '../../config/schema';
+import { Config } from '../../config/schema/core';
 
 // Tool schemas
 const queryImportsSchema = z.object({

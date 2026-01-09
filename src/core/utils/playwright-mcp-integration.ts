@@ -12,7 +12,7 @@ import * as fs from 'fs-extra';
 import * as path from 'path';
 import { TestGenerator } from '../testing/generator';
 import { AIProvider } from '../../providers/ai/interface';
-import { Config } from '../../config/schema';
+import { Config } from '../../config/schema/core';
 import { PrdContext, Requirement, TestState } from '../prd/coordination/context';
 
 export interface TestSpec {

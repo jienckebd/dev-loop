@@ -2,7 +2,8 @@ import chalk from 'chalk';
 import * as fs from 'fs-extra';
 import * as path from 'path';
 import { parse as parseYaml } from 'yaml';
-import { validateConfigOverlay, ConfigOverlay } from '../../config/schema';
+import { validateConfigOverlay } from '../../config/schema/validation';
+import { ConfigOverlay } from '../../config/schema/overlays';
 
 interface ValidationResult {
   errors: string[];

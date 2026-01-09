@@ -4,7 +4,7 @@
  */
 
 import { z } from 'zod';
-import { getEventStream, EventType, EventSeverity } from '../../core/event-stream';
+import { getEventStream, EventType, EventSeverity } from '../../core/utils/event-stream';
 
 /**
  * Schema for event poll parameters

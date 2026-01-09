@@ -1,4 +1,5 @@
-import { Config, ConfigOverlay } from '../../../config/schema';
+import { Config } from '../../../config/schema/core';
+import { ConfigOverlay } from '../../../config/schema/overlays';
 import { WorkflowEngine, PrdExecutionResult } from '../../execution/workflow';
 import { PrdSet } from '../coordination/coordinator';
 import { DiscoveredPrdSet } from './discovery';

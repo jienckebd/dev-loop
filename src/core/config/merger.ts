@@ -8,7 +8,9 @@
  * Special handling for arrays that should be concatenated vs replaced.
  */
 
-import { Config, ConfigOverlay, validateConfig } from '../../config/schema';
+import { Config } from '../../config/schema/core';
+import { ConfigOverlay } from '../../config/schema/overlays';
+import { validateConfig } from '../../config/schema/validation';
 import { logger } from '../utils/logger';
 
 /**

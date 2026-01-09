@@ -2,7 +2,7 @@ import * as fs from 'fs-extra';
 import * as path from 'path';
 import * as os from 'os';
 import * as yaml from 'yaml';
-import { Config } from '../../config/schema';
+import { Config } from '../../config/schema/core';
 import { WorkflowState, Task } from '../../types';
 
 // Simple in-memory lock to prevent concurrent writes from same process

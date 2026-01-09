@@ -3,7 +3,7 @@ import * as path from 'path';
 import chalk from 'chalk';
 import ora from 'ora';
 import { promptInitConfig } from '../prompts';
-import { Config } from '../../config/schema';
+import { Config } from '../../config/schema/core';
 
 export async function initCommand(options: { template?: string }): Promise<void> {
   const spinner = ora('Initializing dev-loop configuration').start();

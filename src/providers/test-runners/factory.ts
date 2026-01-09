@@ -1,4 +1,4 @@
-import { Config } from '../../config/schema';
+import { Config } from '../../config/schema/core';
 import { TestRunner } from './interface';
 import { PlaywrightRunner } from './playwright';
 import { CypressRunner } from './cypress';

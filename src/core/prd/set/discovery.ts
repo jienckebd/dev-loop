@@ -5,7 +5,8 @@ import { PrdManifestParser, PrdSetManifest } from '../parser/manifest-parser';
 import { PrdConfigParser, PrdMetadata } from '../parser/config-parser';
 import { PrdSet } from '../coordination/coordinator';
 import { logger } from '../../utils/logger';
-import { ConfigOverlay, validateConfigOverlay } from '../../../config/schema';
+import { validateConfigOverlay } from '../../../config/schema/validation';
+import { ConfigOverlay } from '../../../config/schema/overlays';
 
 export interface DiscoveredPrdSet {
   setId: string;

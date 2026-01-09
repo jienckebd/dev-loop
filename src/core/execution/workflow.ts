@@ -2,7 +2,7 @@ import * as fs from 'fs-extra';
 import * as path from 'path';
 import { exec } from 'child_process';
 import { promisify } from 'util';
-import { Config } from '../../config/schema';
+import { Config } from '../../config/schema/core';
 import { Task, WorkflowState, CodeChanges, TaskContext } from '../../types';
 import { TaskMasterBridge } from './task-bridge';
 import { StateManager } from '../utils/state-manager';

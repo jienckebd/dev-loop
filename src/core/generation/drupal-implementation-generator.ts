@@ -1,7 +1,7 @@
 import * as fs from 'fs-extra';
 import * as path from 'path';
 import { AIProvider } from '../../providers/ai/interface';
-import { Config } from '../../config/schema';
+import { Config } from '../../config/schema/core';
 import { PrdContext, Requirement } from '../prd/coordination/context';
 import { CodeChanges } from '../../types';
 import { logger } from '../utils/logger';

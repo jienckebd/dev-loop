@@ -30,7 +30,7 @@ import {
   createDefaultTimingBreakdown,
   createDefaultTokenBreakdown,
 } from "./types";
-import type { ConfigOverlay } from '../../config/schema';
+import type { ConfigOverlay } from '../../config/schema/overlays';
 import { logger } from '../utils/logger';
 
 export interface PrdSetMetadata {
