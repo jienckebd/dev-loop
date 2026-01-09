@@ -131,12 +131,12 @@ export class WorkflowEngine {
 
     // Initialize validation infrastructure
     try {
-      const { ValidationScriptExecutor } = require('./validation-script-executor');
-      const { AssertionValidatorRegistry } = require('./assertion-validators');
-      const { ValidationGateExecutor } = require('./validation-gate-executor');
-      const { PrerequisiteValidator } = require('./prerequisite-validator');
-      const { TestDataManager } = require('./test-data-manager');
-      const { TestSpecExecutor } = require('./test-spec-executor');
+      const { ValidationScriptExecutor } = require('../validation/script-executor');
+      const { AssertionValidatorRegistry } = require('../validation/assertion-validators');
+      const { ValidationGateExecutor } = require('../validation/gate-executor');
+      const { PrerequisiteValidator } = require('../validation/prerequisite-validator');
+      const { TestDataManager } = require('../testing/data');
+      const { TestSpecExecutor } = require('../testing/spec-executor');
 
       const scriptExecutor = new ValidationScriptExecutor(this.debug);
       const assertionRegistry = new AssertionValidatorRegistry(scriptExecutor, this.debug);
@@ -198,7 +198,7 @@ export class WorkflowEngine {
     // Initialize observation tracking if enabled (for evolution mode)
     if ((config as any).evolution?.enabled !== false) {
       try {
-        const { ObservationTracker } = require('./observation-tracker');
+        const { ObservationTracker } = require('../tracking/observation-tracker');
         const { ImprovementSuggester } = require('./improvement-suggester');
         this.observationTracker = new ObservationTracker('.devloop/observations.json', this.debug);
         this.improvementSuggester = new ImprovementSuggester(this.debug);
@@ -211,12 +211,12 @@ export class WorkflowEngine {
 
     // Initialize complex issue analyzers
     try {
-      const { FrameworkPatternLibrary } = require('./framework-pattern-library');
-      const { DebuggingStrategyAdvisor } = require('./debugging-strategy-advisor');
-      const { InvestigationTaskGenerator } = require('./investigation-task-generator');
-      const { ExecutionOrderAnalyzer } = require('./execution-order-analyzer');
-      const { ComponentInteractionAnalyzer } = require('./component-interaction-analyzer');
-      const { RootCauseAnalyzer } = require('./root-cause-analyzer');
+      const { FrameworkPatternLibrary } = require('../analysis/pattern/framework-pattern-library');
+      const { DebuggingStrategyAdvisor } = require('../analysis/code/debugging-strategy-advisor');
+      const { InvestigationTaskGenerator } = require('../generation/investigation-task-generator');
+      const { ExecutionOrderAnalyzer } = require('../analysis/code/execution-order-analyzer');
+      const { ComponentInteractionAnalyzer } = require('../analysis/code/component-interaction-analyzer');
+      const { RootCauseAnalyzer } = require('../analysis/error/root-cause-analyzer');
 
       this.frameworkPatternLibrary = new FrameworkPatternLibrary();
       this.debuggingStrategyAdvisor = new DebuggingStrategyAdvisor(this.frameworkPatternLibrary, this.debug);
