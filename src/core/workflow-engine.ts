@@ -28,6 +28,7 @@ import { TestResultsTracker } from './test-results-tracker';
 import { ErrorAnalyzer } from './error-analyzer';
 import { CostCalculator } from './cost-calculator';
 import { getParallelMetricsTracker } from './parallel-metrics';
+import { emitEvent, getEventStream } from './event-stream';
 import { RunMetrics } from './debug-metrics';
 import { logger } from './logger';
 import { PrdContextManager, PrdContext, Requirement } from './prd-context';
@@ -859,6 +860,43 @@ export class WorkflowEngine {
         logger.debug(`AI summary: ${changes.summary}`);
       }
 
+      // CRITICAL: Filter out files outside target module BEFORE any validation
+      // This prevents AI from modifying files in other modules (e.g., bd/ when target is bd_agent_chat_test/)
+      const targetModule = (this as any).currentPrdTargetModule;
+      if (targetModule && changes.files && changes.files.length > 0) {
+        const originalCount = changes.files.length;
+        const filteredFiles: string[] = [];
+        
+        changes.files = changes.files.filter(file => {
+          const allowed = this.isFileInTargetModule(file.path, targetModule);
+          if (!allowed) {
+            filteredFiles.push(file.path);
+            console.warn(`[WorkflowEngine] FILTERED: ${file.path} (outside target module ${targetModule})`);
+            
+            // Emit event for each filtered file
+            emitEvent('file:filtered', {
+              path: file.path,
+              targetModule,
+              reason: 'outside target module',
+              operation: file.operation,
+            }, {
+              severity: 'warn',
+              taskId: task.id,
+              prdId: (this as any).currentPrdId,
+              phaseId: (this as any).currentPhaseId,
+              targetModule,
+            });
+          }
+          return allowed;
+        });
+        
+        if (filteredFiles.length > 0) {
+          console.warn(`[WorkflowEngine] Filtered ${filteredFiles.length} file(s) outside target module ${targetModule}`);
+          // Update summary to reflect filtering
+          changes.summary = `${changes.summary || ''} [FILTERED: ${filteredFiles.length} files outside target module]`;
+        }
+      }
+
       // NEW: Validate that required files from task details were actually created
       // This catches cases where AI says "no changes needed" but the required file doesn't exist
       if (changes.files?.length === 0) {
@@ -985,6 +1023,22 @@ export class WorkflowEngine {
           for (const error of validationResult.errors) {
             logger.error(`  - ${error.type}: ${error.message}`);
           }
+
+          // Emit validation failed event
+          emitEvent('validation:failed', {
+            errors: validationResult.errors.map(e => ({
+              type: e.type,
+              message: e.message,
+              file: e.file,
+            })),
+            errorCount: validationResult.errors.length,
+          }, {
+            severity: 'error',
+            taskId: task.id,
+            prdId: (this as any).currentPrdId,
+            phaseId: (this as any).currentPhaseId,
+            targetModule: (this as any).currentPrdTargetModule,
+          });
 
           // Record patterns for learning
           for (const error of validationResult.errors) {
@@ -1692,7 +1746,7 @@ export class WorkflowEngine {
   private async applyChanges(changes: CodeChanges): Promise<{ success: boolean; failedPatches: string[]; skippedPatches: string[] }> {
     const failedPatches: string[] = [];
     const skippedPatches: string[] = [];
-    
+
     // CRITICAL FIX: Get target module and enforce boundaries
     const targetModule = (this as any).currentPrdTargetModule;
 
@@ -1706,7 +1760,7 @@ export class WorkflowEngine {
                                    file.path.includes(`modules/${targetModule}`);
         const isTestFile = file.path.includes('tests/playwright') && file.path.includes(targetModule);
         const isConfigFile = file.path.includes('config/') && file.path.includes(targetModule);
-        
+
         if (!isTargetModuleFile && !isTestFile && !isConfigFile) {
           const skipMsg = `TARGET_MODULE_BOUNDARY: ${file.path} is outside target module ${targetModule} - skipping to protect codebase`;
           console.warn(`[WorkflowEngine] ${skipMsg}`);
@@ -1906,36 +1960,47 @@ export class WorkflowEngine {
     try {
       // Get list of all modified/added files via git
       const { stdout: statusOutput } = await execAsync('git status --porcelain', { maxBuffer: 1024 * 1024 });
-      
+
       if (!statusOutput.trim()) {
         return { revertedFiles, errors }; // No changes
       }
 
       const lines = statusOutput.trim().split('\n');
-      
+
       for (const line of lines) {
         // Parse git status output: first 2 chars are status, rest is path
         const status = line.substring(0, 2).trim();
         const filePath = line.substring(3).trim();
-        
+
         // Skip if this is a new untracked file in the target module (allow creation)
         if (status === '??' && this.isFileInTargetModule(filePath, targetModule)) {
           continue;
         }
-        
+
         // Skip if this is a modification in the target module
         if (this.isFileInTargetModule(filePath, targetModule)) {
           continue;
         }
-        
+
         // Skip dev-loop internal files
         if (filePath.startsWith('.devloop/') || filePath.startsWith('.cursor/')) {
           continue;
         }
-        
+
         // This file is OUTSIDE the target module - unauthorized change!
         console.warn(`[WorkflowEngine] Detected unauthorized change: ${filePath} (outside ${targetModule})`);
         
+        // Emit event for unauthorized change
+        emitEvent('change:unauthorized', {
+          path: filePath,
+          targetModule,
+          status,
+        }, {
+          severity: 'warn',
+          targetModule,
+          prdId: (this as any).currentPrdId,
+        });
+
         try {
           if (status === '??') {
             // Untracked file - delete it
@@ -1953,6 +2018,17 @@ export class WorkflowEngine {
               console.log(`[WorkflowEngine] Reverted unauthorized change: ${filePath}`);
             }
           }
+          
+          // Emit event for reverted change
+          emitEvent('change:reverted', {
+            path: filePath,
+            targetModule,
+            action: status === '??' ? 'deleted' : 'reverted',
+          }, {
+            severity: 'info',
+            targetModule,
+            prdId: (this as any).currentPrdId,
+          });
         } catch (revertErr) {
           const errMsg = `Failed to revert ${filePath}: ${revertErr}`;
           errors.push(errMsg);
@@ -1971,22 +2047,22 @@ export class WorkflowEngine {
    */
   private isFileInTargetModule(filePath: string, targetModule: string): boolean {
     // Allow files in the module directory
-    if (filePath.includes(`modules/share/${targetModule}/`) || 
+    if (filePath.includes(`modules/share/${targetModule}/`) ||
         filePath.includes(`modules/${targetModule}/`)) {
       return true;
     }
-    
+
     // Allow test files for this module
     if (filePath.includes(`tests/playwright/${targetModule}/`) ||
         filePath.includes(`tests/${targetModule}/`)) {
       return true;
     }
-    
+
     // Allow module-specific config
     if (filePath.includes(`config/`) && filePath.includes(targetModule)) {
       return true;
     }
-    
+
     return false;
   }
 
@@ -2486,10 +2562,10 @@ export class WorkflowEngine {
         if (targetModule) {
           const isNodeModules = filePath.includes('node_modules');
           const isAbsoluteSystemPath = filePath.startsWith('/var/') || filePath.startsWith('/usr/');
-          const isOtherModule = filePath.includes('modules/share/') && 
+          const isOtherModule = filePath.includes('modules/share/') &&
                                !filePath.includes(`modules/share/${targetModule}`);
           const isPlaywrightLib = filePath.includes('playwright/lib/');
-          
+
           if (isNodeModules || isAbsoluteSystemPath || isOtherModule || isPlaywrightLib) {
             if (this.debug) {
               console.log(`[DEBUG] Skipping irrelevant file from error message: ${filePath}`);
@@ -2497,7 +2573,7 @@ export class WorkflowEngine {
             continue;
           }
         }
-        
+
         mentionedFiles.push(filePath);
         explicitlyMentionedFiles.push(filePath);
         if (this.debug) {

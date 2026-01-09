@@ -4,6 +4,7 @@ import { exec } from 'child_process';
 import { promisify } from 'util';
 import { Config } from '../config/schema';
 import { Task, TaskStatus } from '../types';
+import { emitEvent } from './event-stream';
 
 const execAsync = promisify(exec);
 
@@ -259,6 +260,19 @@ export class TaskMasterBridge {
     const retryCount = this.incrementRetryCount(originalTaskId);
     if (retryCount > this.maxRetries) {
       console.log(`[TaskBridge] Task ${originalTaskId} has exceeded max retries (${this.maxRetries}), marking as blocked`);
+      
+      // Emit task blocked event
+      emitEvent('task:blocked', {
+        taskId: originalTaskId,
+        reason: `Exceeded max retries (${this.maxRetries})`,
+        retryCount,
+        maxRetries: this.maxRetries,
+        lastError: errorDescription.substring(0, 500),
+      }, {
+        severity: 'error',
+        taskId: originalTaskId,
+      });
+      
       // Mark the task as blocked instead of creating another fix task
       await this.updateTaskStatus(originalTaskId, 'blocked' as TaskStatus);
       return null;

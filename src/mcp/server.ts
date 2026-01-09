@@ -11,6 +11,7 @@ import { registerContributionTools } from './tools/contribution';
 import { registerBackgroundAgentTools } from './tools/background-agent';
 import { registerCodebaseQueryTools } from './tools/codebase-query';
 import { registerPlaywrightTDDTools } from './tools/playwright-tdd';
+import { registerEventTools } from './tools/events';
 
 // Load .env file from project root before anything else
 // This ensures API keys are available when config loads
@@ -101,6 +102,7 @@ async function main() {
   // Register new enhancement tools (AST, codebase intelligence, Playwright TDD)
   registerCodebaseQueryTools(mcp, getConfig);
   registerPlaywrightTDDTools(mcp, getConfig);
+  registerEventTools(mcp);
 
   // Start the MCP server with stdio transport
   await mcp.start({ transportType: 'stdio' });
