@@ -5,14 +5,19 @@ import * as yaml from 'yaml';
 import { Config } from '../config/schema';
 import { WorkflowState, Task } from '../types';
 
+// Simple in-memory lock to prevent concurrent writes from same process
+const writeLocks: Map<string, Promise<void>> = new Map();
+
 export class StateManager {
   private stateFile: string;
   private tasksFile: string;
+  private lockFile: string;
 
   constructor(private config: Config) {
     const stateDir = path.join(process.cwd(), '.devloop');
     this.stateFile = path.join(stateDir, 'state.json');
     this.tasksFile = path.join(stateDir, 'tasks.json');
+    this.lockFile = path.join(stateDir, '.state.lock');
   }
 
   async initialize(): Promise<void> {
@@ -21,31 +26,112 @@ export class StateManager {
   }
 
   /**
-   * Atomic file write using temp file and rename pattern
+   * Acquire a simple file lock with timeout
+   */
+  private async acquireLock(lockPath: string, timeoutMs: number = 5000): Promise<boolean> {
+    const startTime = Date.now();
+    const lockContent = `${process.pid}-${Date.now()}`;
+    
+    while (Date.now() - startTime < timeoutMs) {
+      try {
+        // Try to create lock file exclusively
+        await fs.writeFile(lockPath, lockContent, { flag: 'wx' });
+        return true;
+      } catch (error: any) {
+        if (error.code === 'EEXIST') {
+          // Lock exists, check if it's stale (older than 30 seconds)
+          try {
+            const stat = await fs.stat(lockPath);
+            const age = Date.now() - stat.mtimeMs;
+            if (age > 30000) {
+              // Stale lock, remove it
+              await fs.remove(lockPath);
+            }
+          } catch {
+            // Ignore stat errors
+          }
+          // Wait and retry
+          await new Promise(resolve => setTimeout(resolve, 50));
+        } else {
+          throw error;
+        }
+      }
+    }
+    return false;
+  }
+
+  /**
+   * Release file lock
+   */
+  private async releaseLock(lockPath: string): Promise<void> {
+    try {
+      await fs.remove(lockPath);
+    } catch {
+      // Ignore errors when releasing lock
+    }
+  }
+
+  /**
+   * Atomic file write using temp file and rename pattern with file locking
    * Prevents file corruption during parallel execution or unexpected crashes
    */
   private async atomicWriteJson(filePath: string, data: any): Promise<void> {
-    const tempFile = path.join(
-      path.dirname(filePath),
-      `.${path.basename(filePath)}.${process.pid}.${Date.now()}.tmp`
-    );
+    // Wait for any in-progress writes to this file
+    const existingLock = writeLocks.get(filePath);
+    if (existingLock) {
+      await existingLock;
+    }
+
+    // Create a new lock promise for this write
+    let resolveLock: () => void;
+    const lockPromise = new Promise<void>(resolve => { resolveLock = resolve; });
+    writeLocks.set(filePath, lockPromise);
+
+    const lockPath = `${filePath}.lock`;
+    let hasLock = false;
 
     try {
-      // Write to temp file
-      await fs.writeJson(tempFile, data, { spaces: 2 });
-
-      // Atomic rename (on most filesystems, rename is atomic)
-      await fs.rename(tempFile, filePath);
-    } catch (error) {
-      // Clean up temp file on error
-      try {
-        if (await fs.pathExists(tempFile)) {
-          await fs.remove(tempFile);
-        }
-      } catch (cleanupError) {
-        // Ignore cleanup errors
+      // Acquire file lock
+      hasLock = await this.acquireLock(lockPath);
+      if (!hasLock) {
+        console.warn(`[StateManager] Could not acquire lock for ${filePath}, proceeding anyway`);
       }
-      throw error;
+
+      const tempFile = path.join(
+        path.dirname(filePath),
+        `.${path.basename(filePath)}.${process.pid}.${Date.now()}.tmp`
+      );
+
+      try {
+        // Write to temp file
+        await fs.writeJson(tempFile, data, { spaces: 2 });
+
+        // Verify JSON is valid before renaming
+        const written = await fs.readJson(tempFile);
+        if (!written || typeof written !== 'object') {
+          throw new Error('Invalid JSON written to temp file');
+        }
+
+        // Atomic rename (on most filesystems, rename is atomic)
+        await fs.rename(tempFile, filePath);
+      } catch (error) {
+        // Clean up temp file on error
+        try {
+          if (await fs.pathExists(tempFile)) {
+            await fs.remove(tempFile);
+          }
+        } catch (cleanupError) {
+          // Ignore cleanup errors
+        }
+        throw error;
+      }
+    } finally {
+      // Release locks
+      if (hasLock) {
+        await this.releaseLock(lockPath);
+      }
+      writeLocks.delete(filePath);
+      resolveLock!();
     }
   }
 
@@ -73,8 +159,16 @@ export class StateManager {
             await new Promise(resolve => setTimeout(resolve, retryDelayMs * attempt));
             continue;
           }
-          // Last attempt or non-parse error - return default state
+          // Last attempt or non-parse error - delete corrupted file and return default state
           console.warn(`[StateManager] Failed to read state file (attempt ${attempt}): ${error.message}`);
+          if (error instanceof SyntaxError) {
+            console.warn(`[StateManager] Deleting corrupted state file`);
+            try {
+              await fs.remove(this.stateFile);
+            } catch {
+              // Ignore removal errors
+            }
+          }
           return {
             status: 'idle',
             progress: 0,

@@ -1690,9 +1690,28 @@ export class WorkflowEngine {
   private async applyChanges(changes: CodeChanges): Promise<{ success: boolean; failedPatches: string[]; skippedPatches: string[] }> {
     const failedPatches: string[] = [];
     const skippedPatches: string[] = [];
+    
+    // CRITICAL FIX: Get target module and enforce boundaries
+    const targetModule = (this as any).currentPrdTargetModule;
 
     for (const file of changes.files) {
       const filePath = path.resolve(process.cwd(), file.path);
+
+      // CRITICAL FIX: When target module is set, ONLY allow changes to files in that module
+      // This prevents AI from accidentally modifying other modules (like bd/) which can break the site
+      if (targetModule) {
+        const isTargetModuleFile = file.path.includes(`modules/share/${targetModule}`) ||
+                                   file.path.includes(`modules/${targetModule}`);
+        const isTestFile = file.path.includes('tests/playwright') && file.path.includes(targetModule);
+        const isConfigFile = file.path.includes('config/') && file.path.includes(targetModule);
+        
+        if (!isTargetModuleFile && !isTestFile && !isConfigFile) {
+          const skipMsg = `TARGET_MODULE_BOUNDARY: ${file.path} is outside target module ${targetModule} - skipping to protect codebase`;
+          console.warn(`[WorkflowEngine] ${skipMsg}`);
+          skippedPatches.push(skipMsg);
+          continue;
+        }
+      }
 
       // Check if file is protected from modifications
       const fileName = path.basename(file.path);
@@ -2302,7 +2321,7 @@ export class WorkflowEngine {
     existingCode?: string;
   }> {
     let taskText = `${task.title} ${task.description} ${task.details || ''}`;
-    
+
     // CRITICAL FIX: Load child PRD content to get actual file paths and requirements
     // The task description is generic ("Complete phase: X") but the PRD has specifics
     const currentPrdId = (this as any).currentPrdId;
@@ -2316,8 +2335,8 @@ export class WorkflowEngine {
           const prdSetDir = '.taskmaster/planning/' + currentPrdId.replace(/_/g, '-');
           if (fs.existsSync(prdSetDir)) {
             const prdFiles = fs.readdirSync(prdSetDir);
-            const phaseFile = prdFiles.find(f => 
-              f.match(new RegExp(`phase${phaseNum}[_\\.]`, 'i')) || 
+            const phaseFile = prdFiles.find(f =>
+              f.match(new RegExp(`phase${phaseNum}[_\\.]`, 'i')) ||
               f.match(new RegExp(`phase_?${phaseNum}\\.`, 'i'))
             );
             if (phaseFile) {
@@ -2352,8 +2371,8 @@ export class WorkflowEngine {
     const filePathPatterns = codebaseConfig.filePathPatterns || [];
 
     // Pattern 1: Extract explicit file paths from task text
-    // These are ALWAYS included regardless of ignore patterns
-    // Generic pattern that matches common path formats (including .ts for Playwright tests)
+    // When target module is set, filter to only include files in that module or tests
+    const targetModule = (this as any).currentPrdTargetModule;
     const allExtensions = [...extensions, 'ts', 'js', 'spec.ts', 'test.ts'];
     const genericPathPattern = new RegExp(
       `([\\w./\\-]+\\.(${allExtensions.join('|')}))`,
@@ -2365,6 +2384,23 @@ export class WorkflowEngine {
       const filePath = match[1];
       // Only add if it looks like a path (contains / or is a simple filename)
       if ((filePath.includes('/') || filePath.includes('.')) && !mentionedFiles.includes(filePath)) {
+        // CRITICAL FIX: When target module is set, filter out irrelevant paths
+        // Skip node_modules, absolute paths outside project, and other modules
+        if (targetModule) {
+          const isNodeModules = filePath.includes('node_modules');
+          const isAbsoluteSystemPath = filePath.startsWith('/var/') || filePath.startsWith('/usr/');
+          const isOtherModule = filePath.includes('modules/share/') && 
+                               !filePath.includes(`modules/share/${targetModule}`);
+          const isPlaywrightLib = filePath.includes('playwright/lib/');
+          
+          if (isNodeModules || isAbsoluteSystemPath || isOtherModule || isPlaywrightLib) {
+            if (this.debug) {
+              console.log(`[DEBUG] Skipping irrelevant file from error message: ${filePath}`);
+            }
+            continue;
+          }
+        }
+        
         mentionedFiles.push(filePath);
         explicitlyMentionedFiles.push(filePath);
         if (this.debug) {
@@ -2416,7 +2452,7 @@ export class WorkflowEngine {
             console.log(`[DEBUG] Target module ${moduleName} doesn't exist yet (new module creation)`);
             console.log(`[DEBUG] Searching for reference patterns in existing modules`);
           }
-          
+
           // Find similar modules by prefix (e.g., bd_* modules for bd_agent_chat_test)
           const modulePrefix = moduleName.split('_')[0];
           const shareModulesDir = path.resolve(process.cwd(), 'docroot/modules/share');
@@ -2426,7 +2462,7 @@ export class WorkflowEngine {
                 .filter(dirent => dirent.isDirectory() && dirent.name.startsWith(modulePrefix))
                 .map(dirent => `docroot/modules/share/${dirent.name}`)
                 .slice(0, 2); // Limit to 2 reference modules
-              
+
               if (existingModules.length > 0) {
                 scopedSearchDirs = [...existingModules, ...searchDirs];
                 if (this.debug) {
@@ -2784,7 +2820,7 @@ export class WorkflowEngine {
       try {
         // Try ripgrep first (faster), fall back to grep
         let command: string;
-        
+
         // CRITICAL FIX: When a target module is specified, ONLY search within that module
         // This prevents irrelevant files from other modules polluting the context
         let effectiveSearchDirs = searchDirs;
@@ -2799,7 +2835,7 @@ export class WorkflowEngine {
             }
           }
         }
-        
+
         const searchPath = effectiveSearchDirs.filter(d => fs.existsSync(path.resolve(process.cwd(), d))).join(' ') || '.';
 
         // Check if ripgrep is available
@@ -3163,19 +3199,19 @@ export class WorkflowEngine {
     // Store PRD context in class properties for use in executeTask
     (this as any).currentPrdId = prdId;
     (this as any).currentPrdSetId = prdSetId;
-    
+
     // CRITICAL FIX: Inherit execution config from parent PRD when child PRD doesn't have it
     // This fixes the issue where child PRDs don't have targetModule, targetFilesPattern, etc.
     const parentExecutionConfig = (this as any).parentPrdExecutionConfig;
     const effectiveExecution = prdMetadata?.execution || parentExecutionConfig;
-    
+
     // Store target module from effective execution config for context scoping
     (this as any).currentPrdTargetModule = effectiveExecution?.targetModule || null;
-    
+
     if (this.debug && effectiveExecution?.targetModule) {
       console.log(`[DEBUG] Using target module: ${effectiveExecution.targetModule} (${prdMetadata?.execution ? 'from child PRD' : 'inherited from parent'})`);
     }
-    
+
     // Store max concurrency from PRD execution config (overrides base config)
     // Check for maxConcurrency in execution config (may not be in type definition)
     const executionConfig = effectiveExecution as any;
