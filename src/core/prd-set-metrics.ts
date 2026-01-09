@@ -6,7 +6,30 @@
 
 import * as fs from 'fs-extra';
 import * as path from 'path';
-import { PrdSetMetricsData, PrdMetricsData } from './hierarchical-metrics';
+import {
+  PrdSetMetricsData,
+  PrdMetricsData,
+  JsonParsingMetrics,
+  IpcMetrics,
+  FileFilteringMetrics,
+  ValidationMetrics,
+  ContextMetrics,
+  CodebaseMetrics,
+  SessionMetrics,
+  ContributionModeMetrics,
+  TimingBreakdown,
+  TokenBreakdown,
+  createDefaultJsonParsingMetrics,
+  createDefaultIpcMetrics,
+  createDefaultFileFilteringMetrics,
+  createDefaultValidationMetrics,
+  createDefaultContextMetrics,
+  createDefaultCodebaseMetrics,
+  createDefaultSessionMetrics,
+  createDefaultContributionModeMetrics,
+  createDefaultTimingBreakdown,
+  createDefaultTokenBreakdown,
+} from './hierarchical-metrics';
 import type { ConfigOverlay } from '../config/schema';
 
 export interface PrdSetMetadata {
@@ -399,6 +422,337 @@ export class PrdSetMetrics {
       totalTokensUsed,
       estimatedCost,
       averageSuccessRate: allMetrics.length > 0 ? successRateSum / allMetrics.length : 0,
+    };
+  }
+
+  /**
+   * Aggregate enhanced metrics from PRD metrics into PRD set metrics
+   */
+  aggregateEnhancedMetrics(setId: string, prdMetrics: PrdMetricsData[]): void {
+    const metric = this.metrics.get(setId);
+    if (!metric) return;
+
+    // Initialize enhanced metrics if not present
+    if (!metric.jsonParsing) metric.jsonParsing = createDefaultJsonParsingMetrics();
+    if (!metric.ipc) metric.ipc = createDefaultIpcMetrics();
+    if (!metric.fileFiltering) metric.fileFiltering = createDefaultFileFilteringMetrics();
+    if (!metric.validation) metric.validation = createDefaultValidationMetrics();
+    if (!metric.context) metric.context = createDefaultContextMetrics();
+    if (!metric.codebase) metric.codebase = createDefaultCodebaseMetrics();
+    if (!metric.sessions) metric.sessions = createDefaultSessionMetrics();
+    if (!metric.contributionMode) metric.contributionMode = createDefaultContributionModeMetrics();
+    if (!metric.timing.breakdown) metric.timing.breakdown = createDefaultTimingBreakdown();
+    if (!metric.tokens.byFeature) metric.tokens.byFeature = createDefaultTokenBreakdown();
+
+    for (const prd of prdMetrics) {
+      // Aggregate JSON parsing metrics
+      if (prd.jsonParsing) {
+        this.aggregateJsonParsing(metric.jsonParsing, prd.jsonParsing);
+      }
+
+      // Aggregate IPC metrics
+      if (prd.ipc) {
+        this.aggregateIpc(metric.ipc, prd.ipc);
+      }
+
+      // Aggregate file filtering metrics
+      if (prd.fileFiltering) {
+        this.aggregateFileFiltering(metric.fileFiltering, prd.fileFiltering);
+      }
+
+      // Aggregate validation metrics
+      if (prd.validation) {
+        this.aggregateValidation(metric.validation, prd.validation);
+      }
+
+      // Aggregate context metrics
+      if (prd.context) {
+        this.aggregateContext(metric.context, prd.context);
+      }
+
+      // Aggregate codebase metrics
+      if (prd.codebase) {
+        this.aggregateCodebase(metric.codebase, prd.codebase);
+      }
+
+      // Aggregate session metrics
+      if (prd.sessions) {
+        this.aggregateSessions(metric.sessions, prd.sessions);
+      }
+
+      // Aggregate contribution mode metrics
+      if (prd.contributionMode) {
+        this.aggregateContributionMode(metric.contributionMode, prd.contributionMode);
+      }
+
+      // Aggregate timing breakdown
+      if (prd.timing.breakdown) {
+        this.aggregateTimingBreakdown(metric.timing.breakdown, prd.timing.breakdown);
+      }
+
+      // Aggregate token breakdown
+      if (prd.tokens.byFeature) {
+        this.aggregateTokenBreakdown(metric.tokens.byFeature, prd.tokens.byFeature);
+      }
+    }
+
+    this.saveMetrics();
+  }
+
+  private aggregateJsonParsing(target: JsonParsingMetrics, source: JsonParsingMetrics): void {
+    target.totalAttempts += source.totalAttempts;
+    target.successByStrategy.direct += source.successByStrategy.direct;
+    target.successByStrategy.retry += source.successByStrategy.retry;
+    target.successByStrategy.aiFallback += source.successByStrategy.aiFallback;
+    target.successByStrategy.sanitized += source.successByStrategy.sanitized;
+
+    for (const [reason, count] of Object.entries(source.failuresByReason)) {
+      target.failuresByReason[reason] = (target.failuresByReason[reason] || 0) + count;
+    }
+
+    target.totalParsingTimeMs += source.totalParsingTimeMs;
+    target.avgParsingTimeMs = target.totalAttempts > 0 ? target.totalParsingTimeMs / target.totalAttempts : 0;
+
+    target.aiFallbackUsage.triggered += source.aiFallbackUsage.triggered;
+    target.aiFallbackUsage.succeeded += source.aiFallbackUsage.succeeded;
+    target.aiFallbackUsage.failed += source.aiFallbackUsage.failed;
+    target.aiFallbackUsage.totalTimeMs += source.aiFallbackUsage.totalTimeMs;
+    target.aiFallbackUsage.avgTimeMs = target.aiFallbackUsage.triggered > 0
+      ? target.aiFallbackUsage.totalTimeMs / target.aiFallbackUsage.triggered : 0;
+    target.aiFallbackUsage.tokensUsed.input += source.aiFallbackUsage.tokensUsed.input;
+    target.aiFallbackUsage.tokensUsed.output += source.aiFallbackUsage.tokensUsed.output;
+  }
+
+  private aggregateIpc(target: IpcMetrics, source: IpcMetrics): void {
+    target.connectionsAttempted += source.connectionsAttempted;
+    target.connectionsSucceeded += source.connectionsSucceeded;
+    target.connectionsFailed += source.connectionsFailed;
+    target.healthChecksPerformed += source.healthChecksPerformed;
+    target.healthCheckFailures += source.healthCheckFailures;
+    target.totalConnectionTimeMs += source.totalConnectionTimeMs;
+    target.avgConnectionTimeMs = target.connectionsAttempted > 0
+      ? target.totalConnectionTimeMs / target.connectionsAttempted : 0;
+    target.retries += source.retries;
+    target.totalRetryTimeMs += source.totalRetryTimeMs;
+    target.avgRetryTimeMs = target.retries > 0 ? target.totalRetryTimeMs / target.retries : 0;
+  }
+
+  private aggregateFileFiltering(target: FileFilteringMetrics, source: FileFilteringMetrics): void {
+    target.filesFiltered += source.filesFiltered;
+    target.predictiveFilters += source.predictiveFilters;
+    target.boundaryViolations += source.boundaryViolations;
+    target.filesAllowed += source.filesAllowed;
+    target.totalFilteringTimeMs += source.totalFilteringTimeMs;
+    const totalOps = target.filesFiltered + target.filesAllowed;
+    target.avgFilteringTimeMs = totalOps > 0 ? target.totalFilteringTimeMs / totalOps : 0;
+    target.filterSuggestionsGenerated += source.filterSuggestionsGenerated;
+  }
+
+  private aggregateValidation(target: ValidationMetrics, source: ValidationMetrics): void {
+    target.preValidations += source.preValidations;
+    target.preValidationFailures += source.preValidationFailures;
+    target.postValidations += source.postValidations;
+    target.postValidationFailures += source.postValidationFailures;
+    target.totalValidationTimeMs += source.totalValidationTimeMs;
+    const totalValidations = target.preValidations + target.postValidations;
+    target.avgValidationTimeMs = totalValidations > 0 ? target.totalValidationTimeMs / totalValidations : 0;
+
+    for (const [category, count] of Object.entries(source.errorsByCategory)) {
+      target.errorsByCategory[category] = (target.errorsByCategory[category] || 0) + count;
+    }
+
+    target.recoverySuggestionsGenerated += source.recoverySuggestionsGenerated;
+  }
+
+  private aggregateContext(target: ContextMetrics, source: ContextMetrics): void {
+    target.totalBuilds += source.totalBuilds;
+    target.totalBuildTimeMs += source.totalBuildTimeMs;
+    target.avgBuildTimeMs = target.totalBuilds > 0 ? target.totalBuildTimeMs / target.totalBuilds : 0;
+    target.totalContextSizeChars += source.totalContextSizeChars;
+    target.avgContextSizeChars = target.totalBuilds > 0 ? target.totalContextSizeChars / target.totalBuilds : 0;
+    target.totalFilesIncluded += source.totalFilesIncluded;
+    target.avgFilesIncluded = target.totalBuilds > 0 ? target.totalFilesIncluded / target.totalBuilds : 0;
+    target.totalFilesTruncated += source.totalFilesTruncated;
+    target.avgFilesTruncated = target.totalBuilds > 0 ? target.totalFilesTruncated / target.totalBuilds : 0;
+
+    target.searchOperations.total += source.searchOperations.total;
+    target.searchOperations.totalTimeMs += source.searchOperations.totalTimeMs;
+    target.searchOperations.avgTimeMs = target.searchOperations.total > 0
+      ? target.searchOperations.totalTimeMs / target.searchOperations.total : 0;
+    target.searchOperations.filesFound += source.searchOperations.filesFound;
+    target.searchOperations.filesUsed += source.searchOperations.filesUsed;
+    target.searchOperations.efficiency = target.searchOperations.filesFound > 0
+      ? target.searchOperations.filesUsed / target.searchOperations.filesFound : 0;
+  }
+
+  private aggregateCodebase(target: CodebaseMetrics, source: CodebaseMetrics): void {
+    // Search operations
+    target.searchOperations.total += source.searchOperations.total;
+    target.searchOperations.totalTimeMs += source.searchOperations.totalTimeMs;
+    target.searchOperations.avgTimeMs = target.searchOperations.total > 0
+      ? target.searchOperations.totalTimeMs / target.searchOperations.total : 0;
+    target.searchOperations.filesFound += source.searchOperations.filesFound;
+    target.searchOperations.avgFilesPerSearch = target.searchOperations.total > 0
+      ? target.searchOperations.filesFound / target.searchOperations.total : 0;
+
+    for (const [pattern, count] of Object.entries(source.searchOperations.patternsUsed)) {
+      target.searchOperations.patternsUsed[pattern] = (target.searchOperations.patternsUsed[pattern] || 0) + count;
+    }
+
+    // File discovery
+    target.fileDiscovery.totalDiscoveries += source.fileDiscovery.totalDiscoveries;
+    target.fileDiscovery.totalTimeMs += source.fileDiscovery.totalTimeMs;
+    target.fileDiscovery.avgTimeMs = target.fileDiscovery.totalDiscoveries > 0
+      ? target.fileDiscovery.totalTimeMs / target.fileDiscovery.totalDiscoveries : 0;
+    target.fileDiscovery.filesDiscovered += source.fileDiscovery.filesDiscovered;
+
+    // File operations
+    target.fileOperations.reads += source.fileOperations.reads;
+    target.fileOperations.writes += source.fileOperations.writes;
+    target.fileOperations.deletes += source.fileOperations.deletes;
+    target.fileOperations.totalReadTimeMs += source.fileOperations.totalReadTimeMs;
+    target.fileOperations.totalWriteTimeMs += source.fileOperations.totalWriteTimeMs;
+    target.fileOperations.avgReadTimeMs = target.fileOperations.reads > 0
+      ? target.fileOperations.totalReadTimeMs / target.fileOperations.reads : 0;
+    target.fileOperations.avgWriteTimeMs = target.fileOperations.writes > 0
+      ? target.fileOperations.totalWriteTimeMs / target.fileOperations.writes : 0;
+    target.fileOperations.errors += source.fileOperations.errors;
+    const totalFileOps = target.fileOperations.reads + target.fileOperations.writes + target.fileOperations.deletes;
+    target.fileOperations.errorRate = totalFileOps > 0 ? target.fileOperations.errors / totalFileOps : 0;
+
+    // Indexing
+    target.indexing.operations += source.indexing.operations;
+    target.indexing.totalTimeMs += source.indexing.totalTimeMs;
+    target.indexing.avgTimeMs = target.indexing.operations > 0
+      ? target.indexing.totalTimeMs / target.indexing.operations : 0;
+    target.indexing.filesIndexed += source.indexing.filesIndexed;
+    target.indexing.cacheHits += source.indexing.cacheHits;
+    target.indexing.cacheMisses += source.indexing.cacheMisses;
+    const totalCacheOps = target.indexing.cacheHits + target.indexing.cacheMisses;
+    target.indexing.cacheHitRate = totalCacheOps > 0 ? target.indexing.cacheHits / totalCacheOps : 0;
+
+    // Path resolution
+    target.pathResolution.operations += source.pathResolution.operations;
+    target.pathResolution.totalTimeMs += source.pathResolution.totalTimeMs;
+    target.pathResolution.avgTimeMs = target.pathResolution.operations > 0
+      ? target.pathResolution.totalTimeMs / target.pathResolution.operations : 0;
+    target.pathResolution.resolved += source.pathResolution.resolved;
+    target.pathResolution.failed += source.pathResolution.failed;
+    target.pathResolution.symlinksEncountered += source.pathResolution.symlinksEncountered;
+  }
+
+  private aggregateSessions(target: SessionMetrics, source: SessionMetrics): void {
+    target.totalSessions += source.totalSessions;
+    target.activeSessions = source.activeSessions; // Use latest value
+    target.sessionRotations += source.sessionRotations;
+    target.sessionHealthChecks += source.sessionHealthChecks;
+    target.unhealthySessions += source.unhealthySessions;
+
+    // Update max/min history entries
+    if (source.maxHistoryEntries > target.maxHistoryEntries) {
+      target.maxHistoryEntries = source.maxHistoryEntries;
+    }
+    if (source.minHistoryEntries > 0 && (target.minHistoryEntries === 0 || source.minHistoryEntries < target.minHistoryEntries)) {
+      target.minHistoryEntries = source.minHistoryEntries;
+    }
+
+    // Session persistence
+    target.sessionPersistence.saves += source.sessionPersistence.saves;
+    target.sessionPersistence.savesFailed += source.sessionPersistence.savesFailed;
+    target.sessionPersistence.loads += source.sessionPersistence.loads;
+    target.sessionPersistence.loadsFailed += source.sessionPersistence.loadsFailed;
+    target.sessionPersistence.totalSaveTimeMs += source.sessionPersistence.totalSaveTimeMs;
+    target.sessionPersistence.totalLoadTimeMs += source.sessionPersistence.totalLoadTimeMs;
+    target.sessionPersistence.avgSaveTimeMs = target.sessionPersistence.saves > 0
+      ? target.sessionPersistence.totalSaveTimeMs / target.sessionPersistence.saves : 0;
+    target.sessionPersistence.avgLoadTimeMs = target.sessionPersistence.loads > 0
+      ? target.sessionPersistence.totalLoadTimeMs / target.sessionPersistence.loads : 0;
+
+    // History management
+    target.historyManagement.prunings += source.historyManagement.prunings;
+    target.historyManagement.summarizations += source.historyManagement.summarizations;
+    target.historyManagement.totalPruningTimeMs += source.historyManagement.totalPruningTimeMs;
+    target.historyManagement.avgPruningTimeMs = target.historyManagement.prunings > 0
+      ? target.historyManagement.totalPruningTimeMs / target.historyManagement.prunings : 0;
+    target.historyManagement.entriesRemoved += source.historyManagement.entriesRemoved;
+    target.historyManagement.entriesRetained += source.historyManagement.entriesRetained;
+
+    // Session lifespan
+    target.sessionLifespan.expiredSessions += source.sessionLifespan.expiredSessions;
+    if (source.sessionLifespan.maxDurationMs > target.sessionLifespan.maxDurationMs) {
+      target.sessionLifespan.maxDurationMs = source.sessionLifespan.maxDurationMs;
+    }
+    if (source.sessionLifespan.minDurationMs > 0 &&
+      (target.sessionLifespan.minDurationMs === 0 || source.sessionLifespan.minDurationMs < target.sessionLifespan.minDurationMs)) {
+      target.sessionLifespan.minDurationMs = source.sessionLifespan.minDurationMs;
+    }
+  }
+
+  private aggregateContributionMode(target: ContributionModeMetrics, source: ContributionModeMetrics): void {
+    target.outerAgentObservations += source.outerAgentObservations;
+    target.devLoopFixesApplied += source.devLoopFixesApplied;
+    target.rootCauseFixes += source.rootCauseFixes;
+    target.workaroundFixes += source.workaroundFixes;
+    target.improvementsIdentified += source.improvementsIdentified;
+    target.sessionDuration = source.sessionDuration; // Use latest
+
+    for (const [category, count] of Object.entries(source.fixesByCategory)) {
+      target.fixesByCategory[category] = (target.fixesByCategory[category] || 0) + count;
+    }
+  }
+
+  private aggregateTimingBreakdown(target: TimingBreakdown, source: TimingBreakdown): void {
+    const categories: (keyof TimingBreakdown)[] = [
+      'jsonParsing', 'fileFiltering', 'validation', 'ipc', 'aiFallback',
+      'contextBuilding', 'codebaseSearch', 'fileOperations', 'sessionManagement'
+    ];
+
+    for (const category of categories) {
+      target[category].totalMs += source[category].totalMs;
+      target[category].count += source[category].count;
+      target[category].avgMs = target[category].count > 0
+        ? target[category].totalMs / target[category].count : 0;
+    }
+  }
+
+  private aggregateTokenBreakdown(target: TokenBreakdown, source: TokenBreakdown): void {
+    const features: (keyof TokenBreakdown)[] = ['codeGeneration', 'aiFallback', 'retry', 'errorAnalysis'];
+
+    for (const feature of features) {
+      target[feature].input += source[feature].input;
+      target[feature].output += source[feature].output;
+    }
+  }
+
+  /**
+   * Get enhanced metrics for a PRD set
+   */
+  getEnhancedMetrics(setId: string): {
+    jsonParsing?: JsonParsingMetrics;
+    ipc?: IpcMetrics;
+    fileFiltering?: FileFilteringMetrics;
+    validation?: ValidationMetrics;
+    context?: ContextMetrics;
+    codebase?: CodebaseMetrics;
+    sessions?: SessionMetrics;
+    contributionMode?: ContributionModeMetrics;
+    timingBreakdown?: TimingBreakdown;
+    tokenBreakdown?: TokenBreakdown;
+  } | null {
+    const metric = this.metrics.get(setId);
+    if (!metric) return null;
+
+    return {
+      jsonParsing: metric.jsonParsing,
+      ipc: metric.ipc,
+      fileFiltering: metric.fileFiltering,
+      validation: metric.validation,
+      context: metric.context,
+      codebase: metric.codebase,
+      sessions: metric.sessions,
+      contributionMode: metric.contributionMode,
+      timingBreakdown: metric.timing.breakdown,
+      tokenBreakdown: metric.tokens.byFeature,
     };
   }
 }

@@ -13,7 +13,27 @@ import {
   FeatureMetrics,
   SchemaOperation,
   SchemaMetrics,
-  TestResults
+  TestResults,
+  JsonParsingMetrics,
+  IpcMetrics,
+  FileFilteringMetrics,
+  ValidationMetrics,
+  ContextMetrics,
+  CodebaseMetrics,
+  SessionMetrics,
+  ContributionModeMetrics,
+  TimingBreakdown,
+  TokenBreakdown,
+  createDefaultJsonParsingMetrics,
+  createDefaultIpcMetrics,
+  createDefaultFileFilteringMetrics,
+  createDefaultValidationMetrics,
+  createDefaultContextMetrics,
+  createDefaultCodebaseMetrics,
+  createDefaultSessionMetrics,
+  createDefaultContributionModeMetrics,
+  createDefaultTimingBreakdown,
+  createDefaultTokenBreakdown,
 } from './hierarchical-metrics';
 import { RunMetrics } from './debug-metrics';
 import { CostCalculator } from './cost-calculator';
@@ -447,6 +467,596 @@ export class PrdMetrics {
     }
 
     this.saveMetrics();
+  }
+
+  // ===== Enhanced Metrics Recording Methods =====
+
+  /**
+   * Record JSON parsing metrics
+   */
+  recordJsonParsing(
+    prdId: string,
+    data: {
+      strategy: 'direct' | 'retry' | 'aiFallback' | 'sanitized';
+      success: boolean;
+      durationMs: number;
+      failureReason?: string;
+      tokensUsed?: { input: number; output: number };
+    }
+  ): void {
+    const prdMetric = this.metrics.get(prdId);
+    if (!prdMetric) {
+      logger.warn(`[PrdMetrics] Cannot record JSON parsing: PRD ${prdId} not found`);
+      return;
+    }
+
+    if (!prdMetric.jsonParsing) {
+      prdMetric.jsonParsing = createDefaultJsonParsingMetrics();
+    }
+
+    const jp = prdMetric.jsonParsing;
+    jp.totalAttempts++;
+    jp.totalParsingTimeMs += data.durationMs;
+    jp.avgParsingTimeMs = jp.totalParsingTimeMs / jp.totalAttempts;
+
+    if (data.success) {
+      jp.successByStrategy[data.strategy]++;
+    } else if (data.failureReason) {
+      jp.failuresByReason[data.failureReason] = (jp.failuresByReason[data.failureReason] || 0) + 1;
+    }
+
+    // Track AI fallback usage specifically
+    if (data.strategy === 'aiFallback') {
+      jp.aiFallbackUsage.triggered++;
+      jp.aiFallbackUsage.totalTimeMs += data.durationMs;
+      jp.aiFallbackUsage.avgTimeMs = jp.aiFallbackUsage.totalTimeMs / jp.aiFallbackUsage.triggered;
+
+      if (data.success) {
+        jp.aiFallbackUsage.succeeded++;
+      } else {
+        jp.aiFallbackUsage.failed++;
+      }
+
+      if (data.tokensUsed) {
+        jp.aiFallbackUsage.tokensUsed.input += data.tokensUsed.input;
+        jp.aiFallbackUsage.tokensUsed.output += data.tokensUsed.output;
+      }
+    }
+
+    // Update timing breakdown
+    this.updateTimingBreakdown(prdId, 'jsonParsing', data.durationMs);
+
+    this.saveMetrics();
+  }
+
+  /**
+   * Record IPC connection metrics
+   */
+  recordIpcConnection(
+    prdId: string,
+    data: {
+      success: boolean;
+      durationMs: number;
+      isRetry?: boolean;
+      isHealthCheck?: boolean;
+    }
+  ): void {
+    const prdMetric = this.metrics.get(prdId);
+    if (!prdMetric) {
+      logger.warn(`[PrdMetrics] Cannot record IPC connection: PRD ${prdId} not found`);
+      return;
+    }
+
+    if (!prdMetric.ipc) {
+      prdMetric.ipc = createDefaultIpcMetrics();
+    }
+
+    const ipc = prdMetric.ipc;
+
+    if (data.isHealthCheck) {
+      ipc.healthChecksPerformed++;
+      if (!data.success) {
+        ipc.healthCheckFailures++;
+      }
+    } else if (data.isRetry) {
+      ipc.retries++;
+      ipc.totalRetryTimeMs += data.durationMs;
+      ipc.avgRetryTimeMs = ipc.totalRetryTimeMs / ipc.retries;
+    } else {
+      ipc.connectionsAttempted++;
+      ipc.totalConnectionTimeMs += data.durationMs;
+      ipc.avgConnectionTimeMs = ipc.totalConnectionTimeMs / ipc.connectionsAttempted;
+
+      if (data.success) {
+        ipc.connectionsSucceeded++;
+      } else {
+        ipc.connectionsFailed++;
+      }
+    }
+
+    // Update timing breakdown
+    this.updateTimingBreakdown(prdId, 'ipc', data.durationMs);
+
+    this.saveMetrics();
+  }
+
+  /**
+   * Record file filtering metrics
+   */
+  recordFileFiltering(
+    prdId: string,
+    data: {
+      filesFiltered: number;
+      filesAllowed: number;
+      durationMs: number;
+      isPredictive?: boolean;
+      isBoundaryViolation?: boolean;
+      suggestionGenerated?: boolean;
+    }
+  ): void {
+    const prdMetric = this.metrics.get(prdId);
+    if (!prdMetric) {
+      logger.warn(`[PrdMetrics] Cannot record file filtering: PRD ${prdId} not found`);
+      return;
+    }
+
+    if (!prdMetric.fileFiltering) {
+      prdMetric.fileFiltering = createDefaultFileFilteringMetrics();
+    }
+
+    const ff = prdMetric.fileFiltering;
+    ff.filesFiltered += data.filesFiltered;
+    ff.filesAllowed += data.filesAllowed;
+    ff.totalFilteringTimeMs += data.durationMs;
+
+    const totalOps = ff.filesFiltered + ff.filesAllowed;
+    ff.avgFilteringTimeMs = totalOps > 0 ? ff.totalFilteringTimeMs / totalOps : 0;
+
+    if (data.isPredictive) {
+      ff.predictiveFilters++;
+    }
+
+    if (data.isBoundaryViolation) {
+      ff.boundaryViolations++;
+    }
+
+    if (data.suggestionGenerated) {
+      ff.filterSuggestionsGenerated++;
+    }
+
+    // Update timing breakdown
+    this.updateTimingBreakdown(prdId, 'fileFiltering', data.durationMs);
+
+    this.saveMetrics();
+  }
+
+  /**
+   * Record validation gate metrics
+   */
+  recordValidation(
+    prdId: string,
+    data: {
+      type: 'pre' | 'post';
+      success: boolean;
+      durationMs: number;
+      errorCategory?: string;
+      suggestionGenerated?: boolean;
+    }
+  ): void {
+    const prdMetric = this.metrics.get(prdId);
+    if (!prdMetric) {
+      logger.warn(`[PrdMetrics] Cannot record validation: PRD ${prdId} not found`);
+      return;
+    }
+
+    if (!prdMetric.validation) {
+      prdMetric.validation = createDefaultValidationMetrics();
+    }
+
+    const v = prdMetric.validation;
+    v.totalValidationTimeMs += data.durationMs;
+
+    if (data.type === 'pre') {
+      v.preValidations++;
+      if (!data.success) {
+        v.preValidationFailures++;
+      }
+    } else {
+      v.postValidations++;
+      if (!data.success) {
+        v.postValidationFailures++;
+      }
+    }
+
+    const totalValidations = v.preValidations + v.postValidations;
+    v.avgValidationTimeMs = totalValidations > 0 ? v.totalValidationTimeMs / totalValidations : 0;
+
+    if (!data.success && data.errorCategory) {
+      v.errorsByCategory[data.errorCategory] = (v.errorsByCategory[data.errorCategory] || 0) + 1;
+    }
+
+    if (data.suggestionGenerated) {
+      v.recoverySuggestionsGenerated++;
+    }
+
+    // Update timing breakdown
+    this.updateTimingBreakdown(prdId, 'validation', data.durationMs);
+
+    this.saveMetrics();
+  }
+
+  /**
+   * Record context building metrics
+   */
+  recordContextBuild(
+    prdId: string,
+    data: {
+      durationMs: number;
+      contextSizeChars: number;
+      filesIncluded: number;
+      filesTruncated: number;
+      contextWindowUtilization?: number;
+      searchTimeMs?: number;
+      filesFound?: number;
+      filesUsed?: number;
+    }
+  ): void {
+    const prdMetric = this.metrics.get(prdId);
+    if (!prdMetric) {
+      logger.warn(`[PrdMetrics] Cannot record context build: PRD ${prdId} not found`);
+      return;
+    }
+
+    if (!prdMetric.context) {
+      prdMetric.context = createDefaultContextMetrics();
+    }
+
+    const ctx = prdMetric.context;
+    ctx.totalBuilds++;
+    ctx.totalBuildTimeMs += data.durationMs;
+    ctx.avgBuildTimeMs = ctx.totalBuildTimeMs / ctx.totalBuilds;
+
+    ctx.totalContextSizeChars += data.contextSizeChars;
+    ctx.avgContextSizeChars = ctx.totalContextSizeChars / ctx.totalBuilds;
+
+    ctx.totalFilesIncluded += data.filesIncluded;
+    ctx.avgFilesIncluded = ctx.totalFilesIncluded / ctx.totalBuilds;
+
+    ctx.totalFilesTruncated += data.filesTruncated;
+    ctx.avgFilesTruncated = ctx.totalFilesTruncated / ctx.totalBuilds;
+
+    if (data.contextWindowUtilization !== undefined) {
+      ctx.contextWindowUtilization = data.contextWindowUtilization;
+    }
+
+    if (data.searchTimeMs !== undefined) {
+      ctx.searchOperations.total++;
+      ctx.searchOperations.totalTimeMs += data.searchTimeMs;
+      ctx.searchOperations.avgTimeMs = ctx.searchOperations.totalTimeMs / ctx.searchOperations.total;
+
+      if (data.filesFound !== undefined) {
+        ctx.searchOperations.filesFound += data.filesFound;
+      }
+      if (data.filesUsed !== undefined) {
+        ctx.searchOperations.filesUsed += data.filesUsed;
+      }
+
+      if (ctx.searchOperations.filesFound > 0) {
+        ctx.searchOperations.efficiency = ctx.searchOperations.filesUsed / ctx.searchOperations.filesFound;
+      }
+    }
+
+    // Update timing breakdown
+    this.updateTimingBreakdown(prdId, 'contextBuilding', data.durationMs);
+
+    this.saveMetrics();
+  }
+
+  /**
+   * Record codebase search metrics
+   */
+  recordCodebaseSearch(
+    prdId: string,
+    data: {
+      durationMs: number;
+      success: boolean;
+      pattern?: string;
+      filesFound: number;
+    }
+  ): void {
+    const prdMetric = this.metrics.get(prdId);
+    if (!prdMetric) {
+      logger.warn(`[PrdMetrics] Cannot record codebase search: PRD ${prdId} not found`);
+      return;
+    }
+
+    if (!prdMetric.codebase) {
+      prdMetric.codebase = createDefaultCodebaseMetrics();
+    }
+
+    const cb = prdMetric.codebase;
+    cb.searchOperations.total++;
+    cb.searchOperations.totalTimeMs += data.durationMs;
+    cb.searchOperations.avgTimeMs = cb.searchOperations.totalTimeMs / cb.searchOperations.total;
+    cb.searchOperations.filesFound += data.filesFound;
+    cb.searchOperations.avgFilesPerSearch = cb.searchOperations.filesFound / cb.searchOperations.total;
+
+    const successCount = cb.searchOperations.successRate * (cb.searchOperations.total - 1);
+    cb.searchOperations.successRate = (successCount + (data.success ? 1 : 0)) / cb.searchOperations.total;
+
+    if (data.pattern) {
+      cb.searchOperations.patternsUsed[data.pattern] = (cb.searchOperations.patternsUsed[data.pattern] || 0) + 1;
+    }
+
+    // Update timing breakdown
+    this.updateTimingBreakdown(prdId, 'codebaseSearch', data.durationMs);
+
+    this.saveMetrics();
+  }
+
+  /**
+   * Record file operation metrics
+   */
+  recordFileOperation(
+    prdId: string,
+    data: {
+      type: 'read' | 'write' | 'delete';
+      durationMs: number;
+      success: boolean;
+    }
+  ): void {
+    const prdMetric = this.metrics.get(prdId);
+    if (!prdMetric) {
+      logger.warn(`[PrdMetrics] Cannot record file operation: PRD ${prdId} not found`);
+      return;
+    }
+
+    if (!prdMetric.codebase) {
+      prdMetric.codebase = createDefaultCodebaseMetrics();
+    }
+
+    const fo = prdMetric.codebase.fileOperations;
+
+    if (data.type === 'read') {
+      fo.reads++;
+      fo.totalReadTimeMs += data.durationMs;
+      fo.avgReadTimeMs = fo.totalReadTimeMs / fo.reads;
+    } else if (data.type === 'write') {
+      fo.writes++;
+      fo.totalWriteTimeMs += data.durationMs;
+      fo.avgWriteTimeMs = fo.totalWriteTimeMs / fo.writes;
+    } else if (data.type === 'delete') {
+      fo.deletes++;
+    }
+
+    if (!data.success) {
+      fo.errors++;
+    }
+
+    const totalOps = fo.reads + fo.writes + fo.deletes;
+    fo.errorRate = totalOps > 0 ? fo.errors / totalOps : 0;
+
+    // Update timing breakdown
+    this.updateTimingBreakdown(prdId, 'fileOperations', data.durationMs);
+
+    this.saveMetrics();
+  }
+
+  /**
+   * Record session metrics
+   */
+  recordSession(
+    prdId: string,
+    data: {
+      historyEntries?: number;
+      isRotation?: boolean;
+      isHealthCheck?: boolean;
+      isUnhealthy?: boolean;
+      persistenceType?: 'save' | 'load';
+      persistenceSuccess?: boolean;
+      persistenceDurationMs?: number;
+      pruning?: { entriesRemoved: number; entriesRetained: number; durationMs: number };
+      sessionDurationMs?: number;
+      isExpired?: boolean;
+    }
+  ): void {
+    const prdMetric = this.metrics.get(prdId);
+    if (!prdMetric) {
+      logger.warn(`[PrdMetrics] Cannot record session: PRD ${prdId} not found`);
+      return;
+    }
+
+    if (!prdMetric.sessions) {
+      prdMetric.sessions = createDefaultSessionMetrics();
+    }
+
+    const s = prdMetric.sessions;
+
+    if (data.historyEntries !== undefined) {
+      // Update history entry stats
+      if (s.totalSessions === 0 || data.historyEntries > s.maxHistoryEntries) {
+        s.maxHistoryEntries = data.historyEntries;
+      }
+      if (s.totalSessions === 0 || data.historyEntries < s.minHistoryEntries || s.minHistoryEntries === 0) {
+        s.minHistoryEntries = data.historyEntries;
+      }
+      // Rolling average
+      s.avgHistoryEntries = ((s.avgHistoryEntries * s.totalSessions) + data.historyEntries) / (s.totalSessions + 1);
+      s.totalSessions++;
+    }
+
+    if (data.isRotation) {
+      s.sessionRotations++;
+    }
+
+    if (data.isHealthCheck) {
+      s.sessionHealthChecks++;
+    }
+
+    if (data.isUnhealthy) {
+      s.unhealthySessions++;
+    }
+
+    if (data.persistenceType && data.persistenceDurationMs !== undefined) {
+      const p = s.sessionPersistence;
+      if (data.persistenceType === 'save') {
+        p.saves++;
+        p.totalSaveTimeMs += data.persistenceDurationMs;
+        p.avgSaveTimeMs = p.totalSaveTimeMs / p.saves;
+        if (!data.persistenceSuccess) {
+          p.savesFailed++;
+        }
+      } else {
+        p.loads++;
+        p.totalLoadTimeMs += data.persistenceDurationMs;
+        p.avgLoadTimeMs = p.totalLoadTimeMs / p.loads;
+        if (!data.persistenceSuccess) {
+          p.loadsFailed++;
+        }
+      }
+      const totalOps = p.saves + p.loads;
+      const failures = p.savesFailed + p.loadsFailed;
+      p.successRate = totalOps > 0 ? (totalOps - failures) / totalOps : 0;
+
+      // Update timing breakdown
+      this.updateTimingBreakdown(prdId, 'sessionManagement', data.persistenceDurationMs);
+    }
+
+    if (data.pruning) {
+      const h = s.historyManagement;
+      h.prunings++;
+      h.entriesRemoved += data.pruning.entriesRemoved;
+      h.entriesRetained += data.pruning.entriesRetained;
+      h.totalPruningTimeMs += data.pruning.durationMs;
+      h.avgPruningTimeMs = h.totalPruningTimeMs / h.prunings;
+    }
+
+    if (data.sessionDurationMs !== undefined) {
+      const l = s.sessionLifespan;
+      if (l.avgDurationMs === 0) {
+        l.avgDurationMs = data.sessionDurationMs;
+        l.maxDurationMs = data.sessionDurationMs;
+        l.minDurationMs = data.sessionDurationMs;
+      } else {
+        const count = s.totalSessions > 0 ? s.totalSessions : 1;
+        l.avgDurationMs = ((l.avgDurationMs * (count - 1)) + data.sessionDurationMs) / count;
+        if (data.sessionDurationMs > l.maxDurationMs) {
+          l.maxDurationMs = data.sessionDurationMs;
+        }
+        if (data.sessionDurationMs < l.minDurationMs) {
+          l.minDurationMs = data.sessionDurationMs;
+        }
+      }
+    }
+
+    if (data.isExpired) {
+      s.sessionLifespan.expiredSessions++;
+    }
+
+    this.saveMetrics();
+  }
+
+  /**
+   * Record contribution mode metrics
+   */
+  recordContributionMode(
+    prdId: string,
+    data: {
+      observation?: boolean;
+      fixApplied?: boolean;
+      fixCategory?: string;
+      isRootCauseFix?: boolean;
+      isWorkaround?: boolean;
+      improvementIdentified?: boolean;
+      sessionDurationMs?: number;
+    }
+  ): void {
+    const prdMetric = this.metrics.get(prdId);
+    if (!prdMetric) {
+      logger.warn(`[PrdMetrics] Cannot record contribution mode: PRD ${prdId} not found`);
+      return;
+    }
+
+    if (!prdMetric.contributionMode) {
+      prdMetric.contributionMode = createDefaultContributionModeMetrics();
+    }
+
+    const cm = prdMetric.contributionMode;
+
+    if (data.observation) {
+      cm.outerAgentObservations++;
+    }
+
+    if (data.fixApplied) {
+      cm.devLoopFixesApplied++;
+
+      if (data.fixCategory) {
+        cm.fixesByCategory[data.fixCategory] = (cm.fixesByCategory[data.fixCategory] || 0) + 1;
+      }
+
+      if (data.isRootCauseFix) {
+        cm.rootCauseFixes++;
+      }
+
+      if (data.isWorkaround) {
+        cm.workaroundFixes++;
+      }
+    }
+
+    if (data.improvementIdentified) {
+      cm.improvementsIdentified++;
+    }
+
+    if (data.sessionDurationMs !== undefined) {
+      cm.sessionDuration = data.sessionDurationMs;
+    }
+
+    this.saveMetrics();
+  }
+
+  /**
+   * Record token usage by feature
+   */
+  recordTokensByFeature(
+    prdId: string,
+    feature: 'codeGeneration' | 'aiFallback' | 'retry' | 'errorAnalysis',
+    tokens: { input: number; output: number }
+  ): void {
+    const prdMetric = this.metrics.get(prdId);
+    if (!prdMetric) {
+      logger.warn(`[PrdMetrics] Cannot record tokens by feature: PRD ${prdId} not found`);
+      return;
+    }
+
+    if (!prdMetric.tokens.byFeature) {
+      prdMetric.tokens.byFeature = createDefaultTokenBreakdown();
+    }
+
+    prdMetric.tokens.byFeature[feature].input += tokens.input;
+    prdMetric.tokens.byFeature[feature].output += tokens.output;
+
+    this.saveMetrics();
+  }
+
+  /**
+   * Helper to update timing breakdown
+   */
+  private updateTimingBreakdown(
+    prdId: string,
+    category: keyof TimingBreakdown,
+    durationMs: number
+  ): void {
+    const prdMetric = this.metrics.get(prdId);
+    if (!prdMetric) return;
+
+    if (!prdMetric.timing.breakdown) {
+      prdMetric.timing.breakdown = createDefaultTimingBreakdown();
+    }
+
+    const breakdown = prdMetric.timing.breakdown[category];
+    breakdown.count++;
+    breakdown.totalMs += durationMs;
+    breakdown.avgMs = breakdown.totalMs / breakdown.count;
   }
 
   completePrdExecution(prdId: string, status: 'completed' | 'failed'): void {

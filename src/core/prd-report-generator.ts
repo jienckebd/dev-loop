@@ -7,7 +7,19 @@
 
 import * as fs from 'fs-extra';
 import * as path from 'path';
-import { PrdSetMetricsData } from './hierarchical-metrics';
+import {
+  PrdSetMetricsData,
+  JsonParsingMetrics,
+  IpcMetrics,
+  FileFilteringMetrics,
+  ValidationMetrics,
+  ContextMetrics,
+  CodebaseMetrics,
+  SessionMetrics,
+  ContributionModeMetrics,
+  TimingBreakdown,
+  TokenBreakdown,
+} from './hierarchical-metrics';
 import { PrdSetMetrics } from './prd-set-metrics';
 import { ObservationAnalyzer } from './observation-analyzer';
 import { getEventStream } from './event-stream';
@@ -44,11 +56,13 @@ export interface PrdSetReport {
     inputTokens: number;
     outputTokens: number;
     estimatedCost: number;
+    byFeature?: TokenBreakdown;
   };
   timingAnalysis?: {
     totalDurationMs: number;
     avgPrdMs: number;
     avgTaskMs: number;
+    breakdown?: TimingBreakdown;
   };
   observationSummary?: {
     totalObservations: number;
@@ -68,6 +82,17 @@ export interface PrdSetReport {
     phasesCompleted: number;
     phasesTotal: number;
   }>;
+  // Enhanced metrics
+  enhancedMetrics?: {
+    jsonParsing?: JsonParsingMetrics;
+    ipc?: IpcMetrics;
+    fileFiltering?: FileFilteringMetrics;
+    validation?: ValidationMetrics;
+    context?: ContextMetrics;
+    codebase?: CodebaseMetrics;
+    sessions?: SessionMetrics;
+    contributionMode?: ContributionModeMetrics;
+  };
 }
 
 export class PrdReportGenerator {
@@ -181,6 +206,7 @@ export class PrdReportGenerator {
         inputTokens: metrics.tokens.totalInput || 0,
         outputTokens: metrics.tokens.totalOutput || 0,
         estimatedCost: metrics.tokens.totalCost || 0,
+        byFeature: metrics.tokens.byFeature,
       };
     }
 
@@ -190,6 +216,23 @@ export class PrdReportGenerator {
         totalDurationMs: metrics.duration || 0,
         avgPrdMs: metrics.timing.avgPrdMs || 0,
         avgTaskMs: metrics.timing.avgTaskMs || 0,
+        breakdown: metrics.timing.breakdown,
+      };
+    }
+
+    // Add enhanced metrics
+    if (metrics.jsonParsing || metrics.ipc || metrics.fileFiltering ||
+        metrics.validation || metrics.context || metrics.codebase ||
+        metrics.sessions || metrics.contributionMode) {
+      report.enhancedMetrics = {
+        jsonParsing: metrics.jsonParsing,
+        ipc: metrics.ipc,
+        fileFiltering: metrics.fileFiltering,
+        validation: metrics.validation,
+        context: metrics.context,
+        codebase: metrics.codebase,
+        sessions: metrics.sessions,
+        contributionMode: metrics.contributionMode,
       };
     }
 
@@ -299,6 +342,148 @@ export class PrdReportGenerator {
       md += `- **Total Events**: ${report.eventsSummary.totalEvents}\n`;
       md += `- **JSON Parse Failures**: ${report.eventsSummary.jsonParseFailures}\n`;
       md += `- **Files Filtered**: ${report.eventsSummary.filesFiltered}\n\n`;
+    }
+
+    // Enhanced metrics sections
+    if (report.enhancedMetrics) {
+      md += `## Enhanced Metrics\n\n`;
+
+      if (report.enhancedMetrics.jsonParsing) {
+        const jp = report.enhancedMetrics.jsonParsing;
+        md += `### JSON Parsing\n\n`;
+        md += `| Metric | Value |\n|--------|-------|\n`;
+        md += `| Total Attempts | ${jp.totalAttempts} |\n`;
+        md += `| Direct Success | ${jp.successByStrategy.direct} |\n`;
+        md += `| Retry Success | ${jp.successByStrategy.retry} |\n`;
+        md += `| AI Fallback Success | ${jp.successByStrategy.aiFallback} |\n`;
+        md += `| Sanitized Success | ${jp.successByStrategy.sanitized} |\n`;
+        md += `| Avg Parsing Time | ${jp.avgParsingTimeMs.toFixed(2)}ms |\n\n`;
+
+        if (jp.aiFallbackUsage.triggered > 0) {
+          md += `#### AI Fallback Usage\n\n`;
+          md += `- **Triggered**: ${jp.aiFallbackUsage.triggered}\n`;
+          md += `- **Succeeded**: ${jp.aiFallbackUsage.succeeded}\n`;
+          md += `- **Failed**: ${jp.aiFallbackUsage.failed}\n`;
+          md += `- **Avg Time**: ${jp.aiFallbackUsage.avgTimeMs.toFixed(2)}ms\n`;
+          md += `- **Tokens Used**: ${jp.aiFallbackUsage.tokensUsed.input + jp.aiFallbackUsage.tokensUsed.output}\n\n`;
+        }
+      }
+
+      if (report.enhancedMetrics.ipc) {
+        const ipc = report.enhancedMetrics.ipc;
+        md += `### IPC Connections\n\n`;
+        md += `| Metric | Value |\n|--------|-------|\n`;
+        md += `| Connections Attempted | ${ipc.connectionsAttempted} |\n`;
+        md += `| Connections Succeeded | ${ipc.connectionsSucceeded} |\n`;
+        md += `| Connections Failed | ${ipc.connectionsFailed} |\n`;
+        md += `| Health Checks | ${ipc.healthChecksPerformed} |\n`;
+        md += `| Health Check Failures | ${ipc.healthCheckFailures} |\n`;
+        md += `| Avg Connection Time | ${ipc.avgConnectionTimeMs.toFixed(2)}ms |\n`;
+        md += `| Retries | ${ipc.retries} |\n\n`;
+      }
+
+      if (report.enhancedMetrics.fileFiltering) {
+        const ff = report.enhancedMetrics.fileFiltering;
+        md += `### File Filtering\n\n`;
+        md += `| Metric | Value |\n|--------|-------|\n`;
+        md += `| Files Filtered | ${ff.filesFiltered} |\n`;
+        md += `| Files Allowed | ${ff.filesAllowed} |\n`;
+        md += `| Boundary Violations | ${ff.boundaryViolations} |\n`;
+        md += `| Predictive Filters | ${ff.predictiveFilters} |\n`;
+        md += `| Suggestions Generated | ${ff.filterSuggestionsGenerated} |\n`;
+        md += `| Avg Filtering Time | ${ff.avgFilteringTimeMs.toFixed(2)}ms |\n\n`;
+      }
+
+      if (report.enhancedMetrics.validation) {
+        const v = report.enhancedMetrics.validation;
+        md += `### Validation Gate\n\n`;
+        md += `| Metric | Value |\n|--------|-------|\n`;
+        md += `| Pre-Validations | ${v.preValidations} |\n`;
+        md += `| Pre-Validation Failures | ${v.preValidationFailures} |\n`;
+        md += `| Post-Validations | ${v.postValidations} |\n`;
+        md += `| Post-Validation Failures | ${v.postValidationFailures} |\n`;
+        md += `| Recovery Suggestions | ${v.recoverySuggestionsGenerated} |\n`;
+        md += `| Avg Validation Time | ${v.avgValidationTimeMs.toFixed(2)}ms |\n\n`;
+      }
+
+      if (report.enhancedMetrics.context) {
+        const ctx = report.enhancedMetrics.context;
+        md += `### Context Management\n\n`;
+        md += `| Metric | Value |\n|--------|-------|\n`;
+        md += `| Total Builds | ${ctx.totalBuilds} |\n`;
+        md += `| Avg Build Time | ${ctx.avgBuildTimeMs.toFixed(2)}ms |\n`;
+        md += `| Avg Context Size | ${(ctx.avgContextSizeChars / 1024).toFixed(2)}KB |\n`;
+        md += `| Avg Files Included | ${ctx.avgFilesIncluded.toFixed(1)} |\n`;
+        md += `| Avg Files Truncated | ${ctx.avgFilesTruncated.toFixed(1)} |\n`;
+        md += `| Window Utilization | ${(ctx.contextWindowUtilization * 100).toFixed(1)}% |\n`;
+        md += `| Search Efficiency | ${(ctx.searchOperations.efficiency * 100).toFixed(1)}% |\n\n`;
+      }
+
+      if (report.enhancedMetrics.codebase) {
+        const cb = report.enhancedMetrics.codebase;
+        md += `### Codebase Operations\n\n`;
+        md += `| Metric | Value |\n|--------|-------|\n`;
+        md += `| Search Operations | ${cb.searchOperations.total} |\n`;
+        md += `| Search Success Rate | ${(cb.searchOperations.successRate * 100).toFixed(1)}% |\n`;
+        md += `| Files Found | ${cb.searchOperations.filesFound} |\n`;
+        md += `| File Reads | ${cb.fileOperations.reads} |\n`;
+        md += `| File Writes | ${cb.fileOperations.writes} |\n`;
+        md += `| File Errors | ${cb.fileOperations.errors} |\n`;
+        md += `| Error Rate | ${(cb.fileOperations.errorRate * 100).toFixed(1)}% |\n`;
+        md += `| Cache Hit Rate | ${(cb.indexing.cacheHitRate * 100).toFixed(1)}% |\n\n`;
+      }
+
+      if (report.enhancedMetrics.sessions) {
+        const s = report.enhancedMetrics.sessions;
+        md += `### Session Management\n\n`;
+        md += `| Metric | Value |\n|--------|-------|\n`;
+        md += `| Total Sessions | ${s.totalSessions} |\n`;
+        md += `| Session Rotations | ${s.sessionRotations} |\n`;
+        md += `| Health Checks | ${s.sessionHealthChecks} |\n`;
+        md += `| Unhealthy Sessions | ${s.unhealthySessions} |\n`;
+        md += `| Persistence Success Rate | ${(s.sessionPersistence.successRate * 100).toFixed(1)}% |\n`;
+        md += `| History Prunings | ${s.historyManagement.prunings} |\n`;
+        md += `| Expired Sessions | ${s.sessionLifespan.expiredSessions} |\n\n`;
+      }
+
+      if (report.enhancedMetrics.contributionMode) {
+        const cm = report.enhancedMetrics.contributionMode;
+        md += `### Contribution Mode\n\n`;
+        md += `| Metric | Value |\n|--------|-------|\n`;
+        md += `| Outer Agent Observations | ${cm.outerAgentObservations} |\n`;
+        md += `| Dev-Loop Fixes Applied | ${cm.devLoopFixesApplied} |\n`;
+        md += `| Root Cause Fixes | ${cm.rootCauseFixes} |\n`;
+        md += `| Workaround Fixes | ${cm.workaroundFixes} |\n`;
+        md += `| Improvements Identified | ${cm.improvementsIdentified} |\n`;
+        md += `| Session Duration | ${this.formatDuration(cm.sessionDuration)} |\n\n`;
+      }
+    }
+
+    // Timing breakdown
+    if (report.timingAnalysis?.breakdown) {
+      const tb = report.timingAnalysis.breakdown;
+      md += `## Timing Breakdown\n\n`;
+      md += `| Operation | Total (ms) | Avg (ms) | Count |\n|-----------|------------|----------|-------|\n`;
+      md += `| JSON Parsing | ${tb.jsonParsing.totalMs.toFixed(2)} | ${tb.jsonParsing.avgMs.toFixed(2)} | ${tb.jsonParsing.count} |\n`;
+      md += `| File Filtering | ${tb.fileFiltering.totalMs.toFixed(2)} | ${tb.fileFiltering.avgMs.toFixed(2)} | ${tb.fileFiltering.count} |\n`;
+      md += `| Validation | ${tb.validation.totalMs.toFixed(2)} | ${tb.validation.avgMs.toFixed(2)} | ${tb.validation.count} |\n`;
+      md += `| IPC | ${tb.ipc.totalMs.toFixed(2)} | ${tb.ipc.avgMs.toFixed(2)} | ${tb.ipc.count} |\n`;
+      md += `| AI Fallback | ${tb.aiFallback.totalMs.toFixed(2)} | ${tb.aiFallback.avgMs.toFixed(2)} | ${tb.aiFallback.count} |\n`;
+      md += `| Context Building | ${tb.contextBuilding.totalMs.toFixed(2)} | ${tb.contextBuilding.avgMs.toFixed(2)} | ${tb.contextBuilding.count} |\n`;
+      md += `| Codebase Search | ${tb.codebaseSearch.totalMs.toFixed(2)} | ${tb.codebaseSearch.avgMs.toFixed(2)} | ${tb.codebaseSearch.count} |\n`;
+      md += `| File Operations | ${tb.fileOperations.totalMs.toFixed(2)} | ${tb.fileOperations.avgMs.toFixed(2)} | ${tb.fileOperations.count} |\n`;
+      md += `| Session Management | ${tb.sessionManagement.totalMs.toFixed(2)} | ${tb.sessionManagement.avgMs.toFixed(2)} | ${tb.sessionManagement.count} |\n\n`;
+    }
+
+    // Token breakdown by feature
+    if (report.tokenBreakdown?.byFeature) {
+      const tf = report.tokenBreakdown.byFeature;
+      md += `## Token Breakdown by Feature\n\n`;
+      md += `| Feature | Input | Output | Total |\n|---------|-------|--------|-------|\n`;
+      md += `| Code Generation | ${tf.codeGeneration.input} | ${tf.codeGeneration.output} | ${tf.codeGeneration.input + tf.codeGeneration.output} |\n`;
+      md += `| AI Fallback | ${tf.aiFallback.input} | ${tf.aiFallback.output} | ${tf.aiFallback.input + tf.aiFallback.output} |\n`;
+      md += `| Retry | ${tf.retry.input} | ${tf.retry.output} | ${tf.retry.input + tf.retry.output} |\n`;
+      md += `| Error Analysis | ${tf.errorAnalysis.input} | ${tf.errorAnalysis.output} | ${tf.errorAnalysis.input + tf.errorAnalysis.output} |\n\n`;
     }
 
     return md;
