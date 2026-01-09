@@ -865,35 +865,28 @@ export class WorkflowEngine {
       const targetModule = (this as any).currentPrdTargetModule;
       if (targetModule && changes.files && changes.files.length > 0) {
         const originalCount = changes.files.length;
-        const filteredFiles: string[] = [];
 
-        changes.files = changes.files.filter(file => {
-          const allowed = this.isFileInTargetModule(file.path, targetModule);
-          if (!allowed) {
-            filteredFiles.push(file.path);
-            console.warn(`[WorkflowEngine] FILTERED: ${file.path} (outside target module ${targetModule})`);
+        // Use enhanced filtering with suggestions
+        const { allowed, filtered } = this.filterFilesWithSuggestions(
+          changes.files,
+          targetModule,
+          task.id
+        );
 
-            // Emit event for each filtered file
-            emitEvent('file:filtered', {
-              path: file.path,
-              targetModule,
-              reason: 'outside target module',
-              operation: file.operation,
-            }, {
-              severity: 'warn',
-              taskId: task.id,
-              prdId: (this as any).currentPrdId,
-              phaseId: (this as any).currentPhaseId,
-              targetModule,
-            });
+        changes.files = allowed;
+
+        if (filtered.length > 0) {
+          console.warn(`[WorkflowEngine] Filtered ${filtered.length} file(s) outside target module ${targetModule}`);
+
+          // Log suggestions for filtered files
+          for (const f of filtered) {
+            console.warn(`  - ${f.path}`);
+            console.warn(`    Suggestion: ${f.suggestion}`);
           }
-          return allowed;
-        });
 
-        if (filteredFiles.length > 0) {
-          console.warn(`[WorkflowEngine] Filtered ${filteredFiles.length} file(s) outside target module ${targetModule}`);
-          // Update summary to reflect filtering
-          changes.summary = `${changes.summary || ''} [FILTERED: ${filteredFiles.length} files outside target module]`;
+          // Update summary to reflect filtering with suggestions
+          const suggestions = filtered.slice(0, 2).map(f => f.suggestion).join('; ');
+          changes.summary = `${changes.summary || ''} [FILTERED: ${filtered.length} files outside target module. ${suggestions}]`;
         }
       }
 
@@ -2044,26 +2037,211 @@ export class WorkflowEngine {
 
   /**
    * Check if a file path is within the target module directory
+   * Enhanced with symlink resolution, relative path normalization, and edge case handling
    */
   private isFileInTargetModule(filePath: string, targetModule: string): boolean {
-    // Allow files in the module directory
-    if (filePath.includes(`modules/share/${targetModule}/`) ||
-        filePath.includes(`modules/${targetModule}/`)) {
-      return true;
+    // Normalize the path to handle relative paths and resolve symlinks conceptually
+    let normalizedPath = filePath;
+
+    // Handle relative path prefixes like ./ or ../
+    if (normalizedPath.startsWith('./')) {
+      normalizedPath = normalizedPath.substring(2);
+    }
+
+    // Resolve double slashes
+    normalizedPath = normalizedPath.replace(/\/+/g, '/');
+
+    // Handle absolute paths - extract relative portion
+    if (normalizedPath.startsWith('/')) {
+      const projectRoot = process.cwd();
+      if (normalizedPath.startsWith(projectRoot)) {
+        normalizedPath = normalizedPath.substring(projectRoot.length + 1);
+      }
+    }
+
+    // Allow files in the module directory (various path patterns)
+    const modulePatterns = [
+      `modules/share/${targetModule}/`,
+      `modules/${targetModule}/`,
+      `docroot/modules/share/${targetModule}/`,
+      `docroot/modules/${targetModule}/`,
+      `web/modules/share/${targetModule}/`,
+      `web/modules/${targetModule}/`,
+    ];
+
+    for (const pattern of modulePatterns) {
+      if (normalizedPath.includes(pattern)) {
+        return true;
+      }
     }
 
     // Allow test files for this module
-    if (filePath.includes(`tests/playwright/${targetModule}/`) ||
-        filePath.includes(`tests/${targetModule}/`)) {
-      return true;
+    const testPatterns = [
+      `tests/playwright/${targetModule}/`,
+      `tests/${targetModule}/`,
+      `test/${targetModule}/`,
+    ];
+
+    for (const pattern of testPatterns) {
+      if (normalizedPath.includes(pattern)) {
+        return true;
+      }
     }
 
     // Allow module-specific config
-    if (filePath.includes(`config/`) && filePath.includes(targetModule)) {
+    if (normalizedPath.includes(`config/`) && normalizedPath.includes(targetModule)) {
+      return true;
+    }
+
+    // Allow module-specific files in .taskmaster or .devloop
+    if ((normalizedPath.includes('.taskmaster/') || normalizedPath.includes('.devloop/')) &&
+        normalizedPath.includes(targetModule)) {
       return true;
     }
 
     return false;
+  }
+
+  /**
+   * Generate a suggestion for files filtered outside target module
+   * Helps developers understand what the correct path should be
+   */
+  private generateFilterSuggestion(filePath: string, targetModule: string): string {
+    // Extract the filename
+    const filename = path.basename(filePath);
+
+    // Common patterns and their corrections
+    if (filePath.includes('modules/share/') && !filePath.includes(`modules/share/${targetModule}/`)) {
+      const wrongModule = filePath.match(/modules\/share\/([^/]+)/)?.[1];
+      if (wrongModule) {
+        return `File is in module "${wrongModule}" but target is "${targetModule}". ` +
+               `Did you mean: docroot/modules/share/${targetModule}/src/.../${filename}?`;
+      }
+    }
+
+    if (filePath.includes('.module') || filePath.includes('.info.yml')) {
+      return `Module file should be: docroot/modules/share/${targetModule}/${targetModule}${path.extname(filePath)}`;
+    }
+
+    if (filePath.includes('/src/Plugin/')) {
+      const pluginType = filePath.match(/Plugin\/([^/]+)/)?.[1];
+      return `Plugin file should be in: docroot/modules/share/${targetModule}/src/Plugin/${pluginType || 'Type'}/${filename}`;
+    }
+
+    if (filePath.includes('/tests/') || filePath.includes('.spec.ts') || filePath.includes('.test.ts')) {
+      return `Test file should be in: tests/playwright/${targetModule}/${filename}`;
+    }
+
+    if (filePath.includes('/config/')) {
+      return `Config file should include module name: config/default/${targetModule}.*.yml`;
+    }
+
+    // Generic suggestion
+    return `File should be within: docroot/modules/share/${targetModule}/ or tests/playwright/${targetModule}/`;
+  }
+
+  /**
+   * Predictive filtering: Check if prompt context contains paths outside target module
+   * This catches potential boundary violations before AI even generates code
+   */
+  private checkPredictiveFiltering(promptContext: string, targetModule: string): {
+    warnings: string[];
+    filteredPaths: string[];
+  } {
+    const warnings: string[] = [];
+    const filteredPaths: string[] = [];
+
+    // Extract file paths from prompt context
+    const pathPattern = /(?:docroot|web)?\/modules\/(?:share\/)?([a-z_]+)\//gi;
+    let match;
+
+    while ((match = pathPattern.exec(promptContext)) !== null) {
+      const foundModule = match[1];
+      if (foundModule !== targetModule && !filteredPaths.includes(foundModule)) {
+        filteredPaths.push(foundModule);
+        warnings.push(
+          `Context references module "${foundModule}" but target is "${targetModule}". ` +
+          `AI may attempt to modify wrong module.`
+        );
+      }
+    }
+
+    // Emit predictive filtering event if issues found
+    if (warnings.length > 0) {
+      emitEvent('file:filtered_predictive', {
+        targetModule,
+        referencedModules: filteredPaths,
+        warningCount: warnings.length,
+      }, {
+        severity: 'warn',
+        prdId: (this as any).currentPrdId,
+        phaseId: (this as any).currentPhaseId,
+        targetModule,
+      });
+    }
+
+    return { warnings, filteredPaths };
+  }
+
+  /**
+   * Enhanced file filtering with suggestions and detailed logging
+   */
+  private filterFilesWithSuggestions(
+    files: CodeChanges['files'],
+    targetModule: string,
+    taskId?: string
+  ): {
+    allowed: CodeChanges['files'];
+    filtered: Array<{ path: string; suggestion: string; operation: string }>;
+  } {
+    const allowed: CodeChanges['files'] = [];
+    const filtered: Array<{ path: string; suggestion: string; operation: string }> = [];
+
+    for (const file of files) {
+      if (this.isFileInTargetModule(file.path, targetModule)) {
+        allowed.push(file);
+      } else {
+        const suggestion = this.generateFilterSuggestion(file.path, targetModule);
+        filtered.push({
+          path: file.path,
+          suggestion,
+          operation: file.operation,
+        });
+
+        logger.warn(`[WorkflowEngine] FILTERED: ${file.path}`);
+        logger.warn(`[WorkflowEngine] SUGGESTION: ${suggestion}`);
+
+        // Emit detailed filter event
+        emitEvent('file:filtered', {
+          path: file.path,
+          targetModule,
+          reason: 'outside target module',
+          operation: file.operation,
+          suggestion,
+        }, {
+          severity: 'warn',
+          taskId,
+          prdId: (this as any).currentPrdId,
+          phaseId: (this as any).currentPhaseId,
+          targetModule,
+        });
+
+        // Also emit boundary violation for analytics
+        emitEvent('file:boundary_violation', {
+          path: file.path,
+          targetModule,
+          suggestion,
+        }, {
+          severity: 'warn',
+          taskId,
+          prdId: (this as any).currentPrdId,
+          phaseId: (this as any).currentPhaseId,
+          targetModule,
+        });
+      }
+    }
+
+    return { allowed, filtered };
   }
 
   /**

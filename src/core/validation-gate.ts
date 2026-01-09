@@ -3,22 +3,67 @@ import * as path from 'path';
 import { exec } from 'child_process';
 import { promisify } from 'util';
 import { CodeChanges, CodePatch } from '../types';
+import { emitEvent } from './event-stream';
 
 const execAsync = promisify(exec);
 
+/**
+ * Error categories for better classification and recovery
+ */
+export type ValidationErrorCategory =
+  | 'syntax'           // Code syntax errors
+  | 'missing_function' // Referenced function doesn't exist
+  | 'missing_import'   // Required import missing
+  | 'patch_not_found'  // Patch search string not found
+  | 'file_not_found'   // Target file doesn't exist
+  | 'boundary'         // File outside allowed boundaries
+  | 'destructive'      // Destructive update detected
+  | 'dependency';      // Missing dependency
+
+export interface RecoverySuggestion {
+  action: 'fix' | 'retry' | 'skip' | 'manual';
+  description: string;
+  code?: string; // Code snippet to fix the issue
+  reference?: string; // Reference to documentation or pattern
+}
+
 export interface ValidationError {
-  type: 'syntax' | 'missing_function' | 'missing_import' | 'patch_not_found' | 'file_not_found';
+  type: ValidationErrorCategory;
+  category: 'recoverable' | 'blocking' | 'warning';
   file: string;
   message: string;
   suggestion?: string;
   patchIndex?: number;
+  recovery?: RecoverySuggestion;
+  context?: {
+    lineNumber?: number;
+    searchString?: string;
+    expectedPattern?: string;
+  };
 }
 
 export interface ValidationResult {
   valid: boolean;
   errors: ValidationError[];
   warnings: string[];
+  recoveryPossible: boolean;
+  recoverySuggestions: RecoverySuggestion[];
 }
+
+/**
+ * Validation pattern tracking for learning
+ */
+export interface ValidationPattern {
+  errorType: ValidationErrorCategory;
+  count: number;
+  lastSeen: string;
+  commonFixes: string[];
+}
+
+/**
+ * Validation patterns storage
+ */
+let validationPatterns: Map<string, ValidationPattern> = new Map();
 
 /**
  * ValidationGate validates code changes before they are applied to the filesystem.
@@ -59,7 +104,8 @@ export class ValidationGate {
 
         if (!isAllowed) {
           errors.push({
-            type: 'syntax',
+            type: 'boundary',
+            category: 'blocking',
             file: file.path,
             message: `File "${file.path}" is not in the task's target files and should not be modified`,
             suggestion: `Only modify files explicitly mentioned in the task. Target files: ${allowedPaths.slice(0, 5).join(', ')}`,
@@ -75,7 +121,8 @@ export class ValidationGate {
       if (file.operation === 'update' && await fs.pathExists(filePath)) {
         if (file.path.includes('.spec.ts') || file.path.includes('.test.ts')) {
           errors.push({
-            type: 'syntax',
+            type: 'destructive',
+            category: 'recoverable',
             file: file.path,
             message: 'Test files should use operation "patch" not "update" to avoid replacing existing code',
             suggestion: 'Change operation to "patch" and use search/replace to add new test scenarios.',
@@ -92,7 +139,8 @@ export class ValidationGate {
         // If the new content is less than 50% of the original size, reject it
         if (newLines < existingLines * 0.5 && existingLines > 100) {
           errors.push({
-            type: 'syntax',
+            type: 'destructive',
+            category: 'blocking',
             file: file.path,
             message: `Destructive update detected: new content (${newLines} lines) is much smaller than existing (${existingLines} lines)`,
             suggestion: 'Use operation "patch" with search/replace instead of replacing the entire file. Only modify the specific lines that need to change.',
@@ -110,13 +158,14 @@ export class ValidationGate {
       if (file.operation === 'patch' || file.operation === 'update') {
         if (!await fs.pathExists(filePath)) {
           if (file.operation === 'patch') {
-            errors.push({
-              type: 'file_not_found',
-              file: file.path,
-              message: `Cannot patch non-existent file: ${file.path}`,
-              suggestion: 'Use operation "create" to create a new file, or check the file path.',
-            });
-            continue;
+          errors.push({
+            type: 'file_not_found',
+            category: 'recoverable',
+            file: file.path,
+            message: `Cannot patch non-existent file: ${file.path}`,
+            suggestion: 'Use operation "create" to create a new file, or check the file path.',
+          });
+          continue;
           }
           // For update, we'll create the file if it doesn't exist
         }
@@ -137,11 +186,164 @@ export class ValidationGate {
       }
     }
 
+    // Categorize errors and generate recovery suggestions
+    const recoverySuggestions: RecoverySuggestion[] = [];
+    let recoveryPossible = true;
+
+    for (const error of errors) {
+      // Add recovery suggestions based on error type
+      const recovery = this.generateRecoverySuggestion(error);
+      error.recovery = recovery;
+      recoverySuggestions.push(recovery);
+
+      // Check if recovery is possible
+      if (error.category === 'blocking') {
+        recoveryPossible = false;
+      }
+
+      // Track validation pattern
+      this.trackValidationPattern(error);
+    }
+
+    // Emit validation event with detailed info
+    if (errors.length > 0) {
+      emitEvent('validation:error_with_suggestion', {
+        errorCount: errors.length,
+        errorTypes: [...new Set(errors.map(e => e.type))],
+        recoveryPossible,
+        suggestions: recoverySuggestions.slice(0, 3).map(s => s.description),
+      }, { severity: errors.some(e => e.category === 'blocking') ? 'error' : 'warn' });
+    }
+
     return {
       valid: errors.length === 0,
       errors,
       warnings,
+      recoveryPossible,
+      recoverySuggestions,
     };
+  }
+
+  /**
+   * Generate recovery suggestion based on error type and context
+   */
+  private generateRecoverySuggestion(error: ValidationError): RecoverySuggestion {
+    switch (error.type) {
+      case 'patch_not_found':
+        return {
+          action: 'fix',
+          description: 'Update patch search string to match current file content',
+          code: error.suggestion?.includes('Similar content')
+            ? `Use this content instead:\n${error.suggestion.split('\n').slice(1).join('\n')}`
+            : undefined,
+          reference: 'Ensure search string matches exactly including whitespace',
+        };
+
+      case 'file_not_found':
+        return {
+          action: 'fix',
+          description: 'Change operation from "patch" to "create" for new files',
+          code: `{ "operation": "create", "content": "..." }`,
+          reference: 'Use "create" operation for files that do not exist',
+        };
+
+      case 'syntax':
+        return {
+          action: 'fix',
+          description: error.suggestion || 'Fix syntax error in generated code',
+          reference: 'Run TypeScript compiler to verify syntax before applying',
+        };
+
+      case 'destructive':
+        return {
+          action: 'fix',
+          description: 'Use "patch" operation instead of "update" for targeted changes',
+          code: `{ "operation": "patch", "patches": [{ "search": "...", "replace": "..." }] }`,
+          reference: 'Patch operations preserve existing code and only modify specific sections',
+        };
+
+      case 'boundary':
+        return {
+          action: 'skip',
+          description: 'File is outside allowed target module - it will be skipped',
+          reference: 'Only modify files within the target module directory',
+        };
+
+      case 'missing_import':
+        return {
+          action: 'fix',
+          description: 'Add missing import statement',
+          code: `import { MissingType } from './path/to/module';`,
+          reference: 'Check existing imports in similar files for reference',
+        };
+
+      case 'missing_function':
+        return {
+          action: 'fix',
+          description: 'Define the missing function or import it from another module',
+          reference: 'Search codebase for existing implementations',
+        };
+
+      case 'dependency':
+        return {
+          action: 'manual',
+          description: 'Install missing dependency or use existing alternative',
+          reference: 'Run npm install or check package.json for available packages',
+        };
+
+      default:
+        return {
+          action: 'manual',
+          description: error.suggestion || 'Review and fix manually',
+        };
+    }
+  }
+
+  /**
+   * Track validation patterns for learning
+   */
+  private trackValidationPattern(error: ValidationError): void {
+    const key = `${error.type}:${path.extname(error.file)}`;
+
+    const existing = validationPatterns.get(key);
+    if (existing) {
+      existing.count++;
+      existing.lastSeen = new Date().toISOString();
+      if (error.suggestion && !existing.commonFixes.includes(error.suggestion)) {
+        existing.commonFixes.push(error.suggestion);
+        if (existing.commonFixes.length > 5) {
+          existing.commonFixes = existing.commonFixes.slice(-5);
+        }
+      }
+    } else {
+      validationPatterns.set(key, {
+        errorType: error.type,
+        count: 1,
+        lastSeen: new Date().toISOString(),
+        commonFixes: error.suggestion ? [error.suggestion] : [],
+      });
+    }
+  }
+
+  /**
+   * Get validation patterns for analysis
+   */
+  getValidationPatterns(): ValidationPattern[] {
+    return Array.from(validationPatterns.values())
+      .sort((a, b) => b.count - a.count);
+  }
+
+  /**
+   * Export validation patterns to file
+   */
+  async exportValidationPatterns(filePath: string = '.devloop/reports/validation-patterns.json'): Promise<void> {
+    const patterns = this.getValidationPatterns();
+    const reportPath = path.resolve(process.cwd(), filePath);
+    await fs.ensureDir(path.dirname(reportPath));
+    await fs.writeJson(reportPath, {
+      exportedAt: new Date().toISOString(),
+      patterns,
+    }, { spaces: 2 });
   }
 
   /**
@@ -190,10 +392,14 @@ export class ValidationGate {
 
       errors.push({
         type: 'patch_not_found',
+        category: 'recoverable',
         file: path.relative(process.cwd(), filePath),
         patchIndex: i + 1,
         message: `Patch ${i + 1}: Search string not found in file`,
         suggestion: suggestion || 'Ensure the search string matches EXACTLY, including whitespace and line endings.',
+        context: {
+          searchString: patch.search.substring(0, 200),
+        },
       });
     }
 
@@ -359,6 +565,7 @@ export class ValidationGate {
         if (check.check(content)) {
           errors.push({
             type: 'syntax',
+            category: 'recoverable',
             file: filePath,
             message: check.message,
             suggestion: check.suggestion,
@@ -367,6 +574,7 @@ export class ValidationGate {
       } else if (check.pattern.test(content)) {
         errors.push({
           type: 'syntax',
+          category: 'recoverable',
           file: filePath,
           message: check.message,
           suggestion: check.suggestion,
@@ -406,6 +614,7 @@ export class ValidationGate {
           if (errorLines.length > 0) {
             errors.push({
               type: 'syntax',
+              category: 'blocking',
               file: filePath,
               message: `TypeScript compilation errors: ${errorLines.slice(0, 3).join('; ')}`,
               suggestion: 'Fix TypeScript syntax errors before applying',

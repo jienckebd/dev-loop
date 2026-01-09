@@ -147,13 +147,58 @@ When spawning child agents, the parent passes these environment variables:
 
 ### Socket Path
 
-Socket files are created in the system temp directory:
+Socket files are created in the system temp directory with unique identifiers:
 
 ```
-/tmp/devloop-{sessionId}.sock
+/tmp/devloop-{sessionId}-{timestamp}-{randomId}.sock
 ```
 
-On macOS, this is typically `/var/folders/.../devloop-{sessionId}.sock`.
+On macOS, this is typically `/var/folders/.../devloop-{sessionId}-{timestamp}-{randomId}.sock`.
+
+## Socket Collision Handling
+
+When multiple parallel agents start with the same session ID, they could previously collide on the same socket path. This is now handled automatically:
+
+### Unique Socket Paths
+
+Each IPC server instance generates a unique path using:
+- Session ID (for grouping)
+- High-resolution timestamp (`process.hrtime.bigint()`)
+- Random suffix (for additional uniqueness)
+
+```typescript
+// In AgentIPCServer
+getSocketPath() {
+  const tmpDir = os.tmpdir();
+  const uniqueId = process.hrtime.bigint().toString();
+  return path.join(tmpDir, `devloop-${sessionId}-${uniqueId}.sock`);
+}
+```
+
+### EADDRINUSE Fallback
+
+If `EADDRINUSE` still occurs (rare edge case), automatic retry with alternate path:
+
+```typescript
+try {
+  await ipcServer.start();
+} catch (error) {
+  if (error.code === 'EADDRINUSE') {
+    logger.warn('[AgentIPCServer] Socket in use, trying alternate path');
+    ipcServer = new AgentIPCServer(sessionId, debug, true); // alternate
+    await ipcServer.start();
+  }
+}
+```
+
+### Example Log Output
+
+When fallback is triggered:
+
+```
+[WARN] [AgentIPCServer] Socket in use, trying alternate path
+[DEBUG] [CursorChatOpener] IPC server started at /var/folders/.../devloop-alt-abc123.sock
+```
 
 ## Debugging
 
@@ -191,9 +236,15 @@ With debug enabled, IPC messages appear in logs:
 
 ### Common Issues
 
+**EADDRINUSE (Socket Already in Use)**
+- Multiple parallel agents tried to use same socket path
+- Fix: Automatic - unique socket paths and fallback retry handle this
+- Manual: Delete socket file if automatic handling fails
+
 **Socket Already Exists**
 - Previous run didn't clean up
-- Fix: Delete socket file manually or restart
+- Fix: Automatic cleanup on `server.stop()`
+- Manual: Delete socket file (`rm /tmp/devloop-*.sock`)
 
 **Connection Timeout**
 - Child agent failed to connect within 5 seconds

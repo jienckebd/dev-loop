@@ -1,71 +1,440 @@
 /**
  * PRD Report Generator
  *
- * Generates comprehensive reports after PRD Set, PRD, or Phase completion.
+ * Automatically generates comprehensive reports after PRD set completion.
+ * Supports multiple formats: markdown, JSON, HTML.
  */
 
 import * as fs from 'fs-extra';
 import * as path from 'path';
-import { PrdSetMetricsData, PrdMetricsData, PhaseMetricsData } from './hierarchical-metrics';
+import { PrdSetMetricsData } from './hierarchical-metrics';
 import { PrdSetMetrics } from './prd-set-metrics';
-import { PrdMetrics } from './prd-metrics';
-import { PhaseMetrics } from './phase-metrics';
-import { CostCalculator } from './cost-calculator';
+import { ObservationAnalyzer } from './observation-analyzer';
+import { getEventStream } from './event-stream';
 import { logger } from './logger';
 
-export type ReportFormat = 'json' | 'markdown' | 'html';
+export type ReportFormat = 'markdown' | 'json' | 'html';
 
 export interface ReportOptions {
-  format?: ReportFormat;
-  output?: string;
-  compareWith?: string; // PRD ID or PRD Set ID to compare with
+  format: ReportFormat;
+  includeObservations?: boolean;
+  includeEvents?: boolean;
+  includeTokenBreakdown?: boolean;
+  includeTimingAnalysis?: boolean;
+  outputPath?: string;
+  output?: string; // Alias for outputPath (CLI compatibility)
+  compareWith?: string; // For comparison reports
+}
+
+export interface PrdSetReport {
+  generatedAt: string;
+  setId: string;
+  status: string;
+  summary: {
+    duration: string;
+    prdsCompleted: number;
+    prdsTotal: number;
+    successRate: string;
+    totalTokens: number;
+    estimatedCost: string;
+    testsPassed: number;
+    testsFailed: number;
+  };
+  tokenBreakdown?: {
+    inputTokens: number;
+    outputTokens: number;
+    estimatedCost: number;
+  };
+  timingAnalysis?: {
+    totalDurationMs: number;
+    avgPrdMs: number;
+    avgTaskMs: number;
+  };
+  observationSummary?: {
+    totalObservations: number;
+    byType: Record<string, number>;
+    topPatterns: string[];
+    recommendations: string[];
+  };
+  eventsSummary?: {
+    totalEvents: number;
+    byType: Record<string, number>;
+    jsonParseFailures: number;
+    filesFiltered: number;
+  };
+  prdDetails: Array<{
+    prdId: string;
+    status: string;
+    phasesCompleted: number;
+    phasesTotal: number;
+  }>;
 }
 
 export class PrdReportGenerator {
   private reportsPath: string;
+  private prdSetMetrics: PrdSetMetrics;
+  private observationAnalyzer: ObservationAnalyzer;
 
   constructor(reportsPath: string = '.devloop/reports') {
     this.reportsPath = path.resolve(process.cwd(), reportsPath);
+    this.prdSetMetrics = new PrdSetMetrics();
+    this.observationAnalyzer = new ObservationAnalyzer();
   }
 
   /**
-   * Generate report for a PRD Set
+   * Generate a comprehensive report for a PRD set
+   * Returns the report path (string) for CLI compatibility
+   * Use generatePrdSetReportFull for full report data
    */
-  async generatePrdSetReport(setId: string, options: ReportOptions = {}): Promise<string> {
-    const prdSetMetrics = new PrdSetMetrics();
-    const metrics = prdSetMetrics.getPrdSetMetrics(setId);
+  async generatePrdSetReport(
+    setId: string,
+    options: Partial<ReportOptions> = {}
+  ): Promise<{ report: PrdSetReport; path: string }> {
+    const fullOptions: ReportOptions = {
+      format: options.format || 'markdown',
+      includeObservations: options.includeObservations ?? true,
+      includeEvents: options.includeEvents ?? true,
+      includeTokenBreakdown: options.includeTokenBreakdown ?? true,
+      includeTimingAnalysis: options.includeTimingAnalysis ?? true,
+      outputPath: options.outputPath || options.output,
+    };
+    const metrics = this.prdSetMetrics.getPrdSetMetrics(setId);
 
     if (!metrics) {
-      throw new Error(`PRD Set metrics not found: ${setId}`);
+      throw new Error(`PRD set metrics not found: ${setId}`);
     }
 
-    const format = options.format || 'markdown';
-    const outputPath = options.output || path.join(this.reportsPath, `prd-set-${setId}.${format}`);
+    // Build report data
+    const report = await this.buildReportData(metrics, fullOptions);
 
+    // Generate output based on format
     let content: string;
-    switch (format) {
+    let extension: string;
+
+    switch (fullOptions.format) {
       case 'json':
-        content = this.generatePrdSetJson(metrics);
+        content = JSON.stringify(report, null, 2);
+        extension = 'json';
         break;
       case 'html':
-        content = this.generatePrdSetHtml(metrics);
+        content = this.generateHtmlReport(report);
+        extension = 'html';
         break;
       case 'markdown':
       default:
-        content = this.generatePrdSetMarkdown(metrics);
+        content = this.generateMarkdownReport(report);
+        extension = 'md';
     }
 
-    await fs.ensureDir(path.dirname(outputPath));
-    await fs.writeFile(outputPath, content, 'utf-8');
+    // Save report
+    const filename = `prd-set-${setId}-${Date.now()}.${extension}`;
+    const reportPath = fullOptions.outputPath || path.join(this.reportsPath, filename);
 
-    logger.info(`Report generated: ${outputPath}`);
-    return outputPath;
+    await fs.ensureDir(path.dirname(reportPath));
+    await fs.writeFile(reportPath, content, 'utf-8');
+
+    logger.info(`[PrdReportGenerator] Report saved: ${reportPath}`);
+
+    // Emit report generated event
+    try {
+      const { emitEvent } = require('./event-stream');
+      emitEvent('report:generated', {
+        setId,
+        format: fullOptions.format,
+        path: reportPath,
+        summaryStats: report.summary,
+      }, { severity: 'info' });
+    } catch {
+      // Event stream not available
+    }
+
+    return { report, path: reportPath };
   }
 
   /**
-   * Generate report for a PRD
+   * Build comprehensive report data from metrics and other sources
    */
-  async generatePrdReport(prdId: string, options: ReportOptions = {}): Promise<string> {
+  private async buildReportData(
+    metrics: PrdSetMetricsData,
+    options: ReportOptions
+  ): Promise<PrdSetReport> {
+    const report: PrdSetReport = {
+      generatedAt: new Date().toISOString(),
+      setId: metrics.setId,
+      status: metrics.status,
+      summary: {
+        duration: this.formatDuration(metrics.duration || 0),
+        prdsCompleted: metrics.prds.completed,
+        prdsTotal: metrics.prds.total,
+        successRate: `${(metrics.prds.successRate * 100).toFixed(1)}%`,
+        totalTokens: (metrics.tokens.totalInput || 0) + (metrics.tokens.totalOutput || 0),
+        estimatedCost: `$${(metrics.tokens.totalCost || 0).toFixed(4)}`,
+        testsPassed: metrics.tests.passing,
+        testsFailed: metrics.tests.failing,
+      },
+      prdDetails: [],
+    };
+
+    // Add token breakdown if requested
+    if (options.includeTokenBreakdown) {
+      report.tokenBreakdown = {
+        inputTokens: metrics.tokens.totalInput || 0,
+        outputTokens: metrics.tokens.totalOutput || 0,
+        estimatedCost: metrics.tokens.totalCost || 0,
+      };
+    }
+
+    // Add timing analysis if requested
+    if (options.includeTimingAnalysis) {
+      report.timingAnalysis = {
+        totalDurationMs: metrics.duration || 0,
+        avgPrdMs: metrics.timing.avgPrdMs || 0,
+        avgTaskMs: metrics.timing.avgTaskMs || 0,
+      };
+    }
+
+    // Add observation summary if requested
+    if (options.includeObservations) {
+      try {
+        const analysisReport = await this.observationAnalyzer.generateReport({
+          prdSetId: metrics.setId,
+        });
+
+        report.observationSummary = {
+          totalObservations: analysisReport.summary.totalObservations,
+          byType: analysisReport.summary.byType,
+          topPatterns: analysisReport.patterns.slice(0, 5).map(p => p.pattern),
+          recommendations: analysisReport.recommendations,
+        };
+      } catch (error) {
+        logger.warn(`[PrdReportGenerator] Failed to include observations: ${error}`);
+      }
+    }
+
+    // Add events summary if requested
+    if (options.includeEvents) {
+      try {
+        const eventStream = getEventStream();
+        const analytics = eventStream.getAnalytics();
+
+        report.eventsSummary = {
+          totalEvents: analytics.totalEvents,
+          byType: analytics.byType,
+          jsonParseFailures: analytics.jsonParseFailures,
+          filesFiltered: analytics.fileFilteredCount,
+        };
+      } catch (error) {
+        logger.warn(`[PrdReportGenerator] Failed to include events: ${error}`);
+      }
+    }
+
+    return report;
+  }
+
+  /**
+   * Generate markdown report
+   */
+  private generateMarkdownReport(report: PrdSetReport): string {
+    let md = `# PRD Set Execution Report\n\n`;
+    md += `**Set ID**: ${report.setId}\n`;
+    md += `**Generated**: ${report.generatedAt}\n`;
+    md += `**Status**: ${report.status}\n\n`;
+
+    md += `## Summary\n\n`;
+    md += `| Metric | Value |\n`;
+    md += `|--------|-------|\n`;
+    md += `| Duration | ${report.summary.duration} |\n`;
+    md += `| PRDs Completed | ${report.summary.prdsCompleted}/${report.summary.prdsTotal} |\n`;
+    md += `| Success Rate | ${report.summary.successRate} |\n`;
+    md += `| Total Tokens | ${report.summary.totalTokens.toLocaleString()} |\n`;
+    md += `| Estimated Cost | ${report.summary.estimatedCost} |\n`;
+    md += `| Tests Passed | ${report.summary.testsPassed} |\n`;
+    md += `| Tests Failed | ${report.summary.testsFailed} |\n\n`;
+
+    if (report.tokenBreakdown) {
+      md += `## Token Breakdown\n\n`;
+      md += `- **Input Tokens**: ${report.tokenBreakdown.inputTokens.toLocaleString()}\n`;
+      md += `- **Output Tokens**: ${report.tokenBreakdown.outputTokens.toLocaleString()}\n`;
+      md += `- **Estimated Cost**: $${report.tokenBreakdown.estimatedCost.toFixed(4)}\n\n`;
+    }
+
+    if (report.timingAnalysis) {
+      md += `## Timing Analysis\n\n`;
+      md += `- **Total Duration**: ${this.formatDuration(report.timingAnalysis.totalDurationMs)}\n`;
+      md += `- **Average PRD Time**: ${this.formatDuration(report.timingAnalysis.avgPrdMs)}\n`;
+      md += `- **Average Task Time**: ${this.formatDuration(report.timingAnalysis.avgTaskMs)}\n\n`;
+    }
+
+    if (report.observationSummary) {
+      md += `## Observations\n\n`;
+      md += `**Total Observations**: ${report.observationSummary.totalObservations}\n\n`;
+
+      if (Object.keys(report.observationSummary.byType).length > 0) {
+        md += `### By Type\n\n`;
+        for (const [type, count] of Object.entries(report.observationSummary.byType)) {
+          md += `- ${type}: ${count}\n`;
+        }
+        md += `\n`;
+      }
+
+      if (report.observationSummary.topPatterns.length > 0) {
+        md += `### Top Patterns\n\n`;
+        for (const pattern of report.observationSummary.topPatterns) {
+          md += `- ${pattern}\n`;
+        }
+        md += `\n`;
+      }
+
+      if (report.observationSummary.recommendations.length > 0) {
+        md += `### Recommendations\n\n`;
+        for (const rec of report.observationSummary.recommendations) {
+          md += `- ${rec}\n`;
+        }
+        md += `\n`;
+      }
+    }
+
+    if (report.eventsSummary) {
+      md += `## Events Summary\n\n`;
+      md += `- **Total Events**: ${report.eventsSummary.totalEvents}\n`;
+      md += `- **JSON Parse Failures**: ${report.eventsSummary.jsonParseFailures}\n`;
+      md += `- **Files Filtered**: ${report.eventsSummary.filesFiltered}\n\n`;
+    }
+
+    return md;
+  }
+
+  /**
+   * Generate HTML report
+   */
+  private generateHtmlReport(report: PrdSetReport): string {
+    return `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>PRD Set Report - ${report.setId}</title>
+  <style>
+    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; max-width: 1200px; margin: 0 auto; padding: 20px; background: #f5f5f5; }
+    .card { background: white; border-radius: 8px; padding: 20px; margin-bottom: 20px; box-shadow: 0 1px 3px rgba(0,0,0,0.1); }
+    h1 { color: #333; }
+    h2 { color: #555; border-bottom: 2px solid #007bff; padding-bottom: 10px; }
+    .status-completed { color: #28a745; }
+    .status-failed { color: #dc3545; }
+    .status-blocked { color: #ffc107; }
+    .metric-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 15px; }
+    .metric { text-align: center; padding: 15px; background: #f8f9fa; border-radius: 6px; }
+    .metric-value { font-size: 2em; font-weight: bold; color: #007bff; }
+    .metric-label { color: #666; margin-top: 5px; }
+    table { width: 100%; border-collapse: collapse; }
+    th, td { padding: 10px; text-align: left; border-bottom: 1px solid #eee; }
+    th { background: #f8f9fa; }
+    .timestamp { color: #999; font-size: 0.9em; }
+  </style>
+</head>
+<body>
+  <h1>PRD Set Execution Report</h1>
+  <p class="timestamp">Generated: ${report.generatedAt}</p>
+
+  <div class="card">
+    <h2>Summary</h2>
+    <p><strong>Set ID:</strong> ${report.setId}</p>
+    <p><strong>Status:</strong> <span class="status-${report.status}">${report.status}</span></p>
+
+    <div class="metric-grid">
+      <div class="metric">
+        <div class="metric-value">${report.summary.prdsCompleted}/${report.summary.prdsTotal}</div>
+        <div class="metric-label">PRDs Completed</div>
+      </div>
+      <div class="metric">
+        <div class="metric-value">${report.summary.successRate}</div>
+        <div class="metric-label">Success Rate</div>
+      </div>
+      <div class="metric">
+        <div class="metric-value">${report.summary.duration}</div>
+        <div class="metric-label">Duration</div>
+      </div>
+      <div class="metric">
+        <div class="metric-value">${report.summary.totalTokens.toLocaleString()}</div>
+        <div class="metric-label">Total Tokens</div>
+      </div>
+      <div class="metric">
+        <div class="metric-value">${report.summary.estimatedCost}</div>
+        <div class="metric-label">Estimated Cost</div>
+      </div>
+      <div class="metric">
+        <div class="metric-value">${report.summary.testsPassed}/${report.summary.testsPassed + report.summary.testsFailed}</div>
+        <div class="metric-label">Tests Passed</div>
+      </div>
+    </div>
+  </div>
+
+  ${report.observationSummary ? `
+  <div class="card">
+    <h2>Observations</h2>
+    <p><strong>Total Observations:</strong> ${report.observationSummary.totalObservations}</p>
+    ${report.observationSummary.recommendations.length > 0 ? `
+    <h3>Recommendations</h3>
+    <ul>
+      ${report.observationSummary.recommendations.map(r => `<li>${r}</li>`).join('')}
+    </ul>
+    ` : ''}
+  </div>
+  ` : ''}
+
+</body>
+</html>`;
+  }
+
+  /**
+   * Format duration in human-readable format
+   */
+  private formatDuration(ms: number): string {
+    if (ms < 1000) return `${ms}ms`;
+    if (ms < 60000) return `${(ms / 1000).toFixed(1)}s`;
+    if (ms < 3600000) return `${(ms / 60000).toFixed(1)}m`;
+    return `${(ms / 3600000).toFixed(1)}h`;
+  }
+
+  /**
+   * Auto-generate report after PRD set completion
+   * Called by PrdSetOrchestrator after completion
+   */
+  static async autoGenerateReport(setId: string): Promise<string | null> {
+    try {
+      const generator = new PrdReportGenerator();
+      const { path: reportPath } = await generator.generatePrdSetReport(setId, {
+        format: 'markdown',
+        includeObservations: true,
+        includeEvents: true,
+        includeTokenBreakdown: true,
+        includeTimingAnalysis: true,
+      });
+
+      // Also generate JSON version for programmatic access
+      await generator.generatePrdSetReport(setId, {
+        format: 'json',
+        includeObservations: true,
+        includeEvents: true,
+        includeTokenBreakdown: true,
+      });
+
+      return reportPath;
+    } catch (error) {
+      logger.warn(`[PrdReportGenerator] Auto-generation failed: ${error}`);
+      return null;
+    }
+  }
+
+  /**
+   * Generate report for a single PRD (CLI compatibility)
+   */
+  async generatePrdReport(
+    prdId: string,
+    options: Partial<ReportOptions> = {}
+  ): Promise<string> {
+    // Load PRD metrics
+    const { PrdMetrics } = require('./prd-metrics');
     const prdMetrics = new PrdMetrics();
     const metrics = prdMetrics.getPrdMetrics(prdId);
 
@@ -74,287 +443,93 @@ export class PrdReportGenerator {
     }
 
     const format = options.format || 'markdown';
-    const outputPath = options.output || path.join(this.reportsPath, `prd-${prdId}.${format}`);
-
-    let content: string;
-    switch (format) {
-      case 'json':
-        content = this.generatePrdJson(metrics);
-        break;
-      case 'html':
-        content = this.generatePrdHtml(metrics);
-        break;
-      case 'markdown':
-      default:
-        content = this.generatePrdMarkdown(metrics);
-    }
+    const extension = format === 'json' ? 'json' : format === 'html' ? 'html' : 'md';
+    const filename = `prd-${prdId}-${Date.now()}.${extension}`;
+    const outputPath = options.output || options.outputPath || path.join(this.reportsPath, filename);
 
     await fs.ensureDir(path.dirname(outputPath));
-    await fs.writeFile(outputPath, content, 'utf-8');
 
-    logger.info(`Report generated: ${outputPath}`);
+    // Generate simple PRD report
+    const report = {
+      generatedAt: new Date().toISOString(),
+      prdId,
+      status: metrics.status,
+      duration: metrics.duration,
+      phases: {
+        completed: metrics.phases.completed,
+        total: metrics.phases.total,
+      },
+      tokens: metrics.tokens,
+      tests: metrics.tests,
+    };
+
+    let content: string;
+    if (format === 'json') {
+      content = JSON.stringify(report, null, 2);
+    } else if (format === 'html') {
+      content = `<!DOCTYPE html><html><head><title>PRD Report: ${prdId}</title></head><body><pre>${JSON.stringify(report, null, 2)}</pre></body></html>`;
+    } else {
+      content = `# PRD Report: ${prdId}\n\n`;
+      content += `**Status**: ${report.status}\n`;
+      content += `**Phases**: ${report.phases.completed}/${report.phases.total}\n`;
+      content += `**Tokens**: ${report.tokens.totalInput} input, ${report.tokens.totalOutput} output\n`;
+    }
+
+    await fs.writeFile(outputPath, content, 'utf-8');
+    logger.info(`[PrdReportGenerator] PRD report saved: ${outputPath}`);
+
     return outputPath;
   }
 
   /**
-   * Generate report for a Phase
+   * Generate report for a specific phase (CLI compatibility)
    */
-  async generatePhaseReport(prdId: string, phaseId: number, options: ReportOptions = {}): Promise<string> {
+  async generatePhaseReport(
+    prdId: string,
+    phaseId: number,
+    options: Partial<ReportOptions> = {}
+  ): Promise<string> {
+    // Load phase metrics
+    const { PhaseMetrics } = require('./phase-metrics');
     const phaseMetrics = new PhaseMetrics();
-    const metrics = phaseMetrics.getPhaseMetrics(phaseId, prdId);
+    const metrics = phaseMetrics.getPhaseMetrics(prdId, phaseId);
 
     if (!metrics) {
-      throw new Error(`Phase metrics not found: ${prdId}-${phaseId}`);
+      throw new Error(`Phase metrics not found: ${prdId}:${phaseId}`);
     }
 
     const format = options.format || 'markdown';
-    const outputPath = options.output || path.join(this.reportsPath, `phase-${prdId}-${phaseId}.${format}`);
-
-    let content: string;
-    switch (format) {
-      case 'json':
-        content = JSON.stringify(metrics, null, 2);
-        break;
-      case 'html':
-        content = this.generatePhaseHtml(metrics);
-        break;
-      case 'markdown':
-      default:
-        content = this.generatePhaseMarkdown(metrics);
-    }
+    const extension = format === 'json' ? 'json' : format === 'html' ? 'html' : 'md';
+    const filename = `phase-${prdId}-${phaseId}-${Date.now()}.${extension}`;
+    const outputPath = options.output || options.outputPath || path.join(this.reportsPath, filename);
 
     await fs.ensureDir(path.dirname(outputPath));
-    await fs.writeFile(outputPath, content, 'utf-8');
 
-    logger.info(`Report generated: ${outputPath}`);
+    // Generate simple phase report
+    const report = {
+      generatedAt: new Date().toISOString(),
+      prdId,
+      phaseId,
+      status: metrics.status,
+      duration: metrics.duration,
+      tasks: metrics.tasks,
+      tokens: metrics.tokens,
+    };
+
+    let content: string;
+    if (format === 'json') {
+      content = JSON.stringify(report, null, 2);
+    } else if (format === 'html') {
+      content = `<!DOCTYPE html><html><head><title>Phase Report: ${prdId}:${phaseId}</title></head><body><pre>${JSON.stringify(report, null, 2)}</pre></body></html>`;
+    } else {
+      content = `# Phase Report: ${prdId}:${phaseId}\n\n`;
+      content += `**Status**: ${report.status}\n`;
+      content += `**Tasks**: ${report.tasks.completed}/${report.tasks.total}\n`;
+    }
+
+    await fs.writeFile(outputPath, content, 'utf-8');
+    logger.info(`[PrdReportGenerator] Phase report saved: ${outputPath}`);
+
     return outputPath;
   }
-
-  // Markdown generators
-  private generatePrdSetMarkdown(metrics: PrdSetMetricsData): string {
-    const duration = metrics.duration ? this.formatDuration(metrics.duration) : 'N/A';
-    const cost = metrics.tokens.totalCost ? CostCalculator.formatCost(metrics.tokens.totalCost) : 'N/A';
-
-    return `# PRD Set Execution Report: ${metrics.setId}
-
-## Executive Summary
-
-- **Status**: ${metrics.status}
-- **Duration**: ${duration}
-- **PRDs**: ${metrics.prds.completed}/${metrics.prds.total} completed (${(metrics.prds.successRate * 100).toFixed(1)}% success rate)
-- **Tests**: ${metrics.tests.passing}/${metrics.tests.total} passing (${(metrics.tests.passRate * 100).toFixed(1)}% pass rate)
-- **Cost**: ${cost}
-
-## PRD Breakdown
-
-${metrics.prdIds.map(prdId => `- ${prdId}`).join('\n')}
-
-## Detailed Metrics
-
-### Timing
-- Total: ${this.formatDuration(metrics.timing.totalMs)}
-- Average per PRD: ${this.formatDuration(metrics.timing.avgPrdMs)}
-- Average per Task: ${this.formatDuration(metrics.timing.avgTaskMs)}
-
-### Token Usage
-- Input: ${metrics.tokens.totalInput.toLocaleString()}
-- Output: ${metrics.tokens.totalOutput.toLocaleString()}
-- Total Cost: ${cost}
-
-### Test Results
-- Total: ${metrics.tests.total}
-- Passing: ${metrics.tests.passing}
-- Failing: ${metrics.tests.failing}
-- Pass Rate: ${(metrics.tests.passRate * 100).toFixed(1)}%
-
-## Execution Levels
-
-- Total Levels: ${metrics.executionLevels.total}
-- Completed: ${metrics.executionLevels.completed}
-- Current: ${metrics.executionLevels.current}
-
----
-*Report generated at ${new Date().toISOString()}*
-`;
-  }
-
-  private generatePrdMarkdown(metrics: PrdMetricsData): string {
-    const duration = metrics.duration ? this.formatDuration(metrics.duration) : 'N/A';
-    const cost = metrics.tokens.totalCost ? CostCalculator.formatCost(metrics.tokens.totalCost) : 'N/A';
-
-    return `# PRD Execution Report: ${metrics.prdId}
-
-## Executive Summary
-
-- **Status**: ${metrics.status}
-- **Version**: ${metrics.prdVersion}
-- **Duration**: ${duration}
-- **Phases**: ${metrics.phases.completed}/${metrics.phases.total} completed (${(metrics.phases.successRate * 100).toFixed(1)}% success rate)
-- **Tasks**: ${metrics.tasks.completed}/${metrics.tasks.total} completed (${(metrics.tasks.successRate * 100).toFixed(1)}% success rate)
-- **Tests**: ${metrics.tests.passing}/${metrics.tests.total} passing (${(metrics.tests.passRate * 100).toFixed(1)}% pass rate)
-- **Cost**: ${cost}
-
-## Phase Breakdown
-
-${metrics.phases.phaseMetrics.map(phase => `### Phase ${phase.phaseId}: ${phase.phaseName}
-- Status: ${phase.status}
-- Duration: ${phase.duration ? this.formatDuration(phase.duration) : 'N/A'}
-- Tasks: ${phase.tasks.completed}/${phase.tasks.total} completed
-- Tests: ${phase.tests.passing}/${phase.tests.failing} passing/failing
-`).join('\n')}
-
-## Feature Usage
-
-${Object.entries(metrics.features.featureMetrics).map(([name, feature]) => `### ${name}
-- Usage Count: ${feature.usageCount}
-- Success Rate: ${feature.usageCount > 0 ? ((feature.successCount / feature.usageCount) * 100).toFixed(1) : 0}%
-- Average Duration: ${this.formatDuration(feature.avgDuration)}
-- Total Tokens: ${feature.totalTokens.toLocaleString()}
-`).join('\n')}
-
-## Schema Operations
-
-- Total Operations: ${metrics.schema.schemaMetrics.totalOperations}
-- Success Rate: ${(metrics.schema.schemaMetrics.successRate * 100).toFixed(1)}%
-- Average Duration: ${this.formatDuration(metrics.schema.schemaMetrics.avgDuration)}
-
-## Detailed Metrics
-
-### Timing
-- Total: ${this.formatDuration(metrics.timing.totalMs)}
-- Average per Phase: ${this.formatDuration(metrics.timing.avgPhaseMs)}
-- Average per Task: ${this.formatDuration(metrics.timing.avgTaskMs)}
-- Average AI Call: ${this.formatDuration(metrics.timing.avgAiCallMs)}
-- Average Test Run: ${this.formatDuration(metrics.timing.avgTestRunMs)}
-
-### Token Usage
-- Input: ${metrics.tokens.totalInput.toLocaleString()}
-- Output: ${metrics.tokens.totalOutput.toLocaleString()}
-- Total Cost: ${cost}
-
-### Errors
-- Total: ${metrics.errors.total}
-${Object.entries(metrics.errors.byCategory).map(([cat, count]) => `- ${cat}: ${count}`).join('\n')}
-
-### Efficiency
-- Tokens per Task: ${metrics.efficiency.tokensPerTask.toFixed(0)}
-- Iterations per Task: ${metrics.efficiency.iterationsPerTask.toFixed(1)}
-- Average Retries: ${metrics.efficiency.avgRetries.toFixed(1)}
-
----
-*Report generated at ${new Date().toISOString()}*
-`;
-  }
-
-  private generatePhaseMarkdown(metrics: PhaseMetricsData): string {
-    const duration = metrics.duration ? this.formatDuration(metrics.duration) : 'N/A';
-
-    return `# Phase Execution Report: ${metrics.phaseName} (${metrics.prdId})
-
-## Executive Summary
-
-- **Status**: ${metrics.status}
-- **Duration**: ${duration}
-- **Tasks**: ${metrics.tasks.completed}/${metrics.tasks.total} completed (${(metrics.tasks.successRate * 100).toFixed(1)}% success rate)
-- **Tests**: ${metrics.tests.passing}/${metrics.tests.failing} passing/failing
-- **Parallel**: ${metrics.parallel ? 'Yes' : 'No'}
-
-## Detailed Metrics
-
-### Timing
-- Total: ${this.formatDuration(metrics.timing.totalMs)}
-- Average per Task: ${this.formatDuration(metrics.timing.avgTaskMs)}
-
-### Token Usage
-- Input: ${metrics.tokens.totalInput.toLocaleString()}
-- Output: ${metrics.tokens.totalOutput.toLocaleString()}
-
----
-*Report generated at ${new Date().toISOString()}*
-`;
-  }
-
-  // JSON generators
-  private generatePrdSetJson(metrics: PrdSetMetricsData): string {
-    return JSON.stringify(metrics, null, 2);
-  }
-
-  private generatePrdJson(metrics: PrdMetricsData): string {
-    return JSON.stringify(metrics, null, 2);
-  }
-
-  // HTML generators (simplified)
-  private generatePrdSetHtml(metrics: PrdSetMetricsData): string {
-    return `<!DOCTYPE html>
-<html>
-<head>
-  <title>PRD Set Report: ${metrics.setId}</title>
-  <style>
-    body { font-family: Arial, sans-serif; margin: 20px; }
-    h1 { color: #333; }
-    table { border-collapse: collapse; width: 100%; margin: 20px 0; }
-    th, td { border: 1px solid #ddd; padding: 8px; text-align: left; }
-    th { background-color: #f2f2f2; }
-  </style>
-</head>
-<body>
-  <h1>PRD Set Execution Report: ${metrics.setId}</h1>
-  <p><strong>Status:</strong> ${metrics.status}</p>
-  <p><strong>Duration:</strong> ${metrics.duration ? this.formatDuration(metrics.duration) : 'N/A'}</p>
-  <p><strong>PRDs:</strong> ${metrics.prds.completed}/${metrics.prds.total} completed</p>
-</body>
-</html>`;
-  }
-
-  private generatePrdHtml(metrics: PrdMetricsData): string {
-    return `<!DOCTYPE html>
-<html>
-<head>
-  <title>PRD Report: ${metrics.prdId}</title>
-  <style>
-    body { font-family: Arial, sans-serif; margin: 20px; }
-    h1 { color: #333; }
-    table { border-collapse: collapse; width: 100%; margin: 20px 0; }
-    th, td { border: 1px solid #ddd; padding: 8px; text-align: left; }
-    th { background-color: #f2f2f2; }
-  </style>
-</head>
-<body>
-  <h1>PRD Execution Report: ${metrics.prdId}</h1>
-  <p><strong>Status:</strong> ${metrics.status}</p>
-  <p><strong>Duration:</strong> ${metrics.duration ? this.formatDuration(metrics.duration) : 'N/A'}</p>
-  <p><strong>Tasks:</strong> ${metrics.tasks.completed}/${metrics.tasks.total} completed</p>
-</body>
-</html>`;
-  }
-
-  private generatePhaseHtml(metrics: PhaseMetricsData): string {
-    return `<!DOCTYPE html>
-<html>
-<head>
-  <title>Phase Report: ${metrics.phaseName}</title>
-  <style>
-    body { font-family: Arial, sans-serif; margin: 20px; }
-    h1 { color: #333; }
-  </style>
-</head>
-<body>
-  <h1>Phase Execution Report: ${metrics.phaseName}</h1>
-  <p><strong>Status:</strong> ${metrics.status}</p>
-  <p><strong>Duration:</strong> ${metrics.duration ? this.formatDuration(metrics.duration) : 'N/A'}</p>
-</body>
-</html>`;
-  }
-
-  private formatDuration(ms: number): string {
-    if (ms < 1000) return `${ms}ms`;
-    if (ms < 60000) return `${(ms / 1000).toFixed(1)}s`;
-    if (ms < 3600000) return `${(ms / 60000).toFixed(1)}m`;
-    return `${(ms / 3600000).toFixed(1)}h`;
-  }
 }
-
-
-
-
-

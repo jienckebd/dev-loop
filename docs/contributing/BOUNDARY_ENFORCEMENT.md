@@ -24,12 +24,80 @@ Boundary enforcement ensures that outer and inner agents can only edit files wit
 
 ## Implementation Location
 
-Boundary validation should be implemented in:
+Boundary validation is implemented in:
 
-1. **CodeContextProvider** or **ValidationGate** - Validate file paths before code changes are applied
-2. **Contribution Mode Manager** - Validate boundaries on contribution mode start/stop
-3. **MCP Server** - Validate boundaries for MCP tool calls
-4. **CLI Commands** - Validate boundaries for CLI operations
+1. **WorkflowEngine** - Early file filtering and post-execution validation
+2. **ValidationGate** - Validate file paths before code changes are applied
+3. **Contribution Mode Manager** - Validate boundaries on contribution mode start/stop
+4. **MCP Server** - Validate boundaries for MCP tool calls
+5. **CLI Commands** - Validate boundaries for CLI operations
+
+## Early File Filtering
+
+Dev-loop filters unauthorized files **before** validation to reduce noise:
+
+### How It Works
+
+```mermaid
+flowchart LR
+    AI[AI Response] --> Filter[Early Filter]
+    Filter -->|Authorized| Validate[ValidationGate]
+    Filter -->|Unauthorized| Event[file:filtered event]
+    Validate --> Apply[Apply Changes]
+```
+
+1. **After AI Response**: Files outside `targetModule` are filtered immediately
+2. **Event Emission**: `file:filtered` events are emitted for observability
+3. **Validation Gate**: Only authorized files reach validation, reducing error logs
+
+### Implementation
+
+In `WorkflowEngine.applyChanges()`:
+
+```typescript
+// Early filtering before validation
+const targetModule = this.currentPrdTargetModule;
+if (targetModule && changes.files && changes.files.length > 0) {
+  const originalCount = changes.files.length;
+  changes.files = changes.files.filter(file => {
+    const allowed = this.isFileInTargetModule(file.path, targetModule);
+    if (!allowed) {
+      logger.warn(`[WorkflowEngine] FILTERED: ${file.path} (outside target module ${targetModule})`);
+      this.eventStream.emit('file:filtered', {
+        path: file.path,
+        targetModule,
+        taskId: task.id,
+        reason: 'outside target module'
+      }, 'warn');
+    }
+    return allowed;
+  });
+}
+```
+
+### Benefits
+
+- **Reduced Noise**: No validation errors for files that would be rejected anyway
+- **Better Observability**: `file:filtered` events provide structured tracking
+- **Efficient Processing**: ValidationGate only processes authorized files
+
+### Post-Execution Validation
+
+After AI execution completes, `validateAndRevertUnauthorizedChanges()` checks `git status` and reverts any unauthorized changes:
+
+```typescript
+// Check for unauthorized changes after AI execution
+const changedFiles = await this.getGitChangedFiles();
+for (const file of changedFiles) {
+  if (!this.isFileInTargetModule(file, targetModule)) {
+    this.eventStream.emit('change:unauthorized', { path: file, targetModule }, 'warn');
+    await this.revertFile(file);
+    this.eventStream.emit('change:reverted', { path: file, targetModule }, 'info');
+  }
+}
+```
+
+This catches changes made via direct tool calls that bypass `applyChanges()`.
 
 ## Validation Function
 

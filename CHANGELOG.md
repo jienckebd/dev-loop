@@ -6,6 +6,17 @@ All notable changes to dev-loop will be documented in this file.
 
 ### Added
 
+- **Event Streaming System** - Structured event emission for contribution mode observability
+  - New `EventStream` singleton class for buffering events
+  - MCP tools for event access (`devloop_events_poll`, `devloop_events_latest`, `devloop_blocked_tasks`, `devloop_filtered_files`, `devloop_issues`)
+  - Event types: `file:filtered`, `validation:failed`, `task:blocked`, `change:unauthorized`, `change:reverted`
+  - See `docs/contributing/EVENT_STREAMING.md` for usage guide
+
+- **Early File Filtering** - Pre-validation filtering of unauthorized files
+  - Files outside `targetModule` filtered before ValidationGate
+  - Reduces validation error noise
+  - Emits `file:filtered` events for observability
+
 - **Unix Domain Socket IPC System** - Reliable inter-process communication between parent workflow engine and background agents
   - New `AgentIPCServer` class for parent process
   - New `AgentIPCClient` class for child agents
@@ -56,8 +67,19 @@ All notable changes to dev-loop will be documented in this file.
   - Added `loadPrdMaxConcurrencyFromConfig()` method
   - Loads PRD set configuration at start of `runOnce()`
   - Respects maxConcurrency from PRD metadata
+  - Early file filtering before ValidationGate for target module enforcement
+
+- **JSON Parser Debugging** - Enhanced logging for nested JSON extraction
+  - Logs result text length and JSON block presence
+  - Tracks unescape pass application
+  - Shows processed text snippets for debugging
 
 ### Fixed
+
+- **IPC Socket Collision** - Fixed EADDRINUSE errors when parallel agents use same session ID
+  - Unique socket path per IPC server instance (timestamp + random ID)
+  - Automatic fallback retry with alternate path
+  - Prevents crashes during parallel execution
 
 - **Parallel Execution in Watch Mode** - Now correctly uses maxConcurrency from PRD configuration
 - **Narrative Response Handling** - Stricter prompts reduce narrative text responses

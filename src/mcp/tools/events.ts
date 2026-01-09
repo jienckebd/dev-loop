@@ -194,5 +194,119 @@ export function registerEventTools(server: any): void {
       };
     }
   );
+
+  // devloop_events_analytics - Get analytics summary
+  server.tool(
+    'devloop_events_analytics',
+    'Get analytics summary of all events (counts by type, severity, JSON parse stats)',
+    z.object({}),
+    async () => {
+      const eventStream = getEventStream();
+      const analytics = eventStream.getAnalytics();
+
+      return {
+        content: [{
+          type: 'text',
+          text: JSON.stringify({
+            analytics,
+            jsonParseSuccessRate: analytics.jsonParseSuccesses + analytics.jsonParseFailures > 0
+              ? (analytics.jsonParseSuccesses / (analytics.jsonParseSuccesses + analytics.jsonParseFailures) * 100).toFixed(1) + '%'
+              : 'N/A',
+          }, null, 2),
+        }],
+      };
+    }
+  );
+
+  // devloop_json_parsing_events - Get JSON parsing specific events
+  server.tool(
+    'devloop_json_parsing_events',
+    'Get all JSON parsing events (failures, retries, successes, sanitizations)',
+    z.object({
+      limit: z.number().optional().describe('Maximum number of events to return'),
+    }),
+    async (params: { limit?: number }) => {
+      const eventStream = getEventStream();
+      let events = eventStream.getJsonParsingEvents();
+
+      if (params.limit && params.limit > 0) {
+        events = events.slice(-params.limit);
+      }
+
+      const summary = {
+        failures: events.filter(e => e.type === 'json:parse_failed').length,
+        retries: events.filter(e => e.type === 'json:parse_retry').length,
+        successes: events.filter(e => e.type === 'json:parse_success').length,
+        sanitizations: events.filter(e => e.type === 'json:sanitized').length,
+      };
+
+      return {
+        content: [{
+          type: 'text',
+          text: JSON.stringify({
+            events,
+            summary,
+            count: events.length,
+          }, null, 2),
+        }],
+      };
+    }
+  );
+
+  // devloop_events_by_time_range - Get events within time range
+  server.tool(
+    'devloop_events_by_time_range',
+    'Get events within a specific time range',
+    z.object({
+      startTime: z.string().describe('Start time (ISO 8601 format)'),
+      endTime: z.string().optional().describe('End time (ISO 8601 format, defaults to now)'),
+    }),
+    async (params: { startTime: string; endTime?: string }) => {
+      const eventStream = getEventStream();
+      const events = eventStream.getByTimeRange(params.startTime, params.endTime);
+
+      return {
+        content: [{
+          type: 'text',
+          text: JSON.stringify({
+            events,
+            count: events.length,
+            timeRange: {
+              start: params.startTime,
+              end: params.endTime || new Date().toISOString(),
+            },
+          }, null, 2),
+        }],
+      };
+    }
+  );
+
+  // devloop_events_aggregate - Aggregate events by key
+  server.tool(
+    'devloop_events_aggregate',
+    'Aggregate events by type, taskId, or prdId',
+    z.object({
+      groupBy: z.enum(['type', 'taskId', 'prdId']).optional().describe('Field to group by (default: type)'),
+    }),
+    async (params: { groupBy?: 'type' | 'taskId' | 'prdId' }) => {
+      const eventStream = getEventStream();
+      const aggregated = eventStream.aggregateEvents(params.groupBy || 'type');
+
+      return {
+        content: [{
+          type: 'text',
+          text: JSON.stringify({
+            aggregated: aggregated.map(g => ({
+              key: g.key,
+              count: g.count,
+              lastOccurrence: g.lastOccurrence,
+            })),
+            groupBy: params.groupBy || 'type',
+            totalGroups: aggregated.length,
+          }, null, 2),
+        }],
+      };
+    }
+  );
 }
 

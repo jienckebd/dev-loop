@@ -13,13 +13,23 @@ export type EventType =
   | 'agent:started'
   | 'agent:response'
   | 'agent:error'
+  | 'agent:prompt_sent'
+  | 'agent:response_received'
+  // JSON parsing events
+  | 'json:parse_failed'
+  | 'json:parse_retry'
+  | 'json:parse_success'
+  | 'json:sanitized'
   // File filtering
   | 'file:filtered'
+  | 'file:filtered_predictive'
   | 'file:created'
   | 'file:modified'
+  | 'file:boundary_violation'
   // Validation
   | 'validation:failed'
   | 'validation:passed'
+  | 'validation:error_with_suggestion'
   // Unauthorized changes
   | 'change:unauthorized'
   | 'change:reverted'
@@ -30,7 +40,15 @@ export type EventType =
   | 'phase:started'
   | 'phase:completed'
   | 'prd:started'
-  | 'prd:completed';
+  | 'prd:completed'
+  // Metrics/Reports
+  | 'metrics:finalized'
+  | 'metrics:aggregated'
+  | 'report:generated'
+  // IPC
+  | 'ipc:connection_failed'
+  | 'ipc:connection_retry'
+  | 'ipc:health_check';
 
 export type EventSeverity = 'info' | 'warn' | 'error' | 'critical';
 
@@ -199,6 +217,133 @@ class EventStreamImpl {
   getLastEventId(): string | null {
     if (this.events.length === 0) return null;
     return this.events[this.events.length - 1].id;
+  }
+
+  /**
+   * Get events within a time range
+   */
+  getByTimeRange(startTime: string, endTime?: string): DevLoopEvent[] {
+    const start = new Date(startTime).getTime();
+    const end = endTime ? new Date(endTime).getTime() : Date.now();
+
+    return this.events.filter(e => {
+      const eventTime = new Date(e.timestamp).getTime();
+      return eventTime >= start && eventTime <= end;
+    });
+  }
+
+  /**
+   * Get JSON parsing events
+   */
+  getJsonParsingEvents(): DevLoopEvent[] {
+    return this.events.filter(e =>
+      e.type === 'json:parse_failed' ||
+      e.type === 'json:parse_retry' ||
+      e.type === 'json:parse_success' ||
+      e.type === 'json:sanitized'
+    );
+  }
+
+  /**
+   * Get analytics summary for events
+   */
+  getAnalytics(): {
+    byType: Record<string, number>;
+    bySeverity: Record<string, number>;
+    byPrdId: Record<string, number>;
+    totalEvents: number;
+    issueCount: number;
+    jsonParseFailures: number;
+    jsonParseSuccesses: number;
+    fileFilteredCount: number;
+  } {
+    const byType: Record<string, number> = {};
+    const bySeverity: Record<string, number> = {};
+    const byPrdId: Record<string, number> = {};
+    let issueCount = 0;
+    let jsonParseFailures = 0;
+    let jsonParseSuccesses = 0;
+    let fileFilteredCount = 0;
+
+    for (const event of this.events) {
+      // Count by type
+      byType[event.type] = (byType[event.type] || 0) + 1;
+
+      // Count by severity
+      bySeverity[event.severity] = (bySeverity[event.severity] || 0) + 1;
+
+      // Count by PRD ID
+      if (event.prdId) {
+        byPrdId[event.prdId] = (byPrdId[event.prdId] || 0) + 1;
+      }
+
+      // Track issues
+      if (event.severity === 'warn' || event.severity === 'error' || event.severity === 'critical') {
+        issueCount++;
+      }
+
+      // Track JSON parsing
+      if (event.type === 'json:parse_failed') {
+        jsonParseFailures++;
+      } else if (event.type === 'json:parse_success') {
+        jsonParseSuccesses++;
+      }
+
+      // Track file filtering
+      if (event.type === 'file:filtered' || event.type === 'file:filtered_predictive') {
+        fileFilteredCount++;
+      }
+    }
+
+    return {
+      byType,
+      bySeverity,
+      byPrdId,
+      totalEvents: this.events.length,
+      issueCount,
+      jsonParseFailures,
+      jsonParseSuccesses,
+      fileFilteredCount,
+    };
+  }
+
+  /**
+   * Aggregate similar events (group by type and data key)
+   */
+  aggregateEvents(groupBy: 'type' | 'taskId' | 'prdId' = 'type'): Array<{
+    key: string;
+    count: number;
+    lastOccurrence: string;
+    events: DevLoopEvent[];
+  }> {
+    const groups: Record<string, DevLoopEvent[]> = {};
+
+    for (const event of this.events) {
+      let key: string;
+      switch (groupBy) {
+        case 'type':
+          key = event.type;
+          break;
+        case 'taskId':
+          key = event.taskId || 'no-task';
+          break;
+        case 'prdId':
+          key = event.prdId || 'no-prd';
+          break;
+      }
+
+      if (!groups[key]) {
+        groups[key] = [];
+      }
+      groups[key].push(event);
+    }
+
+    return Object.entries(groups).map(([key, events]) => ({
+      key,
+      count: events.length,
+      lastOccurrence: events[events.length - 1].timestamp,
+      events,
+    }));
   }
 }
 

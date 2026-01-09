@@ -151,6 +151,16 @@ Control whether the inner agent requires approval:
 5. Build, commit, push dev-loop changes
 6. Validate improvements via metrics
 
+#### Event Streaming & Observability
+
+Dev-loop emits structured events for efficient contribution mode monitoring:
+
+- **Event Types**: `file:filtered`, `validation:failed`, `task:blocked`, `change:unauthorized`, `change:reverted`
+- **MCP Tools**: Use `devloop_events_poll`, `devloop_events_latest`, `devloop_blocked_tasks`, `devloop_filtered_files`, `devloop_issues`
+- **Early File Filtering**: Files outside `targetModule` are filtered before validation, reducing error noise
+
+See [`docs/contributing/EVENT_STREAMING.md`](docs/contributing/EVENT_STREAMING.md) for complete guide.
+
 #### When to Enhance Dev-Loop vs Create Task
 
 | Scenario | Action |
@@ -438,6 +448,7 @@ Create `.cursor/mcp.json`:
 - Debug: `devloop_diagnose`, `devloop_trace`, `devloop_logs`, `devloop_metrics`
 - Control: `devloop_pause`, `devloop_resume`, `devloop_reset`, `devloop_validate`
 - Contribution: `devloop_contribution_start`, `devloop_contribution_status`, `devloop_contribution_stop`, `devloop_contribution_validate`, `devloop_contribution_boundaries`
+- Events: `devloop_events_poll`, `devloop_events_latest`, `devloop_blocked_tasks`, `devloop_filtered_files`, `devloop_issues`
 
 ### Common Workflows
 

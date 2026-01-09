@@ -11,6 +11,7 @@
 import { CodeChanges } from '../../types';
 import { logger } from '../../core/logger';
 import { ObservationTracker } from '../../core/observation-tracker';
+import { emitEvent } from '../../core/event-stream';
 
 /**
  * Context for tracking JSON parsing failures
@@ -21,6 +22,142 @@ export interface JsonParsingContext {
   taskId?: string;
   prdId?: string;
   phaseId?: number;
+}
+
+/**
+ * Sanitize JSON string to handle literal newlines and control characters
+ *
+ * AI providers sometimes include literal newlines in JSON string values,
+ * which is invalid JSON. This function detects and escapes them.
+ *
+ * @param jsonStr - Raw JSON string that may contain literal control characters
+ * @returns Sanitized JSON string safe for parsing
+ */
+export function sanitizeJsonString(jsonStr: string): { sanitized: string; modified: boolean; fixes: string[] } {
+  const fixes: string[] = [];
+  let modified = false;
+  let result = jsonStr;
+
+  // Fix 1: Escape literal newlines inside string values
+  // This regex finds strings and escapes any literal newlines within them
+  const stringContentRegex = /"(?:[^"\\]|\\.)*"/g;
+  result = result.replace(stringContentRegex, (match) => {
+    // Check for literal control characters (not already escaped)
+    let fixed = match;
+
+    // Replace literal newlines (not \n) with \\n
+    if (fixed.includes('\n')) {
+      fixed = fixed.replace(/\n/g, '\\n');
+      if (!fixes.includes('literal-newline')) {
+        fixes.push('literal-newline');
+        modified = true;
+      }
+    }
+
+    // Replace literal carriage returns with \\r
+    if (fixed.includes('\r')) {
+      fixed = fixed.replace(/\r/g, '\\r');
+      if (!fixes.includes('literal-carriage-return')) {
+        fixes.push('literal-carriage-return');
+        modified = true;
+      }
+    }
+
+    // Replace literal tabs with \\t
+    if (fixed.includes('\t')) {
+      fixed = fixed.replace(/\t/g, '\\t');
+      if (!fixes.includes('literal-tab')) {
+        fixes.push('literal-tab');
+        modified = true;
+      }
+    }
+
+    return fixed;
+  });
+
+  // Fix 2: Handle unescaped control characters outside strings (rare but possible)
+  // Control chars 0x00-0x1F except those already handled
+  const controlCharRegex = /[\x00-\x08\x0B\x0C\x0E-\x1F]/g;
+  if (controlCharRegex.test(result)) {
+    result = result.replace(controlCharRegex, (char) => {
+      if (!fixes.includes('control-character')) {
+        fixes.push('control-character');
+        modified = true;
+      }
+      return '\\u' + char.charCodeAt(0).toString(16).padStart(4, '0');
+    });
+  }
+
+  return { sanitized: result, modified, fixes };
+}
+
+/**
+ * Try to parse JSON with multiple sanitization strategies
+ * Returns the parsed object or null if all attempts fail
+ */
+function tryParseJsonWithSanitization(
+  jsonStr: string,
+  context?: JsonParsingContext
+): { parsed: any; strategy: string } | null {
+  const taskId = context?.taskId;
+  const prdId = context?.prdId;
+  const phaseId = context?.phaseId;
+
+  // Strategy 1: Try raw parse first (most common success case)
+  try {
+    const parsed = JSON.parse(jsonStr);
+    return { parsed, strategy: 'raw' };
+  } catch (rawError) {
+    // Continue to sanitization strategies
+  }
+
+  // Strategy 2: Sanitize control characters in strings
+  const { sanitized, modified, fixes } = sanitizeJsonString(jsonStr);
+  if (modified) {
+    try {
+      const parsed = JSON.parse(sanitized);
+      emitEvent('json:sanitized', {
+        fixes,
+        originalLength: jsonStr.length,
+        sanitizedLength: sanitized.length,
+      }, { taskId, prdId, phaseId, severity: 'info' });
+      logger.debug(`[JsonParser] Sanitized JSON with fixes: ${fixes.join(', ')}`);
+      return { parsed, strategy: 'sanitized-' + fixes.join('-') };
+    } catch {
+      // Continue to next strategy
+    }
+  }
+
+  // Strategy 3: Double-escaped JSON (\\n -> \n, \\" -> ")
+  try {
+    const unescaped = jsonStr.replace(/\\\\n/g, '\\n').replace(/\\\\"/g, '\\"').replace(/\\\\\\\\/g, '\\\\');
+    const parsed = JSON.parse(unescaped);
+    return { parsed, strategy: 'double-escaped' };
+  } catch {
+    // Continue
+  }
+
+  // Strategy 4: Triple-escaped JSON
+  try {
+    let unescaped = jsonStr.replace(/\\\\\\\\/g, '\\\\');
+    unescaped = unescaped.replace(/\\\\n/g, '\\n').replace(/\\\\"/g, '\\"');
+    const parsed = JSON.parse(unescaped);
+    return { parsed, strategy: 'triple-escaped' };
+  } catch {
+    // Continue
+  }
+
+  // Strategy 5: Simple unescape (\\n -> newline literal, then re-sanitize)
+  try {
+    let unescaped = jsonStr.replace(/\\n/g, '\n').replace(/\\"/g, '"').replace(/\\\\/g, '\\');
+    const { sanitized: reSanitized } = sanitizeJsonString(unescaped);
+    const parsed = JSON.parse(reSanitized);
+    return { parsed, strategy: 'unescape-resanitize' };
+  } catch {
+    // All strategies failed
+  }
+
+  return null;
 }
 
 /**
@@ -119,7 +256,7 @@ export function extractCodeChanges(
           // Log for debugging
           const hasJsonBlock = resultText.includes('```json') || resultText.includes('```\n{');
           logger.debug(`[JsonParser] Result text length: ${resultText.length}, has JSON block: ${hasJsonBlock}`);
-          
+
           // Multiple passes to handle triple-escaped JSON (\\\\n -> \\n -> \n)
           // First pass: unescape \\n to newlines, \\" to quotes (for doubly-escaped content)
           if (resultText.includes('\\n') || resultText.includes('\\"')) {
@@ -132,7 +269,7 @@ export function extractCodeChanges(
             logger.debug(`[JsonParser] Applied second unescape pass`);
           }
           attemptedStrategies.push('result-object-deep-unescape');
-          
+
           // Log a snippet of the processed text
           const hasJsonBlockAfter = resultText.includes('```json') || resultText.includes('```\n{');
           logger.debug(`[JsonParser] After unescape - has JSON block: ${hasJsonBlockAfter}, snippet: ${resultText.substring(0, 300).replace(/\n/g, '\\n')}`);
@@ -182,6 +319,19 @@ export function extractCodeChanges(
     ? response.substring(0, 500)
     : JSON.stringify(response).substring(0, 500);
 
+  // Emit json:parse_failed event for observability
+  emitEvent('json:parse_failed', {
+    attemptedStrategies,
+    responseSample,
+    providerName,
+    responseType: typeof response,
+  }, {
+    taskId: context?.taskId,
+    prdId: context?.prdId,
+    phaseId: context?.phaseId,
+    severity: 'warn',
+  });
+
   if (observationTracker && context) {
     observationTracker.trackJsonParsingFailure(
       responseSample,
@@ -218,6 +368,45 @@ export function extractCodeChanges(
   }
 
   return null;
+}
+
+/**
+ * Wrapper for extractCodeChanges that emits success/retry events
+ */
+export function extractCodeChangesWithEvents(
+  response: any,
+  observationTracker?: ObservationTracker,
+  context?: JsonParsingContext,
+  retryCount: number = 0
+): CodeChanges | null {
+  const result = extractCodeChanges(response, observationTracker, context);
+
+  if (result) {
+    // Emit success event
+    emitEvent('json:parse_success', {
+      fileCount: result.files.length,
+      retryCount,
+      providerName: context?.providerName || 'unknown',
+    }, {
+      taskId: context?.taskId,
+      prdId: context?.prdId,
+      phaseId: context?.phaseId,
+      severity: 'info',
+    });
+  } else if (retryCount > 0) {
+    // Emit retry event (already failed once, now retrying)
+    emitEvent('json:parse_retry', {
+      retryCount,
+      providerName: context?.providerName || 'unknown',
+    }, {
+      taskId: context?.taskId,
+      prdId: context?.prdId,
+      phaseId: context?.phaseId,
+      severity: 'warn',
+    });
+  }
+
+  return result;
 }
 
 /**
@@ -269,47 +458,52 @@ export function parseCodeChangesFromText(text: string, attemptedStrategies: stri
     let jsonStr = match[1];
     attemptedStrategies.push('json-code-block');
 
-    try {
-      const parsed = JSON.parse(jsonStr);
-      if (parsed.files && Array.isArray(parsed.files) && parsed.summary) {
-        logger.debug(`[JsonParser] Extracted CodeChanges from JSON code block: ${parsed.files.length} files`);
+    // Use the new sanitization-aware parser
+    const parseResult = tryParseJsonWithSanitization(jsonStr);
+    if (parseResult) {
+      const { parsed, strategy } = parseResult;
+      if (parsed.files && Array.isArray(parsed.files)) {
+        if (!parsed.summary) parsed.summary = `Generated ${parsed.files.length} file(s)`;
+        logger.debug(`[JsonParser] Extracted CodeChanges from JSON code block (strategy: ${strategy}): ${parsed.files.length} files`);
+        attemptedStrategies.push(`json-code-block-${strategy}`);
         return parsed as CodeChanges;
       }
-    } catch (error) {
-      // Try progressive unescaping for deeply nested escaped JSON
-      const unescapeStrategies = [
-        // Double-escaped: \\n -> \n, \\" -> "
-        (s: string) => s.replace(/\\\\n/g, '\\n').replace(/\\\\"/g, '\\"').replace(/\\\\\\\\/g, '\\\\'),
-        // Triple-escaped: \\\\ -> \\, then \\n -> \n
-        (s: string) => {
-          let result = s.replace(/\\\\\\\\/g, '\\\\');
-          result = result.replace(/\\\\n/g, '\\n').replace(/\\\\"/g, '\\"');
-          return result;
-        },
-        // Simple unescape: \\n -> newline, \\" -> "
-        (s: string) => s.replace(/\\n/g, '\n').replace(/\\"/g, '"').replace(/\\\\/g, '\\'),
-      ];
-
-      for (let i = 0; i < unescapeStrategies.length; i++) {
-        try {
-          const unescaped = unescapeStrategies[i](jsonStr);
-          const parsed = JSON.parse(unescaped);
-          if (parsed.files && Array.isArray(parsed.files)) {
-            if (!parsed.summary) parsed.summary = `Generated ${parsed.files.length} file(s)`;
-            logger.debug(`[JsonParser] Extracted CodeChanges from JSON code block (unescape level ${i + 1}): ${parsed.files.length} files`);
-            attemptedStrategies.push(`json-code-block-unescape-${i + 1}`);
-            return parsed as CodeChanges;
-          }
-        } catch {
-          // Continue to next strategy
-        }
-      }
-
-      // Log error if all strategies failed
-      const errorMsg = error instanceof Error ? error.message : String(error);
-      const snippet = jsonStr.substring(0, 200) + (jsonStr.length > 200 ? '...' : '');
-      logger.warn(`[JsonParser] Failed to parse JSON from code block: ${errorMsg}. Snippet: ${snippet}`);
     }
+
+    // Try progressive unescaping for deeply nested escaped JSON (fallback)
+    const unescapeStrategies = [
+      // Double-escaped: \\n -> \n, \\" -> "
+      (s: string) => s.replace(/\\\\n/g, '\\n').replace(/\\\\"/g, '\\"').replace(/\\\\\\\\/g, '\\\\'),
+      // Triple-escaped: \\\\ -> \\, then \\n -> \n
+      (s: string) => {
+        let result = s.replace(/\\\\\\\\/g, '\\\\');
+        result = result.replace(/\\\\n/g, '\\n').replace(/\\\\"/g, '\\"');
+        return result;
+      },
+      // Simple unescape: \\n -> newline, \\" -> "
+      (s: string) => s.replace(/\\n/g, '\n').replace(/\\"/g, '"').replace(/\\\\/g, '\\'),
+    ];
+
+    for (let i = 0; i < unescapeStrategies.length; i++) {
+      try {
+        const unescaped = unescapeStrategies[i](jsonStr);
+        // Try sanitization on unescaped result
+        const { sanitized } = sanitizeJsonString(unescaped);
+        const parsed = JSON.parse(sanitized);
+        if (parsed.files && Array.isArray(parsed.files)) {
+          if (!parsed.summary) parsed.summary = `Generated ${parsed.files.length} file(s)`;
+          logger.debug(`[JsonParser] Extracted CodeChanges from JSON code block (unescape level ${i + 1}): ${parsed.files.length} files`);
+          attemptedStrategies.push(`json-code-block-unescape-${i + 1}`);
+          return parsed as CodeChanges;
+        }
+      } catch {
+        // Continue to next strategy
+      }
+    }
+
+    // Log warning if all strategies failed for this block
+    const snippet = jsonStr.substring(0, 200) + (jsonStr.length > 200 ? '...' : '');
+    logger.warn(`[JsonParser] Failed to parse JSON from code block after all strategies. Snippet: ${snippet}`);
   }
 
   // Try to find CodeChanges structure anywhere in text (more flexible regex)
@@ -319,27 +513,17 @@ export function parseCodeChangesFromText(text: string, attemptedStrategies: stri
     let jsonStr = codeChangesMatch[0];
     attemptedStrategies.push('codeChanges-regex');
 
-    try {
-      const parsed = JSON.parse(jsonStr);
+    // Use sanitization-aware parser
+    const parseResult = tryParseJsonWithSanitization(jsonStr);
+    if (parseResult) {
+      const { parsed, strategy } = parseResult;
       if (parsed.files && Array.isArray(parsed.files) && parsed.summary) {
-        logger.debug(`[JsonParser] Extracted CodeChanges from text: ${parsed.files.length} files`);
+        logger.debug(`[JsonParser] Extracted CodeChanges from text (strategy: ${strategy}): ${parsed.files.length} files`);
+        attemptedStrategies.push(`codeChanges-regex-${strategy}`);
         return parsed as CodeChanges;
       }
-    } catch (error) {
-      try {
-        if (jsonStr.includes('\\\\n') || jsonStr.includes('\\\\"')) {
-          jsonStr = jsonStr.replace(/\\\\n/g, '\\n').replace(/\\\\"/g, '\\"').replace(/\\\\\\\\/g, '\\\\');
-          const parsed = JSON.parse(jsonStr);
-          if (parsed.files && Array.isArray(parsed.files) && parsed.summary) {
-            logger.debug(`[JsonParser] Extracted CodeChanges from text (double-escaped): ${parsed.files.length} files`);
-            attemptedStrategies.push('codeChanges-regex-double-escaped');
-            return parsed as CodeChanges;
-          }
-        }
-      } catch (retryError) {
-        logger.debug(`[JsonParser] Failed to parse CodeChanges JSON: ${error}`);
-      }
     }
+    logger.debug(`[JsonParser] Failed to parse CodeChanges JSON with all sanitization strategies`);
   }
 
   // Try finding JSON object with balanced braces (more robust extraction)
@@ -383,18 +567,21 @@ export function parseCodeChangesFromText(text: string, attemptedStrategies: stri
     if (endPos > braceStart && braceCount === 0) {
       const jsonStr = processedText.substring(braceStart, endPos);
       attemptedStrategies.push('balanced-braces');
-      try {
-        const parsed = JSON.parse(jsonStr);
+
+      // Use sanitization-aware parser
+      const parseResult = tryParseJsonWithSanitization(jsonStr);
+      if (parseResult) {
+        const { parsed, strategy } = parseResult;
         if (parsed.files && Array.isArray(parsed.files)) {
           if (!parsed.summary) {
             parsed.summary = `Generated ${parsed.files.length} file(s)`;
           }
-          logger.debug(`[JsonParser] Extracted CodeChanges using balanced brace algorithm: ${parsed.files.length} files`);
+          logger.debug(`[JsonParser] Extracted CodeChanges using balanced brace algorithm (strategy: ${strategy}): ${parsed.files.length} files`);
+          attemptedStrategies.push(`balanced-braces-${strategy}`);
           return parsed as CodeChanges;
         }
-      } catch (error) {
-        logger.debug(`[JsonParser] Failed to parse balanced brace JSON: ${error instanceof Error ? error.message : String(error)}`);
       }
+      logger.debug(`[JsonParser] Failed to parse balanced brace JSON with all sanitization strategies`);
     }
   }
 
@@ -419,33 +606,20 @@ export function parseCodeChangesFromText(text: string, attemptedStrategies: stri
       jsonStr = jsonStr.substring(0, endPos);
       attemptedStrategies.push('files-key-regex');
 
-      try {
-        const parsed = JSON.parse(jsonStr);
+      // Use sanitization-aware parser
+      const parseResult = tryParseJsonWithSanitization(jsonStr);
+      if (parseResult) {
+        const { parsed, strategy } = parseResult;
         if (parsed.files && Array.isArray(parsed.files)) {
           if (!parsed.summary) {
             parsed.summary = `Generated ${parsed.files.length} file(s)`;
           }
-          logger.debug(`[JsonParser] Extracted CodeChanges from files key: ${parsed.files.length} files`);
+          logger.debug(`[JsonParser] Extracted CodeChanges from files key (strategy: ${strategy}): ${parsed.files.length} files`);
+          attemptedStrategies.push(`files-key-regex-${strategy}`);
           return parsed as CodeChanges;
         }
-      } catch (error) {
-        try {
-          if (jsonStr.includes('\\\\n') || jsonStr.includes('\\\\"')) {
-            jsonStr = jsonStr.replace(/\\\\n/g, '\\n').replace(/\\\\"/g, '\\"').replace(/\\\\\\\\/g, '\\\\');
-            const parsed = JSON.parse(jsonStr);
-            if (parsed.files && Array.isArray(parsed.files)) {
-              if (!parsed.summary) {
-                parsed.summary = `Generated ${parsed.files.length} file(s)`;
-              }
-              logger.debug(`[JsonParser] Extracted CodeChanges from files key (double-escaped): ${parsed.files.length} files`);
-              attemptedStrategies.push('files-key-regex-double-escaped');
-              return parsed as CodeChanges;
-            }
-          }
-        } catch (retryError) {
-          logger.debug(`[JsonParser] Failed to parse files key JSON: ${error}`);
-        }
       }
+      logger.debug(`[JsonParser] Failed to parse files key JSON with all sanitization strategies`);
     }
   }
 

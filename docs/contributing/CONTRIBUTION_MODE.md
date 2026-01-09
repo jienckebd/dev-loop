@@ -220,6 +220,61 @@ You can enhance dev-loop by:
 3. Improving prompts based on observed failures
 4. Optimizing context discovery based on efficiency observations
 
+## Event Streaming & Observability
+
+Dev-loop emits structured events for efficient contribution mode monitoring:
+
+### Event Types
+
+| Event | Description |
+|-------|-------------|
+| `file:filtered` | File blocked due to target module boundary |
+| `validation:failed` | Pre-apply validation failure |
+| `task:blocked` | Task exceeded max retries |
+| `change:unauthorized` | Unauthorized git change detected |
+| `change:reverted` | Unauthorized change reverted |
+
+### Accessing Events via MCP
+
+Use MCP tools to query events:
+
+| Tool | Description |
+|------|-------------|
+| `devloop_events_poll` | Get events since timestamp |
+| `devloop_events_latest` | Get N most recent events |
+| `devloop_blocked_tasks` | List blocked tasks |
+| `devloop_filtered_files` | List filtered file paths |
+| `devloop_issues` | Get all warn/error/critical events |
+
+### Example Usage
+
+```typescript
+// Poll for new events since last check
+const { events } = await devloop_events_poll({ 
+  sinceTimestamp: lastCheckTime,
+  filterSeverity: 'warn' 
+});
+
+// Check for filtered files
+const { filteredFiles } = await devloop_filtered_files();
+
+// Get all issues
+const { issues } = await devloop_issues();
+```
+
+### Event Streaming vs Log Parsing
+
+Event streaming is more efficient than log parsing for contribution mode:
+
+| Aspect | Event Streaming | Log Parsing |
+|--------|-----------------|-------------|
+| Structure | Structured JSON | Unstructured text |
+| Filtering | Built-in filters | Manual regex |
+| Performance | Direct access | File I/O overhead |
+| Real-time | Yes | Tail-based |
+
+See [`EVENT_STREAMING.md`](EVENT_STREAMING.md) for complete guide.
+
 4. **Enhance Dev-Loop (if needed):**
    - If inner agent is stuck, enhance dev-loop code
    - Edit files in `node_modules/dev-loop/src/`
@@ -335,6 +390,8 @@ If state file is corrupted:
 
 ## Related Documentation
 
+- [Event Streaming](EVENT_STREAMING.md) - Event streaming guide for contribution mode
+- [Boundary Enforcement](BOUNDARY_ENFORCEMENT.md) - Boundary validation implementation
 - [Contribution State Schema](CONTRIBUTION_STATE_SCHEMA.md) - State file reference
 - [Development Workflow](DEVELOPMENT_WORKFLOW.md) - How to make changes
 - [Architecture](ARCHITECTURE.md) - Codebase structure

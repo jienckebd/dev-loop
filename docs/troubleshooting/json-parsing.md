@@ -166,6 +166,43 @@ Debug output shows:
 - Response samples
 - Parsing strategies attempted
 - Unescape operations
+- Result text length and structure
+- JSON block detection
+
+## Enhanced Debugging
+
+New debug logs help diagnose nested JSON extraction issues:
+
+### Result Text Analysis
+
+When parsing `response.text` containing stringified result objects:
+
+```
+[DEBUG] [JsonParser] Attempting to parse response.text (length: 12345)
+[DEBUG] [JsonParser] Found result object in response.text. Result type: string, length: 8765
+[DEBUG] [JsonParser] Result text length: 8765, has JSON block: true
+[DEBUG] [JsonParser] Applying first unescape pass (\\n, \\")
+[DEBUG] [JsonParser] Applying second unescape pass (\\\\)
+[DEBUG] [JsonParser] After unescape - has JSON block: true, snippet: {"files":[...
+[DEBUG] [JsonParser] Extracted CodeChanges from response.text (result object): 3 files
+```
+
+### What These Logs Tell You
+
+| Log Message | Meaning |
+|-------------|---------|
+| `Result text length: X, has JSON block: Y` | Shows if JSON block is present in nested result |
+| `Applying first unescape pass` | Double-escaped newlines/quotes detected |
+| `Applying second unescape pass` | Triple-escaped backslashes detected |
+| `After unescape - has JSON block` | Verifies JSON block remains after unescaping |
+| `Extracted CodeChanges...X files` | Successful extraction with file count |
+
+### Diagnosing Nested JSON Issues
+
+1. **Check if JSON block exists**: Look for `has JSON block: true/false`
+2. **Verify unescape passes**: Multiple passes indicate over-escaping
+3. **Examine snippet**: Shows what the parser sees after processing
+4. **Compare lengths**: Large reduction in length after unescape indicates heavy escaping
 
 ### View Response Sample
 

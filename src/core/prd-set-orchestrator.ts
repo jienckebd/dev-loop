@@ -57,6 +57,28 @@ export class PrdSetOrchestrator {
     this.errorHandler = new PrdSetErrorHandler(this.coordinator, debug);
     this.prdSetMetrics = new PrdSetMetrics('.devloop/prd-set-metrics.json');
     this.debug = debug;
+
+    // Register cleanup handlers for graceful shutdown
+    this.registerCleanupHandlers();
+
+    // Finalize any stale in-progress PRD sets from previous runs
+    this.prdSetMetrics.finalizeInProgressSets();
+  }
+
+  /**
+   * Register handlers for process termination to ensure metrics are finalized
+   */
+  private registerCleanupHandlers(): void {
+    const cleanup = () => {
+      if (this.debug) {
+        logger.debug('[PrdSetOrchestrator] Process termination - finalizing metrics');
+      }
+      // Finalize any in-progress PRD sets
+      this.prdSetMetrics.finalizeInProgressSets();
+    };
+
+    process.once('SIGTERM', cleanup);
+    process.once('SIGINT', cleanup);
   }
 
   /**
@@ -296,6 +318,17 @@ export class PrdSetOrchestrator {
     const finalStatus = result.status === 'complete' ? 'completed' :
                        result.status === 'failed' ? 'failed' : 'blocked';
     this.prdSetMetrics.completePrdSetExecution(discoveredSet.setId, finalStatus);
+
+    // Auto-generate report after completion
+    try {
+      const { PrdReportGenerator } = require('./prd-report-generator');
+      const reportPath = await PrdReportGenerator.autoGenerateReport(discoveredSet.setId);
+      if (reportPath && this.debug) {
+        logger.debug(`[PrdSetOrchestrator] Auto-generated report: ${reportPath}`);
+      }
+    } catch (error) {
+      logger.warn(`[PrdSetOrchestrator] Failed to auto-generate report: ${error}`);
+    }
 
     return result;
   }
