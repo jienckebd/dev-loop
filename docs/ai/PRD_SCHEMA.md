@@ -1615,6 +1615,90 @@ See [`PRD_FEATURES.md`](PRD_FEATURES.md) for details on leveraging config sectio
 
 ---
 
+## Framework Configuration Pattern
+
+Framework-specific configuration should use the `framework.config.{frameworkType}` pattern in `devloop.config.js`:
+
+```javascript
+// devloop.config.js
+module.exports = {
+  framework: {
+    type: 'drupal',  // Framework type: 'drupal', 'react', 'django', etc.
+    rules: [...],    // AI prompt rules
+    taskPatterns: [...],
+    errorGuidance: {...},
+    
+    // Framework-specific extensions go here
+    config: {
+      drupal: {
+        enabled: true,
+        ddevProject: 'my-project',
+        cacheCommand: 'ddev exec drush cr',
+        servicesPath: 'docroot/modules/share/*/services.yml',
+        // ... other Drupal-specific config
+      }
+    }
+  }
+};
+```
+
+**Why this pattern?**
+- Keeps dev-loop framework-agnostic
+- Framework plugins can define their own config schemas
+- Clear separation between core framework settings (`framework.type`, `framework.rules`) and framework-specific extensions (`framework.config.drupal`)
+
+---
+
+## Project-Specific Configuration
+
+Project-specific schemas like `wizard` and `designSystem` should **not** be in `devloop.config.js`. They belong in PRD config overlays:
+
+```yaml
+# PRD frontmatter with project-specific config
+---
+prd:
+  id: my_prd
+  version: 1.0.0
+  status: ready
+
+config:
+  # Project-specific wizard configuration
+  wizard:
+    baseUrl: '/admin/content/wizard/add/api_spec'
+    steps:
+      - { number: 1, name: 'Step 1', formMode: 'default' }
+      - { number: 2, name: 'Step 2', formMode: 'step_2' }
+    
+  # Project-specific design system configuration  
+  designSystem:
+    themeEntity:
+      testEntityId: 21
+      tabs: ['Theme', 'Layout', 'Components']
+---
+```
+
+Or use a PRD set config file:
+
+```json
+// .taskmaster/planning/{prd-set-id}/prd-set-config.json
+{
+  "wizard": {
+    "baseUrl": "/admin/content/wizard/add/api_spec",
+    "steps": [...]
+  },
+  "designSystem": {
+    "themeEntity": {...}
+  }
+}
+```
+
+**Rationale:**
+- Project-specific config doesn't belong in base dev-loop schemas
+- Allows different projects to have different config structures
+- Config overlays are validated but allow unknown keys for extensibility
+
+---
+
 ## Quick Reference
 
 ### Minimal Valid PRD Frontmatter

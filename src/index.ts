@@ -29,6 +29,7 @@ import { contributionCommand } from './cli/commands/contribution';
 import { evolveCommand } from './cli/commands/evolve';
 import { prdCommand } from './cli/commands/prd';
 import { validatePrdCommand } from './cli/commands/validate-prd';
+import { registerConvertPlanningDocCommand } from './cli/commands/convert-planning-doc';
 import { prdSetExecuteCommand, prdSetStatusCommand, prdSetListCommand, prdSetValidateCommand } from './cli/commands/prd-set';
 import { scanCommand } from './cli/commands/scan';
 import { recommendCommand } from './cli/commands/recommend';
@@ -326,6 +327,9 @@ program
       verbose: options.verbose,
     });
   });
+
+// Register convert-planning-doc command
+registerConvertPlanningDocCommand(program);
 
 program
   .command('validate-cursor-agents')

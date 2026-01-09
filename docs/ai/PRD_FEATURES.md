@@ -1429,6 +1429,79 @@ requirements:
           maxTokens: 16000  # More context for complex phase
 ```
 
+### Framework Config Extensions
+
+Framework-specific configuration extensions go in `framework.config.{frameworkType}` in `devloop.config.js`:
+
+```javascript
+// devloop.config.js
+framework: {
+  type: 'drupal',
+  rules: [...],  // Generic framework rules
+  
+  // Framework-specific config extensions
+  config: {
+    drupal: {
+      enabled: true,
+      ddevProject: 'my-project',
+      cacheCommand: 'ddev exec drush cr',
+      servicesPath: 'docroot/modules/share/*/services.yml',
+      wizardPatterns: {...},
+      codingStandards: [...]
+    }
+  }
+}
+```
+
+This pattern:
+- Keeps dev-loop framework-agnostic
+- Allows framework plugins to define their own config schemas
+- Separates core framework settings from framework-specific extensions
+
+### Project-Specific Configuration
+
+Project-specific schemas like `wizard` and `designSystem` should be in **PRD config overlays**, not base `devloop.config.js`:
+
+```yaml
+# PRD frontmatter with project-specific config
+---
+prd:
+  id: design_system_prd
+  version: 1.0.0
+  status: ready
+
+config:
+  # Project-specific wizard configuration
+  wizard:
+    baseUrl: '/admin/content/wizard/add/api_spec'
+    steps:
+      - { number: 1, name: 'Feature Selection', formMode: 'default' }
+      - { number: 2, name: 'Configuration', formMode: 'configuration' }
+    
+  # Project-specific design system configuration  
+  designSystem:
+    themeEntity:
+      testEntityId: 21
+      tabs: ['Theme', 'Layout', 'Components']
+---
+```
+
+**Or use a PRD set config file:**
+```json
+// .taskmaster/planning/{prd-set-id}/prd-set-config.json
+{
+  "wizard": {
+    "baseUrl": "/admin/content/wizard/add/api_spec",
+    "steps": [...]
+  },
+  "designSystem": {
+    "themeEntity": {...}
+  }
+}
+```
+
+**Key Principle**: Project-specific config belongs in PRD overlays, not base dev-loop config. This allows different projects/PRDs to have different configurations without polluting the base schema.
+
 ### AI Agent Guidance
 
 **When creating PRDs, consider:**

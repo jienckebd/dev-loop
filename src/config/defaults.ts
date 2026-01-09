@@ -59,21 +59,9 @@ export const defaultConfig: Partial<Config> = {
     generateImplementation: true,
     resolveDependencies: false,
   },
-  drupal: {
-    enabled: true,
-    cacheCommand: 'ddev exec drush cr',
-    servicesPath: 'docroot/modules/share/*/services.yml',
-    schemaPath: 'docroot/modules/share/bd/config/schema/bd.schema.yml',
-    entityTypeBuilder: 'entity_type.builder',
-  },
-  wizard: {
-    baseUrl: '/admin/content/wizard/add/api_spec',
-    editUrlPattern: '/admin/content/wizard/{id}/edit',
-    iefSelectors: {
-      container: '[data-drupal-selector*="inline-entity-form"]',
-      table: '.ief-table, table.ief-entity-table',
-      addButton: 'input[value*="Add"], button:has-text("Add")',
-    },
-  },
+  // NOTE: drupal and wizard configs have been moved to:
+  // - framework.config.drupal (in devloop.config.js)
+  // - PRD config overlays (for project-specific config)
+  // They are no longer part of the base Config schema.
 };
 
