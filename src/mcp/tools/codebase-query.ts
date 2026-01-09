@@ -13,9 +13,9 @@
 import * as path from 'path';
 import * as fs from 'fs-extra';
 import { z } from 'zod';
-import { CodebaseGraph } from '../../core/codebase-graph';
-import { SemanticFileDiscovery } from '../../core/semantic-file-discovery';
-import { ASTParser } from '../../core/ast-parser';
+import { CodebaseGraph } from '../../core/analysis/code/codebase-graph';
+import { SemanticFileDiscovery } from '../../core/analysis/code/semantic-file-discovery';
+import { ASTParser } from '../../core/analysis/code/ast-parser';
 import { EmbeddingService } from '../../ai/embedding-service';
 import { AbstractionDetector } from "../../core/analysis/code/abstraction-detector";
 import { Config } from '../../config/schema';
