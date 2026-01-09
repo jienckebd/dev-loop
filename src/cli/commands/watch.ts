@@ -1,5 +1,7 @@
 import chalk from 'chalk';
 import ora from 'ora';
+import * as fs from 'fs-extra';
+import * as path from 'path';
 import { loadConfig } from '../../config/loader';
 import { WorkflowEngine } from '../../core/workflow-engine';
 import { PrdTracker } from '../../core/prd-tracker';
@@ -8,6 +10,7 @@ import { ChatRequestAutoProcessor } from '../../providers/ai/cursor-chat-auto-pr
 import { getReportGenerator, PrdExecutionReport } from '../../core/report-generator';
 import { getParallelMetricsTracker } from '../../core/parallel-metrics';
 import { ProgressTracker } from '../../core/progress-tracker';
+import { PrdConfigParser } from '../../core/prd-config-parser';
 
 export async function watchCommand(options: {
   config?: string;
@@ -29,6 +32,37 @@ export async function watchCommand(options: {
     spinner.start('Initializing workflow engine');
     const engine = new WorkflowEngine(config);
     spinner.succeed('Workflow engine initialized');
+
+    // CRITICAL FIX: Load PRD metadata from contribution mode and set target module
+    // This ensures watch mode respects targetModule from PRD execution config
+    const contributionModeFile = path.join(process.cwd(), '.devloop', 'contribution-mode.json');
+    if (await fs.pathExists(contributionModeFile)) {
+      try {
+        const contributionState = await fs.readJson(contributionModeFile);
+        if (contributionState.active && contributionState.prdPath) {
+          const prdPath = contributionState.prdPath;
+          const configParser = new PrdConfigParser(debug);
+          const prdMetadata = await configParser.parsePrdMetadata(prdPath);
+          
+          // Set target module from PRD execution config
+          if (prdMetadata?.execution?.targetModule) {
+            (engine as any).currentPrdTargetModule = prdMetadata.execution.targetModule;
+            if (debug) {
+              console.log(chalk.cyan(`[Watch] Loaded target module from PRD: ${prdMetadata.execution.targetModule}`));
+            }
+          }
+          
+          // Also set PRD ID for better context
+          if (prdMetadata?.prd?.id) {
+            (engine as any).currentPrdId = prdMetadata.prd.id;
+          }
+        }
+      } catch (error) {
+        if (debug) {
+          console.warn(`[Watch] Failed to load contribution mode PRD metadata: ${error}`);
+        }
+      }
+    }
 
     // Initialize progress tracker
     const progressTracker = new ProgressTracker();

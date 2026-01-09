@@ -2301,7 +2301,47 @@ export class WorkflowEngine {
     targetFiles?: string;
     existingCode?: string;
   }> {
-    const taskText = `${task.title} ${task.description} ${task.details || ''}`;
+    let taskText = `${task.title} ${task.description} ${task.details || ''}`;
+    
+    // CRITICAL FIX: Load child PRD content to get actual file paths and requirements
+    // The task description is generic ("Complete phase: X") but the PRD has specifics
+    const currentPrdId = (this as any).currentPrdId;
+    if (currentPrdId && task.id) {
+      try {
+        // Extract phase number from task ID (e.g., "ENH-PHASE-1" -> "1")
+        const phaseMatch = task.id.match(/PHASE-(\d+)/);
+        if (phaseMatch) {
+          const phaseNum = phaseMatch[1];
+          // Find the child PRD file for this phase
+          const prdSetDir = '.taskmaster/planning/' + currentPrdId.replace(/_/g, '-');
+          if (fs.existsSync(prdSetDir)) {
+            const prdFiles = fs.readdirSync(prdSetDir);
+            const phaseFile = prdFiles.find(f => 
+              f.match(new RegExp(`phase${phaseNum}[_\\.]`, 'i')) || 
+              f.match(new RegExp(`phase_?${phaseNum}\\.`, 'i'))
+            );
+            if (phaseFile) {
+              const prdPath = path.join(prdSetDir, phaseFile);
+              const prdContent = fs.readFileSync(prdPath, 'utf-8');
+              // Extract the markdown content (after YAML frontmatter)
+              const contentMatch = prdContent.match(/---[\s\S]*?---\s*([\s\S]*)/);
+              if (contentMatch) {
+                const prdBodyContent = contentMatch[1];
+                // Prepend PRD requirements to task context
+                taskText = `## PRD Requirements\n\n${prdBodyContent}\n\n## Task\n\n${taskText}`;
+                if (this.debug) {
+                  console.log(`[DEBUG] Loaded child PRD content from: ${prdPath} (${prdBodyContent.length} chars)`);
+                }
+              }
+            }
+          }
+        }
+      } catch (error) {
+        if (this.debug) {
+          console.warn(`[DEBUG] Failed to load child PRD content: ${error}`);
+        }
+      }
+    }
     const mentionedFiles: string[] = [];
 
     // Get codebase config with defaults
@@ -2370,10 +2410,32 @@ export class WorkflowEngine {
             console.log(`[DEBUG] Scoping file discovery to existing module: ${moduleName} (${moduleDir})`);
           }
         } else {
-          // For NEW module creation, don't scope search but do set moduleName
-          // This allows the AI to create files in the correct module directory
+          // For NEW module creation, search for patterns in similar modules
+          // This helps AI understand the expected structure
           if (this.debug) {
             console.log(`[DEBUG] Target module ${moduleName} doesn't exist yet (new module creation)`);
+            console.log(`[DEBUG] Searching for reference patterns in existing modules`);
+          }
+          
+          // Find similar modules by prefix (e.g., bd_* modules for bd_agent_chat_test)
+          const modulePrefix = moduleName.split('_')[0];
+          const shareModulesDir = path.resolve(process.cwd(), 'docroot/modules/share');
+          if (fs.existsSync(shareModulesDir)) {
+            try {
+              const existingModules = fs.readdirSync(shareModulesDir, { withFileTypes: true })
+                .filter(dirent => dirent.isDirectory() && dirent.name.startsWith(modulePrefix))
+                .map(dirent => `docroot/modules/share/${dirent.name}`)
+                .slice(0, 2); // Limit to 2 reference modules
+              
+              if (existingModules.length > 0) {
+                scopedSearchDirs = [...existingModules, ...searchDirs];
+                if (this.debug) {
+                  console.log(`[DEBUG] Using reference modules for patterns: ${existingModules.join(', ')}`);
+                }
+              }
+            } catch {
+              // Ignore errors reading directory
+            }
           }
         }
       }
@@ -2722,7 +2784,23 @@ export class WorkflowEngine {
       try {
         // Try ripgrep first (faster), fall back to grep
         let command: string;
-        const searchPath = searchDirs.filter(d => fs.existsSync(path.resolve(process.cwd(), d))).join(' ') || '.';
+        
+        // CRITICAL FIX: When a target module is specified, ONLY search within that module
+        // This prevents irrelevant files from other modules polluting the context
+        let effectiveSearchDirs = searchDirs;
+        if (targetModule) {
+          const targetModuleDir = `docroot/modules/share/${targetModule}`;
+          const targetModulePath = path.resolve(process.cwd(), targetModuleDir);
+          if (fs.existsSync(targetModulePath)) {
+            // Only search in the target module
+            effectiveSearchDirs = [targetModuleDir];
+            if (this.debug && identifier === prioritizedIdentifiers[0]) {
+              console.log(`[DEBUG] Restricting search to target module: ${targetModuleDir}`);
+            }
+          }
+        }
+        
+        const searchPath = effectiveSearchDirs.filter(d => fs.existsSync(path.resolve(process.cwd(), d))).join(' ') || '.';
 
         // Check if ripgrep is available
         try {
@@ -3085,11 +3163,22 @@ export class WorkflowEngine {
     // Store PRD context in class properties for use in executeTask
     (this as any).currentPrdId = prdId;
     (this as any).currentPrdSetId = prdSetId;
-    // Store target module from PRD metadata for context scoping
-    (this as any).currentPrdTargetModule = prdMetadata?.execution?.targetModule || null;
+    
+    // CRITICAL FIX: Inherit execution config from parent PRD when child PRD doesn't have it
+    // This fixes the issue where child PRDs don't have targetModule, targetFilesPattern, etc.
+    const parentExecutionConfig = (this as any).parentPrdExecutionConfig;
+    const effectiveExecution = prdMetadata?.execution || parentExecutionConfig;
+    
+    // Store target module from effective execution config for context scoping
+    (this as any).currentPrdTargetModule = effectiveExecution?.targetModule || null;
+    
+    if (this.debug && effectiveExecution?.targetModule) {
+      console.log(`[DEBUG] Using target module: ${effectiveExecution.targetModule} (${prdMetadata?.execution ? 'from child PRD' : 'inherited from parent'})`);
+    }
+    
     // Store max concurrency from PRD execution config (overrides base config)
     // Check for maxConcurrency in execution config (may not be in type definition)
-    const executionConfig = prdMetadata?.execution as any;
+    const executionConfig = effectiveExecution as any;
     (this as any).currentPrdMaxConcurrency = executionConfig?.maxConcurrency || (this.config as any).autonomous?.maxConcurrency || 1;
 
     // Start PRD metrics tracking
@@ -3252,6 +3341,8 @@ export class WorkflowEngine {
                 type: req.type || 'functional',
                 createdAt: new Date().toISOString(),
               }),
+              // Add dependencies from requirement if present
+              ...(req.dependencies && req.dependencies.length > 0 ? { dependencies: req.dependencies } : {}),
             };
             await this.taskBridge.createTask(task);
             if (this.debug) {

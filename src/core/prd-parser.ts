@@ -155,9 +155,25 @@ export class PrdParser {
       } else {
         // Phase has no tasks - create a requirement from the phase itself
         // This handles cases like index.md.yml where phases are defined but tasks are in child PRDs
-        const phaseReqId = idPattern.replace('{id}', `PHASE-${phase.id}`);
+        // Just use the phase.id directly - the idPattern already includes any prefix like "PHASE-"
+        const phaseReqId = idPattern.replace('{id}', String(phase.id));
         const phaseTitle = phase.name || `Phase ${phase.id}`;
         const phaseDescription = `Complete phase: ${phaseTitle}`;
+
+        // Convert phase dependency IDs to requirement IDs using the same idPattern
+        const phaseDeps = (phase as any).dependencies as (number | string)[] | undefined;
+        const dependencies = phaseDeps?.map(depId => {
+          // If it's a number, convert using idPattern; if string with pattern prefix, use as-is
+          if (typeof depId === 'number') {
+            return idPattern.replace('{id}', String(depId));
+          }
+          const patternPrefix = idPattern.split('{id}')[0];
+          if (typeof depId === 'string' && depId.startsWith(patternPrefix)) {
+            return depId;
+          }
+          // Assume it's a phase number as string
+          return idPattern.replace('{id}', String(depId));
+        });
 
         requirements.push({
           id: phaseReqId,
@@ -166,6 +182,7 @@ export class PrdParser {
           priority: 'must',
           status: 'pending',
           type: 'functional',
+          dependencies,
         });
       }
     }

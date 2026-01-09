@@ -15,7 +15,7 @@ sequenceDiagram
     participant Parent as WorkflowEngine
     participant Socket as UnixSocket
     participant Child as BackgroundAgent
-    
+
     Parent->>Socket: Create socket server
     Parent->>Child: Spawn with socket path (env var)
     Child->>Socket: Connect to server
@@ -239,4 +239,5 @@ await ipcServer.stop();
 3. **Handle disconnects**: Check `client.isConnected()` before sending
 4. **Log important events**: Use debug mode during development
 5. **Unique session IDs**: Prevent socket collisions with unique IDs
+
 

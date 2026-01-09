@@ -82,7 +82,7 @@ The following files need to be created...
 
 **Cause**: Prompt not strict enough or AI model ignoring instructions
 
-**Fix**: 
+**Fix**:
 - Stricter prompts are now enforced (as of this version)
 - If still happening, check prompt templates in `src/providers/ai/cursor.ts`
 
@@ -107,7 +107,7 @@ The following files need to be created...
 
 **Cause**: Content with unescaped special characters
 
-**Fix**: 
+**Fix**:
 - Content should have escaped newlines (`\n`) and quotes (`\"`)
 - Parser handles common escaping issues automatically
 
@@ -142,7 +142,7 @@ The following files need to be created...
 
 **Cause**: AI thinks task is complete when it's not
 
-**Fix**: 
+**Fix**:
 - Check if files actually exist at required paths
 - Review task description for clarity
 
@@ -284,4 +284,5 @@ module.exports = {
   }
 };
 ```
+
 

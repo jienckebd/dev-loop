@@ -137,3 +137,4 @@ export function registerBackgroundAgentTools(mcp: FastMCPType, getConfig: Config
   });
 }
 
+

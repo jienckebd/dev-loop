@@ -11,6 +11,7 @@ export interface Requirement {
   type?: 'functional' | 'test' | 'fix';
   implementationFiles?: string[];
   testFile?: string;
+  dependencies?: string[];  // IDs of requirements this one depends on
 }
 
 export interface TestState {

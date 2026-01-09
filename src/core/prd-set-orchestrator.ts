@@ -149,8 +149,9 @@ export class PrdSetOrchestrator {
         }
       }
 
-      // Execute PRDs in this level (parallel if enabled)
-      const executionPromises: Array<Promise<{ prdId: string; result: PrdExecutionResult }>> = [];
+      // Collect PRDs eligible for execution in this level
+      type PrdExecutor = () => Promise<{ prdId: string; result: PrdExecutionResult }>;
+      const executorFunctions: Array<{ prdId: string; executor: PrdExecutor }> = [];
 
       for (const prdId of level.prds) {
         // Skip if already failed
@@ -182,14 +183,24 @@ export class PrdSetOrchestrator {
           continue;
         }
 
-        // Update state to running
-        await this.coordinator.updatePrdState(prdId, { status: 'running' });
+        // Create execution function (NOT called yet - stored as reference)
+        const executePrd: PrdExecutor = async () => {
+          // Update state to running when actually starting
+          await this.coordinator.updatePrdState(prdId, { status: 'running' });
 
-        // Create execution promise with error handling
-        const executePrd = async () => {
           try {
             if (this.debug) {
               logger.debug(`[PrdSetOrchestrator] Executing PRD: ${prdId}`);
+            }
+
+            // CRITICAL FIX: Pass parent PRD's execution config to workflow engine
+            // Child PRDs don't have their own execution section, so inherit from parent
+            const parentExecution = discoveredSet.manifest.parentPrd.metadata.execution;
+            if (parentExecution) {
+              (this.workflowEngine as any).parentPrdExecutionConfig = parentExecution;
+              if (this.debug) {
+                logger.debug(`[PrdSetOrchestrator] Inherited parent execution config: targetModule=${parentExecution.targetModule}`);
+              }
             }
 
             const prdResult = await this.workflowEngine.runAutonomousPrd(prd.path);
@@ -230,42 +241,37 @@ export class PrdSetOrchestrator {
           }
         };
 
-        executionPromises.push(executePrd());
+        // Store executor function reference (not called yet)
+        executorFunctions.push({ prdId, executor: executePrd });
       }
 
-      // Wait for all PRDs in this level to complete
-      if (parallel && executionPromises.length > 0) {
-        // Limit concurrent executions
-        const concurrentLimit = Math.min(maxConcurrent, executionPromises.length);
-        const batches: Array<Promise<any>[]> = [];
+      // Execute PRDs with proper concurrency control
+      if (executorFunctions.length > 0) {
+        const concurrentLimit = parallel ? Math.min(maxConcurrent, executorFunctions.length) : 1;
 
-        for (let i = 0; i < executionPromises.length; i += concurrentLimit) {
-          batches.push(executionPromises.slice(i, i + concurrentLimit));
+        if (this.debug) {
+          logger.debug(`[PrdSetOrchestrator] Executing ${executorFunctions.length} PRDs with concurrency limit ${concurrentLimit}`);
         }
 
-        for (const batch of batches) {
-          const batchResults = await Promise.allSettled(batch);
+        // Process in batches, starting each batch only after the previous completes
+        for (let i = 0; i < executorFunctions.length; i += concurrentLimit) {
+          const batch = executorFunctions.slice(i, i + concurrentLimit);
 
-          for (const settled of batchResults) {
+          // Start batch execution (now we actually call the executor functions)
+          const batchPromises = batch.map(item => item.executor());
+
+          const batchResults = await Promise.allSettled(batchPromises);
+
+          for (let j = 0; j < batchResults.length; j++) {
+            const settled = batchResults[j];
+            const prdId = batch[j].prdId;
+
             if (settled.status === 'fulfilled') {
               result.completedPrds.push(settled.value.prdId);
             } else {
-              const prdId = level.prds.find(id => !result.completedPrds.includes(id) && !result.failedPrds.includes(id)) || 'unknown';
               result.failedPrds.push(prdId);
               result.errors.push(`PRD ${prdId} execution failed: ${settled.reason?.message || 'Unknown error'}`);
             }
-          }
-        }
-      } else {
-        // Sequential execution
-        for (const promise of executionPromises) {
-          try {
-            const prdResult = await promise;
-            result.completedPrds.push(prdResult.prdId);
-          } catch (error: any) {
-            const prdId = level.prds.find(id => !result.completedPrds.includes(id) && !result.failedPrds.includes(id)) || 'unknown';
-            result.failedPrds.push(prdId);
-            result.errors.push(`PRD ${prdId} execution failed: ${error.message}`);
           }
         }
       }

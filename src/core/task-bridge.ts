@@ -41,13 +41,17 @@ export class TaskMasterBridge {
   }
 
   /**
-   * Save retry counts to persistent storage
+   * Save retry counts to persistent storage (atomic write)
    */
   private saveRetryCountsToFile(): void {
     try {
       const data = Object.fromEntries(this.taskRetryCount);
       fs.ensureDirSync(path.dirname(this.retryCountPath));
-      fs.writeFileSync(this.retryCountPath, JSON.stringify(data, null, 2));
+
+      // Atomic write: write to temp file then rename
+      const tempPath = `${this.retryCountPath}.${process.pid}.${Date.now()}.tmp`;
+      fs.writeFileSync(tempPath, JSON.stringify(data, null, 2));
+      fs.renameSync(tempPath, this.retryCountPath);
     } catch (err) {
       console.warn('[TaskBridge] Could not save retry counts:', err);
     }
@@ -312,6 +316,89 @@ export class TaskMasterBridge {
   }
 
   /**
+   * Assign IDs to tasks that have null/undefined IDs
+   * This fixes issues with task-master generating tasks without proper IDs
+   */
+  private assignMissingIds(tasks: Task[]): Task[] {
+    let modified = false;
+    let nextId = 1;
+    const timestamp = Date.now();
+
+    // Load idPattern from active PRD set if available
+    const idPattern = this.loadIdPatternFromPrdSet();
+
+    for (const task of tasks) {
+      if (task.id == null || task.id === undefined || task.id === '') {
+        // Generate a unique ID
+        if (idPattern) {
+          // Use the PRD set's idPattern
+          task.id = idPattern.replace('{id}', String(nextId));
+        } else {
+          // Fallback: use generic pattern
+          task.id = `TASK-${nextId}-${timestamp}`;
+        }
+        console.log(`[TaskBridge] Assigned ID "${task.id}" to task: ${task.title?.substring(0, 50)}`);
+        modified = true;
+        nextId++;
+      }
+    }
+
+    // If we modified any tasks, save them back to file
+    if (modified) {
+      console.log(`[TaskBridge] Assigned IDs to ${nextId - 1} tasks with missing IDs`);
+      // Save asynchronously - don't block
+      this.saveTasks(tasks).catch(err => {
+        console.warn(`[TaskBridge] Failed to save tasks after ID assignment: ${err}`);
+      });
+    }
+
+    return tasks;
+  }
+
+  /**
+   * Load idPattern from active PRD set index file
+   */
+  private loadIdPatternFromPrdSet(): string | null {
+    try {
+      const planningDir = (this.config as any).taskMaster?.planningDir || '.taskmaster/planning';
+      const cwd = process.cwd();
+      const fullPlanningDir = path.join(cwd, planningDir);
+
+      if (!fs.existsSync(fullPlanningDir)) {
+        return null;
+      }
+
+      // Look for PRD set index files
+      const entries = fs.readdirSync(fullPlanningDir, { withFileTypes: true });
+      for (const entry of entries) {
+        if (entry.isDirectory()) {
+          const indexPath = path.join(fullPlanningDir, entry.name, 'index.md.yml');
+          if (fs.existsSync(indexPath)) {
+            try {
+              const content = fs.readFileSync(indexPath, 'utf-8');
+              // Simple YAML parse for idPattern
+              const idPatternMatch = content.match(/idPattern:\s*["']?([^"'\n]+)["']?/);
+              if (idPatternMatch) {
+                const pattern = idPatternMatch[1].trim();
+                if (pattern.includes('{id}')) {
+                  console.log(`[TaskBridge] Found idPattern "${pattern}" from ${entry.name}`);
+                  return pattern;
+                }
+              }
+            } catch (parseError) {
+              // Skip this PRD set
+            }
+          }
+        }
+      }
+
+      return null;
+    } catch (error) {
+      return null;
+    }
+  }
+
+  /**
    * Extract file paths from error messages using config patterns
    */
   private extractFilePaths(text: string): string[] {
@@ -432,9 +519,12 @@ export class TaskMasterBridge {
           }
         }
 
-        const pending = allTasks.filter(t => t.status === 'pending');
+        // Assign IDs to tasks with null/undefined IDs
+        const tasksWithIds = this.assignMissingIds(allTasks);
+
+        const pending = tasksWithIds.filter(t => t.status === 'pending');
         console.log(`[TaskBridge] Loaded ${rawTasks.length} tasks, ${pending.length} pending (including subtasks)`);
-        return allTasks;
+        return tasksWithIds;
       } catch (error) {
         console.error(`[TaskBridge] Error parsing tasks file:`, error);
         return [];
@@ -520,8 +610,8 @@ export class TaskMasterBridge {
       }
     };
 
-    // Atomic write: write to temp file first, then rename
-    const tempPath = `${this.tasksPath}.tmp`;
+    // Atomic write: write to temp file first, then rename (unique per process/time to avoid conflicts)
+    const tempPath = `${this.tasksPath}.${process.pid}.${Date.now()}.tmp`;
     try {
       await fs.writeJson(tempPath, output, { spaces: 2 });
       // Verify the JSON is valid before replacing original

@@ -998,6 +998,92 @@ const configSchema = z.object({
       feedbackFile: z.string().default('.devloop/ai-feedback.json'),
     }).optional(),
   }).optional(),
+
+  // AST parsing configuration (Phase 1 enhancement)
+  ast: z.object({
+    enabled: z.boolean().default(true),
+    languages: z.array(z.enum(['typescript', 'javascript', 'python', 'php'])).default(['typescript', 'javascript', 'php']),
+    includeDocComments: z.boolean().default(true),
+    includeSignatures: z.boolean().default(true),
+    maxFileSizeBytes: z.number().default(1024 * 1024),
+    cacheEnabled: z.boolean().default(true),
+    cachePath: z.string().default('.devloop/ast-cache.json'),
+  }).optional(),
+
+  // Playwright MCP integration for TDD (Phase 5 enhancement)
+  playwrightMCP: z.object({
+    enabled: z.boolean().default(true),
+    server: z.string().default('playwright'),
+    tdd: z.object({
+      enabled: z.boolean().default(true),
+      writeTestsFirst: z.boolean().default(true),
+      runTestsAfterImplementation: z.boolean().default(true),
+      fixRootCauses: z.boolean().default(true),
+    }).optional(),
+    browser: z.object({
+      headless: z.boolean().default(true),
+      timeout: z.number().default(30000),
+      screenshotsDir: z.string().default('.devloop/screenshots'),
+    }).optional(),
+  }).optional(),
+
+  // Documentation generation configuration (Phase 6 enhancement)
+  documentation: z.object({
+    enabled: z.boolean().default(false),
+    outputDir: z.string().default('docs/api'),
+    includePrivate: z.boolean().default(false),
+    includeExamples: z.boolean().default(true),
+    generateDiagrams: z.boolean().default(true),
+    generateOnChange: z.boolean().default(false),
+  }).optional(),
+
+  // Security scanning configuration (Phase 7 enhancement)
+  security: z.object({
+    enabled: z.boolean().default(true),
+    scanOnPush: z.boolean().default(true),
+    patterns: z.array(z.object({
+      id: z.string(),
+      pattern: z.string(),
+      severity: z.enum(['critical', 'high', 'medium', 'low']),
+      message: z.string(),
+      remediation: z.string().optional(),
+    })).optional(),
+    ignorePaths: z.array(z.string()).optional(),
+    codeQLEnabled: z.boolean().default(false),
+    snykEnabled: z.boolean().default(false),
+    dependencyCheck: z.boolean().default(true),
+  }).optional(),
+
+  // Code style enforcement (Phase 7 enhancement)
+  style: z.object({
+    enabled: z.boolean().default(true),
+    autoFix: z.boolean().default(true),
+    configPath: z.string().optional(),
+    rules: z.record(z.enum(['error', 'warn', 'off'])).optional(),
+  }).optional(),
+
+  // Health scoring configuration (Phase 8 enhancement)
+  health: z.object({
+    enabled: z.boolean().default(true),
+    historyPath: z.string().default('.devloop/health-history.json'),
+    thresholds: z.object({
+      quality: z.number().default(70),
+      maintainability: z.number().default(70),
+      testCoverage: z.number().default(60),
+      documentation: z.number().default(50),
+      security: z.number().default(80),
+    }).optional(),
+    reportOnComplete: z.boolean().default(true),
+  }).optional(),
+
+  // Refactoring configuration (Phase 9 enhancement)
+  refactoring: z.object({
+    enabled: z.boolean().default(false),
+    autoSuggest: z.boolean().default(true),
+    maxSuggestions: z.number().default(20),
+    minConfidence: z.number().default(0.7),
+    backupBeforeApply: z.boolean().default(true),
+  }).optional(),
 });
 
 export type Config = z.infer<typeof configSchema>;
