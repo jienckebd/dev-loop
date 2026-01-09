@@ -260,7 +260,7 @@ export class TaskMasterBridge {
     const retryCount = this.incrementRetryCount(originalTaskId);
     if (retryCount > this.maxRetries) {
       console.log(`[TaskBridge] Task ${originalTaskId} has exceeded max retries (${this.maxRetries}), marking as blocked`);
-      
+
       // Emit task blocked event
       emitEvent('task:blocked', {
         taskId: originalTaskId,
@@ -272,7 +272,7 @@ export class TaskMasterBridge {
         severity: 'error',
         taskId: originalTaskId,
       });
-      
+
       // Mark the task as blocked instead of creating another fix task
       await this.updateTaskStatus(originalTaskId, 'blocked' as TaskStatus);
       return null;

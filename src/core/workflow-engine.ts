@@ -866,13 +866,13 @@ export class WorkflowEngine {
       if (targetModule && changes.files && changes.files.length > 0) {
         const originalCount = changes.files.length;
         const filteredFiles: string[] = [];
-        
+
         changes.files = changes.files.filter(file => {
           const allowed = this.isFileInTargetModule(file.path, targetModule);
           if (!allowed) {
             filteredFiles.push(file.path);
             console.warn(`[WorkflowEngine] FILTERED: ${file.path} (outside target module ${targetModule})`);
-            
+
             // Emit event for each filtered file
             emitEvent('file:filtered', {
               path: file.path,
@@ -889,7 +889,7 @@ export class WorkflowEngine {
           }
           return allowed;
         });
-        
+
         if (filteredFiles.length > 0) {
           console.warn(`[WorkflowEngine] Filtered ${filteredFiles.length} file(s) outside target module ${targetModule}`);
           // Update summary to reflect filtering
@@ -1989,7 +1989,7 @@ export class WorkflowEngine {
 
         // This file is OUTSIDE the target module - unauthorized change!
         console.warn(`[WorkflowEngine] Detected unauthorized change: ${filePath} (outside ${targetModule})`);
-        
+
         // Emit event for unauthorized change
         emitEvent('change:unauthorized', {
           path: filePath,
@@ -2018,7 +2018,7 @@ export class WorkflowEngine {
               console.log(`[WorkflowEngine] Reverted unauthorized change: ${filePath}`);
             }
           }
-          
+
           // Emit event for reverted change
           emitEvent('change:reverted', {
             path: filePath,

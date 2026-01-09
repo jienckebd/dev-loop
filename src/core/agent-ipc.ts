@@ -71,7 +71,9 @@ export class AgentIPCServer extends EventEmitter {
 
   constructor(sessionId: string, debug = false) {
     super();
-    this.socketPath = getSocketPath(sessionId);
+    // Use unique socket path per instance to avoid conflicts with parallel agents
+    const uniqueId = `${Date.now()}-${Math.random().toString(36).substring(2, 8)}`;
+    this.socketPath = getSocketPath(`${sessionId}-${uniqueId}`);
     this.debug = debug;
   }
 
@@ -87,7 +89,23 @@ export class AgentIPCServer extends EventEmitter {
         this.handleConnection(socket);
       });
 
-      this.server.on('error', (err) => {
+      this.server.on('error', (err: NodeJS.ErrnoException) => {
+        // Handle socket in use - try with new unique path
+        if (err.code === 'EADDRINUSE') {
+          logger.warn(`[AgentIPCServer] Socket in use, trying alternate path`);
+          const altId = `${Date.now()}-${Math.random().toString(36).substring(2, 8)}`;
+          this.socketPath = getSocketPath(`alt-${altId}`);
+          
+          // Retry once with alternate path
+          this.server!.listen(this.socketPath, () => {
+            if (this.debug) {
+              logger.debug(`[AgentIPCServer] Listening on alternate ${this.socketPath}`);
+            }
+            resolve();
+          });
+          return;
+        }
+        
         logger.error(`[AgentIPCServer] Server error: ${err.message}`);
         this.emit('error', err);
         reject(err);

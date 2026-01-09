@@ -29,7 +29,7 @@ export function registerEventTools(server: any): void {
     EventPollSchema,
     async (params: z.infer<typeof EventPollSchema>) => {
       const eventStream = getEventStream();
-      
+
       const filter = {
         since: params.since,
         types: params.types as EventType[] | undefined,
@@ -38,10 +38,10 @@ export function registerEventTools(server: any): void {
         prdId: params.prdId,
         limit: params.limit,
       };
-      
+
       const events = eventStream.poll(filter);
       const lastEventId = eventStream.getLastEventId();
-      
+
       return {
         content: [{
           type: 'text',
@@ -66,7 +66,7 @@ export function registerEventTools(server: any): void {
     async (params: { count?: number }) => {
       const eventStream = getEventStream();
       const events = eventStream.getLatest(params.count || 10);
-      
+
       return {
         content: [{
           type: 'text',
@@ -88,7 +88,7 @@ export function registerEventTools(server: any): void {
     async () => {
       const eventStream = getEventStream();
       const blockedEvents = eventStream.getBlockedTasks();
-      
+
       // Extract unique blocked tasks
       const blockedTasks = blockedEvents.map(e => ({
         taskId: e.data.taskId,
@@ -97,7 +97,7 @@ export function registerEventTools(server: any): void {
         lastError: e.data.lastError,
         timestamp: e.timestamp,
       }));
-      
+
       return {
         content: [{
           type: 'text',
@@ -120,11 +120,11 @@ export function registerEventTools(server: any): void {
     async (params: { taskId?: string }) => {
       const eventStream = getEventStream();
       let filteredEvents = eventStream.getFilteredFiles();
-      
+
       if (params.taskId) {
         filteredEvents = filteredEvents.filter(e => e.taskId === params.taskId);
       }
-      
+
       const filteredFiles = filteredEvents.map(e => ({
         path: e.data.path,
         targetModule: e.data.targetModule,
@@ -133,7 +133,7 @@ export function registerEventTools(server: any): void {
         taskId: e.taskId,
         timestamp: e.timestamp,
       }));
-      
+
       return {
         content: [{
           type: 'text',
@@ -156,11 +156,11 @@ export function registerEventTools(server: any): void {
     async (params: { limit?: number }) => {
       const eventStream = getEventStream();
       let issues = eventStream.getIssues();
-      
+
       if (params.limit && params.limit > 0) {
         issues = issues.slice(-params.limit);
       }
-      
+
       return {
         content: [{
           type: 'text',
@@ -182,7 +182,7 @@ export function registerEventTools(server: any): void {
       const eventStream = getEventStream();
       const previousCount = eventStream.count();
       eventStream.clear();
-      
+
       return {
         content: [{
           type: 'text',
