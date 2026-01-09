@@ -782,6 +782,35 @@ export class WorkflowEngine {
       }
 
       // Get template with context substitution (now includes file and pattern guidance)
+      // ENHANCEMENT: Add target module boundary warning to prompt
+      const promptTargetModule = (this as any).currentPrdTargetModule;
+      let moduleBoundaryGuidance = '';
+      if (promptTargetModule) {
+        moduleBoundaryGuidance = `## ⚠️ CRITICAL: TARGET MODULE BOUNDARY ⚠️
+
+**You MUST ONLY modify files in module: \`${promptTargetModule}\`**
+
+All file paths MUST be within: \`docroot/modules/share/${promptTargetModule}/\`
+
+❌ FORBIDDEN - Do NOT create or modify files in other modules:
+- docroot/modules/share/bd/... (wrong module)
+- docroot/modules/share/bd_devloop_enhancement_test/... (wrong module)
+- docroot/modules/share/design_system/... (wrong module)
+- Any path not containing /${promptTargetModule}/
+
+✅ ALLOWED - Only these paths are permitted:
+- docroot/modules/share/${promptTargetModule}/${promptTargetModule}.info.yml
+- docroot/modules/share/${promptTargetModule}/${promptTargetModule}.module
+- docroot/modules/share/${promptTargetModule}/${promptTargetModule}.services.yml
+- docroot/modules/share/${promptTargetModule}/${promptTargetModule}.routing.yml
+- docroot/modules/share/${promptTargetModule}/src/**/*.php
+- docroot/modules/share/${promptTargetModule}/config/**/*.yml
+
+Files outside the target module will be REJECTED. Do not waste tokens on them.
+
+`;
+      }
+
       const template = await this.templateManager.getTaskGenerationTemplateWithContext({
         task: {
           title: task.title,
@@ -792,7 +821,7 @@ export class WorkflowEngine {
         targetFiles,
         existingCode,
         templateType: this.getTemplateType(targetFiles, task),
-        fileGuidance,
+        fileGuidance: moduleBoundaryGuidance + (fileGuidance || ''),
         patternGuidance,
       });
 
