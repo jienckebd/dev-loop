@@ -744,6 +744,8 @@ export class WorkflowEngine {
         prdId: (this as any).currentPrdId,
         phaseId: (this as any).currentPhaseId,
         prdSetId: (this as any).currentPrdSetId,
+        // CRITICAL: Pass target module for prompt boundary enforcement
+        targetModule: (this as any).currentPrdTargetModule,
       };
 
       // NEW: Generate file-specific guidance from CodeContextProvider
@@ -1891,6 +1893,101 @@ export class WorkflowEngine {
 
       return false;
     }
+  }
+
+  /**
+   * Validate and revert any file changes made outside the target module.
+   * This catches unauthorized changes made by cursor agents using direct tool calls.
+   */
+  private async validateAndRevertUnauthorizedChanges(targetModule: string): Promise<{ revertedFiles: string[]; errors: string[] }> {
+    const revertedFiles: string[] = [];
+    const errors: string[] = [];
+
+    try {
+      // Get list of all modified/added files via git
+      const { stdout: statusOutput } = await execAsync('git status --porcelain', { maxBuffer: 1024 * 1024 });
+      
+      if (!statusOutput.trim()) {
+        return { revertedFiles, errors }; // No changes
+      }
+
+      const lines = statusOutput.trim().split('\n');
+      
+      for (const line of lines) {
+        // Parse git status output: first 2 chars are status, rest is path
+        const status = line.substring(0, 2).trim();
+        const filePath = line.substring(3).trim();
+        
+        // Skip if this is a new untracked file in the target module (allow creation)
+        if (status === '??' && this.isFileInTargetModule(filePath, targetModule)) {
+          continue;
+        }
+        
+        // Skip if this is a modification in the target module
+        if (this.isFileInTargetModule(filePath, targetModule)) {
+          continue;
+        }
+        
+        // Skip dev-loop internal files
+        if (filePath.startsWith('.devloop/') || filePath.startsWith('.cursor/')) {
+          continue;
+        }
+        
+        // This file is OUTSIDE the target module - unauthorized change!
+        console.warn(`[WorkflowEngine] Detected unauthorized change: ${filePath} (outside ${targetModule})`);
+        
+        try {
+          if (status === '??') {
+            // Untracked file - delete it
+            const fullPath = path.resolve(process.cwd(), filePath);
+            await fs.remove(fullPath);
+            revertedFiles.push(filePath);
+            if (this.debug) {
+              console.log(`[WorkflowEngine] Deleted unauthorized new file: ${filePath}`);
+            }
+          } else {
+            // Modified/added file - revert via git
+            await execAsync(`git checkout -- "${filePath}"`);
+            revertedFiles.push(filePath);
+            if (this.debug) {
+              console.log(`[WorkflowEngine] Reverted unauthorized change: ${filePath}`);
+            }
+          }
+        } catch (revertErr) {
+          const errMsg = `Failed to revert ${filePath}: ${revertErr}`;
+          errors.push(errMsg);
+          console.error(`[WorkflowEngine] ${errMsg}`);
+        }
+      }
+    } catch (error) {
+      errors.push(`Failed to check git status: ${error}`);
+    }
+
+    return { revertedFiles, errors };
+  }
+
+  /**
+   * Check if a file path is within the target module directory
+   */
+  private isFileInTargetModule(filePath: string, targetModule: string): boolean {
+    // Allow files in the module directory
+    if (filePath.includes(`modules/share/${targetModule}/`) || 
+        filePath.includes(`modules/${targetModule}/`)) {
+      return true;
+    }
+    
+    // Allow test files for this module
+    if (filePath.includes(`tests/playwright/${targetModule}/`) ||
+        filePath.includes(`tests/${targetModule}/`)) {
+      return true;
+    }
+    
+    // Allow module-specific config
+    if (filePath.includes(`config/`) && filePath.includes(targetModule)) {
+      return true;
+    }
+    
+    return false;
   }
 
   /**
@@ -3664,6 +3761,19 @@ export class WorkflowEngine {
           aiCallStartTime = Date.now();
           const changes = await this.aiProvider.generateCode(template, taskContext);
           aiCallDuration = Date.now() - aiCallStartTime;
+
+          // CRITICAL: Validate and revert any unauthorized file changes made by cursor agent
+          // Cursor agents using direct tool calls bypass applyChanges(), so we must validate here
+          const targetModule = (this as any).currentPrdTargetModule;
+          if (targetModule) {
+            const revertResult = await this.validateAndRevertUnauthorizedChanges(targetModule);
+            if (revertResult.revertedFiles.length > 0) {
+              console.warn(`[WorkflowEngine] Reverted ${revertResult.revertedFiles.length} unauthorized file(s) outside target module ${targetModule}`);
+              for (const file of revertResult.revertedFiles) {
+                console.warn(`[WorkflowEngine]   - Reverted: ${file}`);
+              }
+            }
+          }
 
           // Extract token usage from changes if available
           if ((changes as any).tokens) {

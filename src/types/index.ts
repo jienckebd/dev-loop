@@ -28,6 +28,8 @@ export interface TaskContext {
   prdId?: string;
   phaseId?: number | null;
   prdSetId?: string | null;
+  // Target module for boundary enforcement - prevents modifying other modules
+  targetModule?: string | null;
 }
 
 export interface CodePatch {
