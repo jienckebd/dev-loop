@@ -80,7 +80,7 @@ export class TestGenerator {
     existingTests: TestState[]
   ): Promise<TestState[]> {
     const allTests = [...existingTests];
-    
+
     // Split requirements into batches
     const batches: Requirement[][] = [];
     for (let i = 0; i < requirements.length; i += batchSize) {
@@ -90,7 +90,7 @@ export class TestGenerator {
     // Process each batch in parallel
     for (let batchIndex = 0; batchIndex < batches.length; batchIndex++) {
       const batch = batches[batchIndex];
-      
+
       if (this.debug) {
         console.log(`[TestGenerator] Processing batch ${batchIndex + 1}/${batches.length} (${batch.length} requirements)`);
       }
@@ -425,7 +425,7 @@ test('${req.id}: Stub test (generation failed)', async ({ page }) => {
       );
     }
 
-    // Add wizard-specific context from config
+    // Add wizard-specific context from config (project-specific, comes from PRD config overlays)
     const wizardConfig = (this.config as any).wizard;
     if (wizardConfig) {
       sections.push(

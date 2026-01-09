@@ -20,7 +20,7 @@ interface ConvertOptions {
 
 /**
  * Register the convert-planning-doc command
- * 
+ *
  * Converts planning documents (like design_system_prd.md, mcp_entity_bridge_prd.md)
  * into well-structured PRD sets that are 100% executable for TDD.
  */
@@ -43,7 +43,7 @@ async function convertPlanningDoc(planningDocPath: string, options: ConvertOptio
   console.log(chalk.blue('\n📄 Converting Planning Document to PRD Set\n'));
 
   const resolvedPath = path.resolve(process.cwd(), planningDocPath);
-  
+
   // Validate input file exists
   if (!(await fs.pathExists(resolvedPath))) {
     console.error(chalk.red(`Error: Planning document not found: ${resolvedPath}`));
@@ -58,7 +58,7 @@ async function convertPlanningDoc(planningDocPath: string, options: ConvertOptio
     console.log(chalk.cyan('Step 1: Parsing planning document...'));
     const parser = new PlanningDocParser(debug);
     const parsedDoc = await parser.parse(resolvedPath);
-    
+
     if (debug) {
       console.log(chalk.gray(`  Parsed: ${parsedDoc.prdId} v${parsedDoc.version}`));
       console.log(chalk.gray(`  Phases: ${parsedDoc.phases.length}`));
@@ -67,7 +67,7 @@ async function convertPlanningDoc(planningDocPath: string, options: ConvertOptio
 
     // Step 2: Determine output directory
     const setId = options.setId || parsedDoc.prdId;
-    const outputDir = options.outputDir || 
+    const outputDir = options.outputDir ||
       path.join(process.cwd(), '.taskmaster', 'planning', `${setId}-prd-set`);
 
     console.log(chalk.cyan(`Step 2: Output directory: ${outputDir}`));
@@ -84,7 +84,7 @@ async function convertPlanningDoc(planningDocPath: string, options: ConvertOptio
     // Step 3: Validate parsed structure
     console.log(chalk.cyan('Step 3: Validating parsed structure...'));
     const validationResult = validateParsedDoc(parsedDoc);
-    
+
     if (!validationResult.valid) {
       console.error(chalk.red('Validation failed:'));
       validationResult.errors.forEach(err => console.error(chalk.red(`  ✗ ${err}`)));
@@ -102,7 +102,7 @@ async function convertPlanningDoc(planningDocPath: string, options: ConvertOptio
     if (parsedDoc.configOverlay && Object.keys(parsedDoc.configOverlay).length > 0) {
       console.log(chalk.cyan('Step 4: Validating config overlay...'));
       const overlayValidation = validateConfigOverlay(parsedDoc.configOverlay, 'prd');
-      
+
       if (!overlayValidation.valid) {
         console.error(chalk.red('Config overlay validation failed:'));
         overlayValidation.errors.forEach(err => console.error(chalk.red(`  ✗ ${err}`)));
@@ -134,9 +134,9 @@ async function convertPlanningDoc(planningDocPath: string, options: ConvertOptio
 
     // Step 6: Write files to disk
     console.log(chalk.cyan('Step 6: Writing files to disk...'));
-    
+
     await fs.ensureDir(outputDir);
-    
+
     for (const file of generatedFiles) {
       const filePath = path.join(outputDir, file.filename);
       await fs.writeFile(filePath, file.content, 'utf-8');
@@ -150,7 +150,7 @@ async function convertPlanningDoc(planningDocPath: string, options: ConvertOptio
     // Step 7: Validate generated PRD set
     console.log(chalk.cyan('Step 7: Validating generated PRD set...'));
     const discovery = new PrdSetDiscovery(debug);
-    
+
     try {
       const discoveredSet = await discovery.discoverPrdSet(outputDir);
       console.log(chalk.green(`  ✓ PRD set valid: ${discoveredSet.setId}`));
@@ -167,7 +167,7 @@ async function convertPlanningDoc(planningDocPath: string, options: ConvertOptio
     console.log(`  PRD ID: ${setId}`);
     console.log(`  Files created: ${generatedFiles.length}`);
     console.log(`  Phases: ${parsedDoc.phases.length}`);
-    
+
     if (parsedDoc.configOverlay && Object.keys(parsedDoc.configOverlay).length > 0) {
       console.log(`  Config overlays: ${Object.keys(parsedDoc.configOverlay).join(', ')}`);
     }

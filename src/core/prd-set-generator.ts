@@ -56,7 +56,7 @@ export class PrdSetGenerator {
         id: setId,
         version: parsedDoc.version,
         status: parsedDoc.phases.length > 1 ? 'split' : 'ready',
-        note: parsedDoc.phases.length > 1 
+        note: parsedDoc.phases.length > 1
           ? `This PRD has been split into ${parsedDoc.phases.length} phased PRDs.`
           : undefined,
       },
@@ -74,7 +74,7 @@ export class PrdSetGenerator {
           dependsOn: phase.dependsOn,
           status: phase.status || 'pending',
           checkpoint: phase.checkpoint || false,
-          file: parsedDoc.phases.length > 1 
+          file: parsedDoc.phases.length > 1
             ? `phase${phase.id}_${this.slugify(phase.name)}.md`
             : undefined,
           config: phase.config,
@@ -93,7 +93,7 @@ export class PrdSetGenerator {
     // Add relationships for split PRDs
     if (parsedDoc.phases.length > 1) {
       manifest.relationships = {
-        dependedOnBy: parsedDoc.phases.map(phase => 
+        dependedOnBy: parsedDoc.phases.map(phase =>
           `${setId}_phase${phase.id}`
         ),
       };

@@ -1438,7 +1438,7 @@ Framework-specific configuration extensions go in `framework.config.{frameworkTy
 framework: {
   type: 'drupal',
   rules: [...],  // Generic framework rules
-  
+
   // Framework-specific config extensions
   config: {
     drupal: {
@@ -1477,8 +1477,8 @@ config:
     steps:
       - { number: 1, name: 'Feature Selection', formMode: 'default' }
       - { number: 2, name: 'Configuration', formMode: 'configuration' }
-    
-  # Project-specific design system configuration  
+
+  # Project-specific design system configuration
   designSystem:
     themeEntity:
       testEntityId: 21

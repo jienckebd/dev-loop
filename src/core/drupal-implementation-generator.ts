@@ -17,7 +17,9 @@ export class DrupalImplementationGenerator {
    * Generate Drupal PHP code fixes for a requirement
    */
   async generateFix(req: Requirement, context: PrdContext): Promise<CodeChanges> {
-    const drupalConfig = (this.config as any).drupal || {};
+    // Access drupal config from framework.config.drupal (moved from top-level)
+    const frameworkConfig = (this.config as any).framework || {};
+    const drupalConfig = frameworkConfig.config?.drupal || {};
 
     if (this.debug) {
       logger.debug(`[DrupalImplementationGenerator] Generating fix for requirement ${req.id}`);

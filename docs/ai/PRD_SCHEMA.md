@@ -1627,7 +1627,7 @@ module.exports = {
     rules: [...],    // AI prompt rules
     taskPatterns: [...],
     errorGuidance: {...},
-    
+
     // Framework-specific extensions go here
     config: {
       drupal: {
@@ -1668,8 +1668,8 @@ config:
     steps:
       - { number: 1, name: 'Step 1', formMode: 'default' }
       - { number: 2, name: 'Step 2', formMode: 'step_2' }
-    
-  # Project-specific design system configuration  
+
+  # Project-specific design system configuration
   designSystem:
     themeEntity:
       testEntityId: 21

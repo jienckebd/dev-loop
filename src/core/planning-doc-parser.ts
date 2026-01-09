@@ -79,7 +79,7 @@ export class PlanningDocParser {
    */
   parseContent(content: string, filename: string): ParsedPlanningDoc {
     const { frontmatter, body } = this.extractFrontmatter(content);
-    
+
     // Extract basic metadata
     const prdId = frontmatter?.prd?.id || this.extractPrdIdFromFilename(filename);
     const version = frontmatter?.prd?.version || '1.0.0';
@@ -115,7 +115,7 @@ export class PlanningDocParser {
 
   private extractFrontmatter(content: string): { frontmatter: any; body: string } {
     const frontmatterMatch = content.match(/^---\n([\s\S]*?)\n---\n([\s\S]*)$/);
-    
+
     if (!frontmatterMatch) {
       return { frontmatter: null, body: content };
     }
@@ -181,7 +181,7 @@ export class PlanningDocParser {
     while ((match = phasePattern.exec(body)) !== null) {
       const id = parseInt(match[1], 10) || phaseId++;
       const name = match[2].trim();
-      
+
       phases.push({
         id,
         name,
@@ -272,7 +272,7 @@ export class PlanningDocParser {
     if (depsMatch) {
       const depsSection = depsMatch[1];
       const codeRequirements: string[] = [];
-      
+
       // Extract bullet points
       const bulletPattern = /[-*]\s+(.+)/g;
       let match;
