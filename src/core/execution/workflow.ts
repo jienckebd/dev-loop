@@ -811,10 +811,17 @@ Files outside the target module will be REJECTED. Do not waste tokens on them.
 `;
       }
 
+      // ENHANCEMENT: Inject target module into task description to prevent module confusion
+      // This ensures the AI understands which module to target even with polluted session history
+      let enhancedDescription = task.description || '';
+      if (promptTargetModule && !enhancedDescription.includes(promptTargetModule)) {
+        enhancedDescription = `[TARGET MODULE: ${promptTargetModule}] ${enhancedDescription}\n\nIMPORTANT: All file paths MUST be within docroot/modules/share/${promptTargetModule}/`;
+      }
+
       const template = await this.templateManager.getTaskGenerationTemplateWithContext({
         task: {
           title: task.title,
-          description: task.description,
+          description: enhancedDescription,
           priority: task.priority,
         },
         codebaseContext,

@@ -671,6 +671,8 @@ export class CursorChatOpener {
           phaseId: request.context.phaseId !== undefined && request.context.phaseId !== null ? request.context.phaseId : undefined,
           prdSetId: request.context.prdSetId || undefined,
           taskIds: request.context.taskId ? [request.context.taskId] : [],
+          // ENHANCEMENT: Include targetModule for session isolation
+          targetModule: (request.context as any).targetModule || undefined,
         };
 
         if (sessionId) {

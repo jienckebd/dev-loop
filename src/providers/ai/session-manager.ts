@@ -11,6 +11,8 @@ export interface SessionContext {
   phaseId?: number;
   prdSetId?: string;
   taskIds: string[];
+  // Target module for session isolation - prevents context pollution between modules
+  targetModule?: string;
 }
 
 export interface HistoryEntry {
@@ -103,9 +105,14 @@ export abstract class BaseSessionManager implements SessionManager {
 
   /**
    * Generate a session ID from context
+   * ENHANCEMENT: Include targetModule to prevent session pollution between different modules
    */
   protected generateSessionId(context: SessionContext): string {
     const parts: string[] = [];
+    // CRITICAL: Include targetModule FIRST to ensure module-specific sessions
+    // This prevents session history pollution when tasks from different PRD sets
+    // with different target modules are processed
+    if (context.targetModule) parts.push(`mod-${context.targetModule}`);
     if (context.prdSetId) parts.push(`set-${context.prdSetId}`);
     if (context.prdId) parts.push(`prd-${context.prdId}`);
     if (context.phaseId !== undefined) parts.push(`phase-${context.phaseId}`);
