@@ -116,16 +116,26 @@ export function extractCodeChanges(
       if (parsedText.type === 'result' && parsedText.result) {
         let resultText = parsedText.result;
         if (typeof resultText === 'string') {
+          // Log for debugging
+          const hasJsonBlock = resultText.includes('```json') || resultText.includes('```\n{');
+          logger.debug(`[JsonParser] Result text length: ${resultText.length}, has JSON block: ${hasJsonBlock}`);
+          
           // Multiple passes to handle triple-escaped JSON (\\\\n -> \\n -> \n)
-          // First pass: unescape \\n to newlines, \\" to quotes
+          // First pass: unescape \\n to newlines, \\" to quotes (for doubly-escaped content)
           if (resultText.includes('\\n') || resultText.includes('\\"')) {
             resultText = resultText.replace(/\\n/g, '\n').replace(/\\"/g, '"');
+            logger.debug(`[JsonParser] Applied first unescape pass`);
           }
           // Second pass: handle remaining backslashes (for nested JSON in content)
           if (resultText.includes('\\\\')) {
             resultText = resultText.replace(/\\\\/g, '\\');
+            logger.debug(`[JsonParser] Applied second unescape pass`);
           }
           attemptedStrategies.push('result-object-deep-unescape');
+          
+          // Log a snippet of the processed text
+          const hasJsonBlockAfter = resultText.includes('```json') || resultText.includes('```\n{');
+          logger.debug(`[JsonParser] After unescape - has JSON block: ${hasJsonBlockAfter}, snippet: ${resultText.substring(0, 300).replace(/\n/g, '\\n')}`);
         }
         result = parseCodeChangesFromText(resultText, attemptedStrategies);
         if (result) {

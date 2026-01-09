@@ -95,7 +95,7 @@ export class AgentIPCServer extends EventEmitter {
           logger.warn(`[AgentIPCServer] Socket in use, trying alternate path`);
           const altId = `${Date.now()}-${Math.random().toString(36).substring(2, 8)}`;
           this.socketPath = getSocketPath(`alt-${altId}`);
-          
+
           // Retry once with alternate path
           this.server!.listen(this.socketPath, () => {
             if (this.debug) {
@@ -105,7 +105,7 @@ export class AgentIPCServer extends EventEmitter {
           });
           return;
         }
-        
+
         logger.error(`[AgentIPCServer] Server error: ${err.message}`);
         this.emit('error', err);
         reject(err);
