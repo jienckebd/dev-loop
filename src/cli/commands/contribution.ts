@@ -2,7 +2,7 @@ import chalk from 'chalk';
 import ora from 'ora';
 import * as fs from 'fs-extra';
 import * as path from 'path';
-import { PrdTracker } from '../../core/prd-tracker';
+import { PrdTracker } from "../../core/tracking/prd-tracker";
 import { loadConfig } from '../../config/loader';
 
 const CONTRIBUTION_MODE_FILE = path.join(process.cwd(), '.devloop', 'contribution-mode.json');

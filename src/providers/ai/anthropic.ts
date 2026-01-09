@@ -3,7 +3,7 @@ import * as fs from 'fs-extra';
 import * as path from 'path';
 import { AIProvider, AIProviderConfig } from './interface';
 import { CodeChanges, TaskContext, LogAnalysis, FrameworkConfig } from '../../types';
-import { logger } from '../../core/logger';
+import { logger } from "../../core/utils/logger";
 
 export class AnthropicProvider implements AIProvider {
   public name = 'anthropic';

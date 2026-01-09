@@ -23,13 +23,36 @@ dev-loop/
 ├── src/
 │   ├── cli/              # CLI commands
 │   │   └── commands/     # Individual command implementations
-│   ├── core/             # Core business logic
+│   ├── core/             # Core business logic (organized into subdirectories)
+│   │   ├── metrics/      # Metrics tracking system (8 files)
+│   │   ├── analysis/     # Code and error analysis
+│   │   │   ├── error/    # Error analysis (unified analyzer, failure-analyzer, root-cause-analyzer)
+│   │   │   ├── code/     # Code intelligence (context-provider, quality-scanner, abstraction-detector, etc.)
+│   │   │   └── pattern/  # Pattern learning and detection
+│   │   ├── testing/      # Test execution and management (6 files)
+│   │   ├── validation/   # Validation gates and scripts (6 files)
+│   │   ├── generation/   # Code generation (drupal-implementation-generator, autonomous-task-generator, etc.)
+│   │   ├── execution/    # Workflow and task execution (workflow.ts, task-bridge.ts, intervention.ts, etc.)
+│   │   ├── reporting/    # Report generation (unified generator)
+│   │   ├── tracking/     # Progress and observation tracking (6 files)
+│   │   ├── prd/          # PRD parsing and management
+│   │   │   ├── parser/   # PRD parsing (4 files)
+│   │   │   ├── set/      # PRD set management (7 files: discovery, validator, orchestrator, generator, etc.)
+│   │   │   ├── coordination/  # PRD coordination and context (2 files)
+│   │   │   └── validation/    # Cross-PRD validation (1 file)
+│   │   ├── config/       # Configuration management
+│   │   │   └── merger.ts # Hierarchical config merger (schema consistency)
+│   │   └── utils/        # Shared utilities (logger, state-manager, dependency-graph, event-stream, etc.)
+│   ├── config/           # Configuration loading and schema
+│   │   ├── schema/       # Modular schema structure (8 files: base, core, framework, prd, overlays, phase, validation, index)
+│   │   ├── schema.ts     # Backward-compatible re-export wrapper
+│   │   ├── loader.ts     # Config file loading
+│   │   └── defaults.ts   # Default configuration
 │   ├── frameworks/       # Framework plugins (Drupal, Django, React)
 │   ├── mcp/              # MCP server implementation
 │   │   └── tools/        # MCP tool registrations
 │   ├── providers/        # AI, test runner, log analyzer providers
-│   ├── templates/        # Code generation templates
-│   └── config/           # Configuration loading and schema
+│   └── templates/        # Code generation templates
 ├── docs/
 │   ├── ai/               # AI agent documentation (PRD creation)
 │   ├── users/            # User documentation
@@ -37,11 +60,16 @@ dev-loop/
 └── dist/                 # Compiled JavaScript (generated)
 ```
 
+**Schema Modular Structure**: The configuration schema has been refactored into a modular structure:
+- `src/config/schema/` contains 8 organized files handling different aspects of configuration
+- `src/config/schema.ts` is a backward-compatible re-export wrapper
+- See [Schema Modular Refactoring Handoff](../handoff-schema-modular-refactoring.md) for details
+
 ## Core Components
 
 ### WorkflowEngine
 
-**Location:** `src/core/workflow-engine.ts`
+**Location:** `src/core/execution/workflow.ts`
 
 Main orchestration loop that manages the test-driven development cycle:
 - Fetches tasks from Task Master
@@ -53,7 +81,7 @@ Main orchestration loop that manages the test-driven development cycle:
 
 ### TaskMasterBridge
 
-**Location:** `src/core/task-bridge.ts`
+**Location:** `src/core/execution/task-bridge.ts`
 
 Wrapper around task-master-ai MCP for task management:
 - Fetch pending tasks
@@ -62,7 +90,7 @@ Wrapper around task-master-ai MCP for task management:
 
 ### StateManager
 
-**Location:** `src/core/state-manager.ts`
+**Location:** `src/core/utils/state-manager.ts`
 
 Manages workflow state persistence:
 - Saves state to `.devloop/` directory
@@ -71,7 +99,7 @@ Manages workflow state persistence:
 
 ### CodeContextProvider
 
-**Location:** `src/core/code-context-provider.ts`
+**Location:** `src/core/analysis/code/context-provider.ts`
 
 Extracts code context for AI prompts:
 - File signatures
@@ -81,7 +109,7 @@ Extracts code context for AI prompts:
 
 ### ValidationGate
 
-**Location:** `src/core/validation-gate.ts`
+**Location:** `src/core/validation/gate.ts`
 
 Pre-apply validation:
 - Syntax checking
@@ -90,7 +118,7 @@ Pre-apply validation:
 
 ### PatternLearningSystem
 
-**Location:** `src/core/pattern-learner.ts`
+**Location:** `src/core/analysis/pattern/learner.ts`
 
 Learns from successful and failed task executions:
 - Extracts patterns
@@ -99,7 +127,7 @@ Learns from successful and failed task executions:
 
 ### ParallelMetrics
 
-**Location:** `src/core/parallel-metrics.ts`
+**Location:** `src/core/metrics/parallel.ts`
 
 Tracks concurrent agent execution and coordination:
 - Records agent start/completion times
@@ -110,7 +138,7 @@ Tracks concurrent agent execution and coordination:
 
 ### ProgressTracker
 
-**Location:** `src/core/progress-tracker.ts`
+**Location:** `src/core/tracking/progress-tracker.ts`
 
 Provides real-time progress updates during execution:
 - Event-driven progress tracking
@@ -171,7 +199,7 @@ Provider-agnostic timeout handling:
 
 ### ReportGenerator
 
-**Location:** `src/core/report-generator.ts`
+**Location:** `src/core/reporting/generator.ts`
 
 Generates comprehensive execution reports:
 - Parallel execution analysis
@@ -179,6 +207,43 @@ Generates comprehensive execution reports:
 - Agent breakdown tables
 - Parallel efficiency calculations
 - Token usage and cost estimation
+
+### PRD Set Orchestration
+
+**Location:** `src/core/prd/set/orchestrator.ts`
+
+Orchestrates PRD set execution with parallel processing:
+- Discovers PRD sets from `index.md.yml` files
+- Validates PRD sets at multiple levels (set, PRD, phase)
+- Executes PRDs in parallel when independent
+- Manages hierarchical configuration overlays
+- Tracks PRD set-level metrics and progress
+
+### Hierarchical Config Merger
+
+**Location:** `src/core/config/merger.ts`
+
+Merges configuration overlays in hierarchical order:
+- Project Config → Framework Config → PRD Set Config → PRD Config → Phase Config
+- Deep merge for nested objects
+- Special handling for arrays (concatenation vs replacement)
+- Integrated with PRD set orchestration
+
+### Schema System
+
+**Location:** `src/config/schema/` (modular structure)
+
+Configuration schema organized into 8 files:
+- `base.ts` - Common schema fragments (logSourceSchema)
+- `core.ts` - Core configuration schema (configSchema)
+- `framework.ts` - Framework configuration schema
+- `prd.ts` - PRD-related schemas (factory function)
+- `overlays.ts` - Configuration overlay schemas using `.partial().passthrough()` pattern
+- `phase.ts` - Phase definition schema
+- `validation.ts` - Validation functions
+- `index.ts` - Main entry point (re-exports everything)
+
+Backward compatibility maintained via `src/config/schema.ts` re-export wrapper.
 
 ## Framework Plugins
 
@@ -235,9 +300,20 @@ MCP (Model Context Protocol) server for AI assistant integration:
 
 **Location:** `src/config/`
 
-- **schema.ts** - Zod schema for config validation
+- **schema/** - Modular schema structure (8 files):
+  - `base.ts` - Common schema fragments
+  - `core.ts` - Core configuration schema
+  - `framework.ts` - Framework configuration schema
+  - `prd.ts` - PRD-related schemas (factory function)
+  - `overlays.ts` - Configuration overlay schemas (factory function using `.partial().passthrough()`)
+  - `phase.ts` - Phase definition schema
+  - `validation.ts` - Validation functions
+  - `index.ts` - Main entry point (re-exports)
+- **schema.ts** - Backward-compatible re-export wrapper (for existing imports)
 - **loader.ts** - Config file loading
 - **defaults.ts** - Default configuration
+
+**Hierarchical Configuration System**: Config overlays are merged at multiple levels (Project → Framework → PRD Set → PRD → Phase) using `src/core/config/merger.ts`. See [Schema Modular Refactoring](../handoff-schema-modular-refactoring.md) for details.
 
 ## Contribution Mode
 
@@ -263,7 +339,7 @@ Tasks are grouped by dependency level using topological sorting:
 - Multiple tasks at the same level execute concurrently
 - Maximum concurrency is controlled by `autonomous.maxConcurrency` config
 
-**Location:** `src/core/workflow-engine.ts` - `runOnce()` method and `groupTasksByDependencyLevel()`
+**Location:** `src/core/execution/workflow.ts` - `runOnce()` method and `groupTasksByDependencyLevel()`
 
 ### Concurrency Control
 
@@ -348,7 +424,7 @@ Context is snapshotted at task start for parallel execution:
 - Module-scoped (only files in `docroot/modules/share/{module}/`)
 - Live updates are disabled during parallel execution
 
-**Location:** `src/core/code-context-provider.ts` and `src/core/workflow-engine.ts` - `getCodebaseContext()`
+**Location:** `src/core/analysis/code/context-provider.ts` and `src/core/execution/workflow.ts` - `getCodebaseContext()`
 
 ## AI Provider Reliability
 
@@ -384,6 +460,90 @@ Robust JSON extraction from AI responses:
 
 **Location:** `src/providers/ai/cursor-json-parser.ts` (shared utility)
 
+## PRD Set Architecture
+
+Dev-loop supports executing multiple PRDs together as a PRD set, with hierarchical configuration overlays and parallel execution capabilities.
+
+### PRD Set Discovery
+
+**Location:** `src/core/prd/set/discovery.ts`
+
+Discovers PRD sets from `index.md.yml` files or directory scanning:
+- Reads PRD set manifest from `index.md.yml`
+- Validates PRD set structure
+- Resolves PRD paths relative to the PRD set directory
+
+### PRD Set Validation
+
+**Location:** `src/core/prd/set/validator.ts`
+
+Validates PRD sets at multiple levels:
+- Set-level validation (manifest structure, PRD references)
+- PRD-level validation (individual PRD schemas)
+- Phase-level validation (phase definitions and config overlays)
+
+### PRD Set Orchestration
+
+**Location:** `src/core/prd/set/orchestrator.ts`
+
+Orchestrates PRD set execution:
+- Parallel execution of independent PRDs (up to `maxConcurrent` limit)
+- Dependency-aware execution ordering
+- Hierarchical configuration overlay merging
+- Progress tracking and error handling at PRD set level
+
+### Hierarchical Configuration Merging
+
+**Location:** `src/core/config/merger.ts`
+
+Merges configuration overlays in the following order:
+1. Project Config (base)
+2. Framework Config
+3. PRD Set Config (from `index.md.yml`)
+4. PRD Config (from PRD frontmatter)
+5. Phase Config (from phase definitions)
+
+Later levels override earlier levels. Deep merge for nested objects. Special handling for arrays that should be concatenated vs replaced.
+
+**Schema Support:** Configuration overlay schemas are defined in `src/config/schema/overlays.ts` using `.partial().passthrough()` pattern to derive from base config schema.
+
+## Schema Consistency System
+
+The configuration schema system has been refactored into a modular structure for better maintainability and reduced duplication.
+
+### Modular Schema Structure
+
+**Location:** `src/config/schema/` (8 files)
+
+- **base.ts** - Common schema fragments used across multiple files (e.g., `logSourceSchema`)
+- **core.ts** - Main configuration schema (`configSchema`) and `Config` type
+- **framework.ts** - Framework-specific configuration schema
+- **prd.ts** - PRD-related schemas (factory function to handle circular dependencies)
+- **overlays.ts** - Configuration overlay schemas (factory function using `.partial().passthrough()`)
+- **phase.ts** - Phase definition schema
+- **validation.ts** - Validation functions (`validateConfig`, `validateConfigOverlay`)
+- **index.ts** - Main entry point that re-exports everything
+
+### Circular Dependency Resolution
+
+The schema system uses factory functions and lazy initialization to handle circular dependencies:
+- `configSchema` (core.ts) → needs `prdSchema` (prd.ts)
+- `prdSchema` (prd.ts) → needs `configOverlaySchema` (overlays.ts)
+- `configOverlaySchema` (overlays.ts) → needs `configSchema` (core.ts)
+
+**Solution:** Factory functions with `z.lazy()` for circular references. Initialization order in `core.ts` is important.
+
+### Backward Compatibility
+
+The old `schema.ts` file has been converted to a re-export wrapper:
+```typescript
+export * from './schema/index';
+```
+
+All existing imports from `'../config/schema'` continue to work without modification.
+
+See [Schema Modular Refactoring Handoff](../handoff-schema-modular-refactoring.md) for complete details.
+
 ## Key Principles
 
 1. **Framework-agnostic** - Core must work with any framework
@@ -393,6 +553,7 @@ Robust JSON extraction from AI responses:
 5. **Extensible** - Easy to add new providers/plugins
 6. **Provider-agnostic** - Unified interfaces for all AI providers
 7. **Parallel-first** - Designed for concurrent execution
+8. **Modular organization** - Clear separation of concerns with logical directory structure
 
 ## See Also
 

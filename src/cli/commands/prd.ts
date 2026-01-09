@@ -1,8 +1,8 @@
 import chalk from 'chalk';
 import * as path from 'path';
 import { loadConfig } from '../../config/loader';
-import { WorkflowEngine } from '../../core/workflow-engine';
-import { PrdConfigParser } from '../../core/prd-config-parser';
+import { WorkflowEngine } from "../../core/execution/workflow";
+import { PrdConfigParser } from "../../core/prd/parser/config-parser";
 
 export async function prdCommand(options: {
   prd: string;

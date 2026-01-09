@@ -1,9 +1,9 @@
 import chalk from 'chalk';
 import { loadConfig } from '../../config/loader';
 import { FrameworkLoader } from '../../frameworks';
-import { CodeQualityScanner, ScanOptions } from '../../core/code-quality-scanner';
-import { ScanReporter } from '../../core/scan-reporter';
-import { TaskMasterBridge } from '../../core/task-bridge';
+import { CodeQualityScanner, ScanOptions } from "../../core/analysis/code/quality-scanner";
+import { ScanReporter } from "../../core/analysis/code/scan-reporter";
+import { TaskMasterBridge } from "../../core/execution/task-bridge";
 
 export async function scanCommand(options: {
   type?: 'all' | 'static-analysis' | 'duplicate-detection' | 'security' | 'complexity' | 'tech-debt';

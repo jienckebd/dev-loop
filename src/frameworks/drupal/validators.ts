@@ -1,6 +1,6 @@
-import { AssertionValidatorRegistry, AssertionValidator, ValidationContext, AssertionResult } from '../../core/assertion-validators';
-import { ValidationScriptExecutor } from '../../core/validation-script-executor';
-import { logger } from '../../core/logger';
+import { AssertionValidatorRegistry, AssertionValidator, ValidationContext, AssertionResult } from '../../core/validation/assertion-validators';
+import { ValidationScriptExecutor } from '../../core/validation/script-executor';
+import { logger } from "../../core/utils/logger";
 
 /**
  * Drupal-specific assertion validators.

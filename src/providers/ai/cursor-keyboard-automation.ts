@@ -9,7 +9,7 @@
 
 import { exec } from 'child_process';
 import { promisify } from 'util';
-import { logger } from '../../core/logger';
+import { logger } from "../../core/utils/logger";
 
 const execAsync = promisify(exec);
 

@@ -9,9 +9,9 @@
  */
 
 import { CodeChanges } from '../../types';
-import { logger } from '../../core/logger';
-import { ObservationTracker } from '../../core/observation-tracker';
-import { emitEvent } from '../../core/event-stream';
+import { logger } from "../../core/utils/logger";
+import { ObservationTracker } from "../../core/tracking/observation-tracker";
+import { emitEvent } from '../../core/utils/event-stream';
 
 /**
  * Context for tracking JSON parsing failures

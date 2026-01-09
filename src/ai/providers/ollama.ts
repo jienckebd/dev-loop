@@ -5,7 +5,7 @@ import {
   AnalysisContext,
   AnalysisResult,
 } from '../provider-interface';
-import { logger } from '../../core/logger';
+import { logger } from "../../core/utils/logger";
 
 export interface OllamaConfig {
   baseUrl?: string;

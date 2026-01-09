@@ -1,13 +1,13 @@
 import chalk from 'chalk';
 import * as path from 'path';
 import { loadConfig } from '../../config/loader';
-import { DebugMetrics } from '../../core/debug-metrics';
-import { PrdSetMetrics } from '../../core/prd-set-metrics';
-import { PrdMetrics } from '../../core/prd-metrics';
-import { PhaseMetrics } from '../../core/phase-metrics';
-import { FeatureTracker } from '../../core/feature-tracker';
-import { SchemaTracker } from '../../core/schema-tracker';
-import { CostCalculator } from '../../core/cost-calculator';
+import { DebugMetrics } from "../../core/metrics/debug";
+import { PrdSetMetrics } from "../../core/metrics/prd-set";
+import { PrdMetrics } from "../../core/metrics/prd";
+import { PhaseMetrics } from "../../core/metrics/phase";
+import { FeatureTracker } from "../../core/tracking/feature-tracker";
+import { SchemaTracker } from "../../core/tracking/schema-tracker";
+import { CostCalculator } from "../../core/utils/cost-calculator";
 
 export async function metricsCommand(options: {
   config?: string;

@@ -15,7 +15,7 @@ import * as path from 'path';
 import { spawn } from 'child_process';
 import { ChatRequest, ChatInstruction, Config } from '../../types';
 import { listPendingChatRequests, markRequestProcessed, markRequestFailed } from './cursor-chat-requests';
-import { logger } from '../../core/logger';
+import { logger } from "../../core/utils/logger";
 import { CursorChatOpener, ChatOpenResult, OpenStrategy, PromptFileFormat } from './cursor-chat-opener';
 import { KeyboardAutomation, isKeyboardAutomationSupported } from './cursor-keyboard-automation';
 

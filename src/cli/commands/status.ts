@@ -1,6 +1,6 @@
 import chalk from 'chalk';
 import { loadConfig } from '../../config/loader';
-import { StateManager } from '../../core/state-manager';
+import { StateManager } from "../../core/utils/state-manager";
 
 export async function statusCommand(options: { config?: string }): Promise<void> {
   try {

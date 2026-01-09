@@ -864,6 +864,8 @@ Each framework plugin provides its own code quality tools:
 
 ## File Structure
 
+### Project Structure
+
 ```
 project/
 ├── devloop.config.js           # Dev-loop config
@@ -880,6 +882,61 @@ project/
 ├── tests/playwright/           # Test specs
 └── test-results/               # Artifacts, screenshots
 ```
+
+### Dev-Loop Source Code Structure
+
+The `src/core/` directory has been reorganized into logical subdirectories with clear separation of concerns:
+
+```
+src/
+├── core/
+│   ├── metrics/                # Metrics tracking system
+│   │   ├── types.ts            # Type definitions and interfaces
+│   │   ├── debug.ts            # Debug metrics
+│   │   ├── prd.ts              # PRD-level metrics
+│   │   ├── prd-set.ts          # PRD set-level metrics
+│   │   ├── phase.ts            # Phase-level metrics
+│   │   ├── observation.ts      # Observation metrics
+│   │   ├── pattern.ts          # Pattern metrics
+│   │   ├── parallel.ts         # Parallel execution metrics
+│   │   └── analyzer.ts         # Metrics analyzer
+│   ├── analysis/               # Code and error analysis
+│   │   ├── error/              # Error analysis (unified)
+│   │   ├── code/               # Code intelligence and quality scanning
+│   │   └── pattern/            # Pattern learning and detection
+│   ├── testing/                # Test execution and management
+│   ├── validation/             # Validation gates and scripts
+│   ├── generation/             # Code generation
+│   ├── execution/              # Workflow and task execution
+│   ├── reporting/              # Report generation
+│   ├── tracking/               # Progress and observation tracking
+│   ├── prd/                    # PRD parsing and management
+│   │   ├── parser/             # PRD parsing (parser, config-parser, manifest-parser, planning-doc-parser)
+│   │   ├── set/                # PRD set management (discovery, validator, orchestrator, generator, metrics, progress-tracker, error-handler)
+│   │   ├── coordination/       # PRD coordination and context
+│   │   └── validation/         # Cross-PRD validation
+│   ├── config/                 # Configuration management
+│   │   └── merger.ts           # Hierarchical config merger (schema consistency)
+│   └── utils/                  # Shared utilities (logger, state, dependency-graph, event-stream, etc.)
+├── config/
+│   ├── schema/                 # Modular schema structure (8 files)
+│   │   ├── base.ts             # Common schema fragments
+│   │   ├── core.ts             # Core configuration schema
+│   │   ├── framework.ts        # Framework configuration schema
+│   │   ├── prd.ts              # PRD-related schemas (factory function)
+│   │   ├── overlays.ts         # Configuration overlay schemas (factory function)
+│   │   ├── phase.ts            # Phase definition schema
+│   │   ├── validation.ts       # Validation functions
+│   │   └── index.ts            # Main entry point (re-exports)
+│   └── schema.ts               # Backward-compatible re-export wrapper
+├── cli/                        # CLI commands
+├── mcp/                        # MCP server implementation
+├── providers/                  # AI, test runner, log analyzer providers
+├── frameworks/                 # Framework plugins
+└── templates/                  # Code generation templates
+```
+
+**Schema Modular Refactoring (Complete)**: The monolithic `schema.ts` file has been refactored into a modular `schema/` directory structure with 8 organized files. All existing imports continue to work via the backward-compatible `schema.ts` re-export wrapper.
 
 ## CI Output
 

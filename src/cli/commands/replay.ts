@@ -1,8 +1,8 @@
 import chalk from 'chalk';
 import ora from 'ora';
 import { loadConfig } from '../../config/loader';
-import { TaskMasterBridge } from '../../core/task-bridge';
-import { WorkflowEngine } from '../../core/workflow-engine';
+import { TaskMasterBridge } from "../../core/execution/task-bridge";
+import { WorkflowEngine } from "../../core/execution/workflow";
 
 export async function replayCommand(options: {
   config?: string;

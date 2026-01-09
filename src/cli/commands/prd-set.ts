@@ -1,8 +1,8 @@
 import chalk from 'chalk';
 import * as path from 'path';
-import { PrdSetDiscovery } from '../../core/prd-set-discovery';
-import { PrdSetValidator } from '../../core/prd-set-validator';
-import { PrdSetOrchestrator } from '../../core/prd-set-orchestrator';
+import { PrdSetDiscovery } from "../../core/prd/set/discovery";
+import { PrdSetValidator } from "../../core/prd/set/validator";
+import { PrdSetOrchestrator } from "../../core/prd/set/orchestrator";
 import { loadConfig } from '../../config/loader';
 
 /**

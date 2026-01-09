@@ -1583,9 +1583,29 @@ By default, arrays in overlays **replace** base arrays. However, certain arrays 
 3. **Add search directories for specific phases**: Focus context on relevant code
 4. **Add framework rules for specific PRDs**: PRD-specific guidance for AI
 
+### Schema Implementation
+
+Config overlay schemas are implemented using a modular schema structure:
+
+**Location:** `src/config/schema/overlays.ts`
+
+The `ConfigOverlay` schema is created using a factory function that derives from the base `configSchema`:
+- Uses `.partial().passthrough()` to make all base config fields optional
+- Allows unknown keys via `passthrough()` for project-specific configs (e.g., `wizard`, `designSystem`)
+- Unknown keys generate warnings but don't fail validation
+
+**Type Definitions:**
+- `ConfigOverlay` - Type for config overlays at any level
+- `PrdSetConfig` - Type alias for PRD set-level overlays
+- `PhaseConfig` - Type alias for phase-level overlays
+
+The schema structure is modular (8 files in `src/config/schema/`) for maintainability. See [Architecture Documentation](../contributing/ARCHITECTURE.md) for details.
+
 ### Validation
 
 Config overlays are validated against the ConfigOverlay schema. Unknown keys are allowed (via passthrough) but generate warnings for potential typos.
+
+**Implementation:** `src/core/config/merger.ts` handles the hierarchical merging logic.
 
 ```bash
 # Validate PRD config overlay
@@ -1601,15 +1621,17 @@ dev-loop validate-config --level phase --prd <prd-path> --phase <phase-id>
 
 ## Integration with devloop.config.js
 
-PRD frontmatter `config` sections are **merged** into `devloop.config.js` at runtime using the hierarchical config merger:
+PRD frontmatter `config` sections are **merged** into `devloop.config.js` at runtime using the hierarchical config merger (`src/core/config/merger.ts`):
 
-1. Base config from `devloop.config.js` (strict schema validation)
-2. Framework config (extracted from base, strict schema)
-3. PRD Set config overlay (flexible, from `prd-set-config.json`)
+1. Base config from `devloop.config.js` (strict schema validation via `src/config/schema/core.ts`)
+2. Framework config (extracted from base, strict schema via `src/config/schema/framework.ts`)
+3. PRD Set config overlay (flexible, from `index.md.yml` or `prd-set-config.json`)
 4. PRD config overlay (flexible, from frontmatter `config:`)
 5. Phase config overlay (flexible, from `requirements.phases[].config`)
 
 Each level merges into the previous, with later levels overriding earlier values. See above for array merge behavior.
+
+**Merging Logic:** The `createConfigContext()` and `applyPrdSetConfig()` functions in `src/core/config/merger.ts` handle the actual merging, with special handling for arrays that should be concatenated vs replaced.
 
 See [`PRD_FEATURES.md`](PRD_FEATURES.md) for details on leveraging config sections.
 

@@ -3,7 +3,7 @@ import ora from 'ora';
 import * as fs from 'fs-extra';
 import * as path from 'path';
 import { loadConfig } from '../../config/loader';
-import { TaskMasterBridge } from '../../core/task-bridge';
+import { TaskMasterBridge } from "../../core/execution/task-bridge";
 
 export async function validateCommand(options: {
   configPath?: string;

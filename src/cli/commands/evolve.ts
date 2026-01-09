@@ -1,9 +1,9 @@
 import chalk from 'chalk';
 import * as path from 'path';
 import { loadConfig } from '../../config/loader';
-import { DebugMetrics } from '../../core/debug-metrics';
-import { ObservationTracker, Observation } from '../../core/observation-tracker';
-import { ImprovementSuggester, ImprovementSuggestion } from '../../core/improvement-suggester';
+import { DebugMetrics } from "../../core/metrics/debug";
+import { ObservationTracker, Observation } from "../../core/tracking/observation-tracker";
+import { ImprovementSuggester, ImprovementSuggestion } from "../../core/execution/improvement-suggester";
 
 export async function evolveCommand(options: {
   config?: string;

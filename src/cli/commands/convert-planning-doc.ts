@@ -3,11 +3,11 @@ import * as fs from 'fs-extra';
 import * as path from 'path';
 import chalk from 'chalk';
 import { parse as yamlParse, stringify as yamlStringify } from 'yaml';
-import { PlanningDocParser, ParsedPlanningDoc } from '../../core/planning-doc-parser';
-import { PrdSetGenerator } from '../../core/prd-set-generator';
-import { PrdSetDiscovery } from '../../core/prd-set-discovery';
+import { PlanningDocParser, ParsedPlanningDoc } from "../../core/prd/parser/planning-doc-parser";
+import { PrdSetGenerator } from "../../core/prd/set/generator";
+import { PrdSetDiscovery } from "../../core/prd/set/discovery";
 import { validateConfigOverlay } from '../../config/schema';
-import { logger } from '../../core/logger';
+import { logger } from "../../core/utils/logger";
 
 interface ConvertOptions {
   outputDir?: string;

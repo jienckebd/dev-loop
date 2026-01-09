@@ -1,2 +1,2 @@
-export { TemplateManager } from '../core/template-manager';
+export { TemplateManager } from '../core/utils/template-manager';
 

@@ -7,7 +7,7 @@
 
 import * as fs from 'fs-extra';
 import * as path from 'path';
-import { logger } from '../../core/logger';
+import { logger } from "../../core/utils/logger";
 import { SessionManager, SessionContext, HistoryEntry, Session, BaseSessionManager } from './session-manager';
 
 export interface SessionHistoryEntry extends HistoryEntry {

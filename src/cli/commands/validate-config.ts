@@ -3,8 +3,8 @@ import * as fs from 'fs-extra';
 import * as path from 'path';
 import { parse as parseYaml } from 'yaml';
 import { validateConfig, validateConfigOverlay, ConfigOverlay, frameworkConfigSchema } from '../../config/schema';
-import { PrdSetDiscovery } from '../../core/prd-set-discovery';
-import { PrdConfigParser } from '../../core/prd-config-parser';
+import { PrdSetDiscovery } from "../../core/prd/set/discovery";
+import { PrdConfigParser } from "../../core/prd/parser/config-parser";
 import { loadConfig } from '../../config/loader';
 
 interface ValidationOutput {

@@ -6,7 +6,7 @@
 
 import chalk from 'chalk';
 import { loadConfig } from '../../config/loader';
-import { PrdReportGenerator, ReportFormat } from '../../core/prd-report-generator';
+import { PrdReportGenerator, ReportFormat } from "../../core/reporting/prd-report-generator";
 
 export interface ReportCommandOptions {
   config?: string;
@@ -30,7 +30,7 @@ export async function reportCommand(options: ReportCommandOptions): Promise<void
 
     if (options.all) {
       // Generate reports for all PRDs
-      const { PrdMetrics } = await import('../../core/prd-metrics');
+      const { PrdMetrics } = await import('../../core/metrics/prd');
       const prdMetrics = new PrdMetrics();
       const allPrds = prdMetrics.getAllPrdMetrics();
 
@@ -47,7 +47,7 @@ export async function reportCommand(options: ReportCommandOptions): Promise<void
 
     if (options.latest) {
       // Generate report for most recent PRD
-      const { PrdMetrics } = await import('../../core/prd-metrics');
+      const { PrdMetrics } = await import('../../core/metrics/prd');
       const prdMetrics = new PrdMetrics();
       const allPrds = prdMetrics.getAllPrdMetrics();
 

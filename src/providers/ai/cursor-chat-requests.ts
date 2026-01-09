@@ -8,7 +8,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import { ChatRequest } from '../../types';
-import { logger } from '../../core/logger';
+import { logger } from "../../core/utils/logger";
 
 interface ChatRequestsFile {
   requests: ChatRequest[];

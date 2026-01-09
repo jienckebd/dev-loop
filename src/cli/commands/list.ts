@@ -1,6 +1,6 @@
 import chalk from 'chalk';
 import { loadConfig } from '../../config/loader';
-import { TaskMasterBridge } from '../../core/task-bridge';
+import { TaskMasterBridge } from "../../core/execution/task-bridge";
 import { Task, TaskStatus } from '../../types';
 
 export async function listCommand(options: {

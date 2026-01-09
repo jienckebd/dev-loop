@@ -2,10 +2,10 @@ import { z } from 'zod';
 import * as fs from 'fs-extra';
 import * as path from 'path';
 import { parse as parseYaml } from 'yaml';
-import { TaskMasterBridge } from '../../core/task-bridge';
+import { TaskMasterBridge } from "../../core/execution/task-bridge";
 import { ConfigLoader, FastMCPType } from './index';
 import { validateConfigOverlay, ConfigOverlay, frameworkConfigSchema, validateConfig } from '../../config/schema';
-import { PrdConfigParser } from '../../core/prd-config-parser';
+import { PrdConfigParser } from "../../core/prd/parser/config-parser";
 
 export function registerControlTools(mcp: FastMCPType, getConfig: ConfigLoader): void {
   // devloop_pause - Pause after current task

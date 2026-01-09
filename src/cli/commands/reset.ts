@@ -1,7 +1,7 @@
 import chalk from 'chalk';
 import ora from 'ora';
 import { loadConfig } from '../../config/loader';
-import { TaskMasterBridge } from '../../core/task-bridge';
+import { TaskMasterBridge } from "../../core/execution/task-bridge";
 
 export async function resetCommand(options: {
   config?: string;

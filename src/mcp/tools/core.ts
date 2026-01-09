@@ -1,7 +1,7 @@
 import { z } from 'zod';
-import { WorkflowEngine } from '../../core/workflow-engine';
-import { TaskMasterBridge } from '../../core/task-bridge';
-import { StateManager } from '../../core/state-manager';
+import { WorkflowEngine } from "../../core/execution/workflow";
+import { TaskMasterBridge } from "../../core/execution/task-bridge";
+import { StateManager } from "../../core/utils/state-manager";
 import { ConfigLoader, FastMCPType } from './index';
 
 export function registerCoreTools(mcp: FastMCPType, getConfig: ConfigLoader): void {
@@ -219,7 +219,7 @@ export function registerCoreTools(mcp: FastMCPType, getConfig: ConfigLoader): vo
       }
 
       // Check for PRD config overlay
-      const { PrdConfigParser } = await import('../../core/prd-config-parser.js');
+      const { PrdConfigParser } = await import('../../core/prd/parser/config-parser.js');
       const configParser = new PrdConfigParser(args.debug || false);
       const prdConfigOverlay = await configParser.parsePrdConfig(args.prdPath);
       const prdConfigInfo = prdConfigOverlay
@@ -264,7 +264,7 @@ export function registerCoreTools(mcp: FastMCPType, getConfig: ConfigLoader): vo
         });
       } catch (error) {
         const errorMessage = error instanceof Error ? error.message : String(error);
-        
+
         // Check if it's a timeout error
         if (errorMessage.includes('timed out')) {
           return JSON.stringify({

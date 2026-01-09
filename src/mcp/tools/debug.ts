@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import * as fs from 'fs-extra';
-import { TaskMasterBridge } from '../../core/task-bridge';
+import { TaskMasterBridge } from "../../core/execution/task-bridge";
 import { LogAnalyzerFactory } from '../../providers/log-analyzers/factory';
 import { ConfigLoader, FastMCPType } from './index';
 
@@ -267,7 +267,7 @@ export function registerDebugTools(mcp: FastMCPType, getConfig: ConfigLoader): v
         // Handle clear first
         if (args.clear) {
           const metricsPath = (config as any).metrics?.path || '.devloop/metrics.json';
-          const { DebugMetrics } = await import('../../core/debug-metrics.js');
+          const { DebugMetrics } = await import('../../core/metrics/debug.js');
           const metrics = new DebugMetrics(metricsPath);
           metrics.clear();
           return JSON.stringify({
@@ -278,7 +278,7 @@ export function registerDebugTools(mcp: FastMCPType, getConfig: ConfigLoader): v
 
         // Handle hierarchical metrics
         if (args.prdSet) {
-          const { PrdSetMetrics } = await import('../../core/prd-set-metrics.js');
+          const { PrdSetMetrics } = await import('../../core/metrics/prd-set.js');
           const prdSetMetrics = new PrdSetMetrics();
           const metrics = prdSetMetrics.getPrdSetMetrics(args.prdSet);
           if (!metrics) {
@@ -290,7 +290,7 @@ export function registerDebugTools(mcp: FastMCPType, getConfig: ConfigLoader): v
         }
 
         if (args.prd) {
-          const { PrdMetrics } = await import('../../core/prd-metrics.js');
+          const { PrdMetrics } = await import('../../core/metrics/prd.js');
           const prdMetrics = new PrdMetrics();
           const metrics = prdMetrics.getPrdMetrics(args.prd);
           if (!metrics) {
@@ -314,7 +314,7 @@ export function registerDebugTools(mcp: FastMCPType, getConfig: ConfigLoader): v
               error: `Invalid phase ID: ${phaseIdStr} (must be numeric)`,
             });
           }
-          const { PhaseMetrics } = await import('../../core/phase-metrics.js');
+          const { PhaseMetrics } = await import('../../core/metrics/phase.js');
           const phaseMetrics = new PhaseMetrics();
           const metrics = phaseMetrics.getPhaseMetrics(phaseId, prdId);
           if (!metrics) {
@@ -332,8 +332,8 @@ export function registerDebugTools(mcp: FastMCPType, getConfig: ConfigLoader): v
               error: 'Compare format must be "id1:id2"',
             });
           }
-          const { PrdSetMetrics } = await import('../../core/prd-set-metrics.js');
-          const { PrdMetrics } = await import('../../core/prd-metrics.js');
+          const { PrdSetMetrics } = await import('../../core/metrics/prd-set.js');
+          const { PrdMetrics } = await import('../../core/metrics/prd.js');
           const prdSetMetrics = new PrdSetMetrics();
           const prdMetrics = new PrdMetrics();
 
@@ -360,7 +360,7 @@ export function registerDebugTools(mcp: FastMCPType, getConfig: ConfigLoader): v
         }
 
         if (args.trends) {
-          const { PrdMetrics } = await import('../../core/prd-metrics.js');
+          const { PrdMetrics } = await import('../../core/metrics/prd.js');
           const prdMetrics = new PrdMetrics();
           const allMetrics = prdMetrics.getAllPrdMetrics();
           return JSON.stringify({
@@ -370,7 +370,7 @@ export function registerDebugTools(mcp: FastMCPType, getConfig: ConfigLoader): v
         }
 
         if (args.features) {
-          const { FeatureTracker } = await import('../../core/feature-tracker.js');
+          const { FeatureTracker } = await import('../../core/tracking/feature-tracker.js');
           const featureTracker = new FeatureTracker();
           const allMetrics = featureTracker.getAllFeatureMetrics();
           const mostUsed = featureTracker.getMostUsedFeatures(10);
@@ -389,7 +389,7 @@ export function registerDebugTools(mcp: FastMCPType, getConfig: ConfigLoader): v
         }
 
         if (args.schema) {
-          const { SchemaTracker } = await import('../../core/schema-tracker.js');
+          const { SchemaTracker } = await import('../../core/tracking/schema-tracker.js');
           const schemaTracker = new SchemaTracker();
           const metrics = schemaTracker.getMetrics();
           return JSON.stringify(metrics, null, 2);
@@ -397,7 +397,7 @@ export function registerDebugTools(mcp: FastMCPType, getConfig: ConfigLoader): v
 
         // Task-level metrics (original implementation)
         const metricsPath = (config as any).metrics?.path || '.devloop/metrics.json';
-        const { DebugMetrics } = await import('../../core/debug-metrics.js');
+        const { DebugMetrics } = await import('../../core/metrics/debug.js');
         const metrics = new DebugMetrics(metricsPath);
         const metricsData = metrics.getMetrics();
 

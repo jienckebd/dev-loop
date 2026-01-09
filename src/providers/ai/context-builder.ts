@@ -7,7 +7,7 @@
 
 import { Task, TaskContext } from '../../types';
 import { Session, SessionContext } from './session-manager';
-import { CodeContextProvider } from '../../core/code-context-provider';
+import { CodeContextProvider } from '../../core/analysis/code/context-provider';
 
 export interface ContextBuilderConfig {
   includeSkeleton?: boolean;

@@ -17,7 +17,7 @@ import { CodebaseGraph } from '../../core/codebase-graph';
 import { SemanticFileDiscovery } from '../../core/semantic-file-discovery';
 import { ASTParser } from '../../core/ast-parser';
 import { EmbeddingService } from '../../ai/embedding-service';
-import { AbstractionDetector } from '../../core/abstraction-detector';
+import { AbstractionDetector } from "../../core/analysis/code/abstraction-detector";
 import { Config } from '../../config/schema';
 
 // Tool schemas

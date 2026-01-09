@@ -128,7 +128,7 @@ let mcpLogger: any = null;
 const logPath = '/tmp/dev-loop.log';
 (async () => {
   try {
-    const { logger } = await import('../core/logger.js');
+    const { logger } = await import('../core/utils/logger.js');
     logger.configure({
       logPath,
       debug: process.env.MCP_DEBUG === 'true',
@@ -204,7 +204,7 @@ addLoggedTool({
   execute: async (args: { config?: string; debug?: boolean }) => {
     // Dynamic import of CommonJS modules
     const { loadConfig } = await import('../config/loader.js');
-    const { WorkflowEngine } = await import('../core/workflow-engine.js');
+    const { WorkflowEngine } = await import('../core/execution/workflow.js');
 
     const config = await loadConfig(args.config);
     if (args.debug) {
@@ -233,7 +233,7 @@ addLoggedTool({
   }),
   execute: async (args: { config?: string }) => {
     const { loadConfig } = await import('../config/loader.js');
-    const { StateManager } = await import('../core/state-manager.js');
+    const { StateManager } = await import('../core/utils/state-manager.js');
 
     const config = await loadConfig(args.config);
     const stateManager = new StateManager(config);
@@ -263,7 +263,7 @@ addLoggedTool({
   }),
   execute: async (args: { config?: string; status?: string }) => {
     const { loadConfig } = await import('../config/loader.js');
-    const { TaskMasterBridge } = await import('../core/task-bridge.js');
+    const { TaskMasterBridge } = await import('../core/execution/task-bridge.js');
 
     const config = await loadConfig(args.config);
     const taskBridge = new TaskMasterBridge(config);
@@ -344,7 +344,7 @@ addLoggedTool({
   }),
   execute: async (args: { config?: string }) => {
     const { loadConfig } = await import('../config/loader.js');
-    const { TaskMasterBridge } = await import('../core/task-bridge.js');
+    const { TaskMasterBridge } = await import('../core/execution/task-bridge.js');
 
     const config = await loadConfig(args.config);
     const taskBridge = new TaskMasterBridge(config);
@@ -440,7 +440,7 @@ addLoggedTool({
   }),
   execute: async (args: { taskId?: string }) => {
     const { loadConfig } = await import('../config/loader.js');
-    const { TaskMasterBridge } = await import('../core/task-bridge.js');
+    const { TaskMasterBridge } = await import('../core/execution/task-bridge.js');
 
     const config = await loadConfig();
     const taskBridge = new TaskMasterBridge(config);
@@ -472,7 +472,7 @@ addLoggedTool({
   }),
   execute: async (args: { taskId?: string }) => {
     const { loadConfig } = await import('../config/loader.js');
-    const { TaskMasterBridge } = await import('../core/task-bridge.js');
+    const { TaskMasterBridge } = await import('../core/execution/task-bridge.js');
 
     const config = await loadConfig();
     const taskBridge = new TaskMasterBridge(config);

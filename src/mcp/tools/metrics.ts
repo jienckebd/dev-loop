@@ -5,8 +5,8 @@
 
 import { z } from 'zod';
 import { MetricsAnalyzer } from '../../core/metrics-analyzer';
-import { PrdSetMetrics } from '../../core/prd-set-metrics';
-import { PrdMetrics } from '../../core/prd-metrics';
+import { PrdSetMetrics } from "../../core/metrics/prd-set";
+import { PrdMetrics } from "../../core/metrics/prd";
 
 const AnalyzerOptionsSchema = z.object({
   prdSetId: z.string().optional().describe('Filter by PRD set ID'),

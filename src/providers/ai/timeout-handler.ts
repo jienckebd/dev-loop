@@ -8,7 +8,7 @@
  */
 
 import { EventEmitter } from 'events';
-import { logger } from '../../core/logger';
+import { logger } from "../../core/utils/logger";
 
 export interface TimeoutConfig {
   initialTimeoutMs: number;      // Initial timeout (e.g., 2 minutes)

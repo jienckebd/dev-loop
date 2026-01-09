@@ -7,13 +7,13 @@
 
 import { AIProvider, AIProviderConfig } from './interface';
 import { CodeChanges, TaskContext, LogAnalysis } from '../../types';
-import { logger } from '../../core/logger';
+import { logger } from "../../core/utils/logger";
 import { executeCursorGenerateCode } from '../../mcp/tools/cursor-ai';
 import { generateAgentConfig } from './cursor-agent-generator';
 import { createChatRequest } from './cursor-chat-requests';
 import { CursorChatOpener } from './cursor-chat-opener';
 import { extractCodeChanges, parseCodeChangesFromText, JsonParsingContext, extractCodeChangesWithAiFallback, shouldUseAiFallback } from './json-parser';
-import { ObservationTracker } from '../../core/observation-tracker';
+import { ObservationTracker } from "../../core/tracking/observation-tracker";
 import * as path from 'path';
 
 /**

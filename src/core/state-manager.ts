@@ -31,7 +31,7 @@ export class StateManager {
   private async acquireLock(lockPath: string, timeoutMs: number = 5000): Promise<boolean> {
     const startTime = Date.now();
     const lockContent = `${process.pid}-${Date.now()}`;
-    
+
     while (Date.now() - startTime < timeoutMs) {
       try {
         // Try to create lock file exclusively
@@ -142,7 +142,7 @@ export class StateManager {
       // Retry logic to handle transient read failures during concurrent writes
       const maxRetries = 3;
       const retryDelayMs = 50;
-      
+
       for (let attempt = 1; attempt <= maxRetries; attempt++) {
         try {
           const data = await fs.readJson(this.stateFile);

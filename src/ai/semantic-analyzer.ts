@@ -4,7 +4,7 @@ import { FrameworkPlugin, AbstractionRecommendation } from '../frameworks/interf
 import { FRAMEWORK_PROMPTS } from './prompts';
 import { FeedbackStore } from './feedback-store';
 import { AnalysisContext } from './provider-interface';
-import { logger } from '../core/logger';
+import { logger } from "../core/utils/logger";
 
 export interface SemanticAnalysis {
   pattern: AbstractionCandidate;

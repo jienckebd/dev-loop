@@ -1383,8 +1383,27 @@ Effective Config (used for execution)
 
 ### Config Overlay Examples
 
-**PRD Set Config (`prd-set-config.json`):**
+**PRD Set Config (`index.md.yml` or `prd-set-config.json`):**
+
+PRD sets can define config overlays in `index.md.yml` (preferred) or a separate `prd-set-config.json` file:
+
+```yaml
+# index.md.yml (YAML format - preferred)
+prdSet:
+  id: my_prd_set
+  config:
+    ai:
+      model: "claude-sonnet-4-20250514"
+    framework:
+      rules:
+        - "All PRDs in this set target the design_system module"
+        - "Use IPE builder patterns for all form modifications"
+```
+
+Or as a separate JSON file:
+
 ```json
+// prd-set-config.json (alternative format)
 {
   "ai": {
     "model": "claude-sonnet-4-20250514"
@@ -1397,6 +1416,8 @@ Effective Config (used for execution)
   }
 }
 ```
+
+**Schema Implementation:** Config overlays use `ConfigOverlay` type defined in `src/config/schema/overlays.ts` using `.partial().passthrough()` pattern. See [Architecture Documentation](../contributing/ARCHITECTURE.md) for schema structure details.
 
 **PRD Config Overlay (in frontmatter):**
 ```yaml

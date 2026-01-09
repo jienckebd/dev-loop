@@ -2,7 +2,7 @@ import chalk from 'chalk';
 import ora from 'ora';
 import * as fs from 'fs-extra';
 import { loadConfig } from '../../config/loader';
-import { TaskMasterBridge } from '../../core/task-bridge';
+import { TaskMasterBridge } from "../../core/execution/task-bridge";
 import { LogAnalyzerFactory } from '../../providers/log-analyzers/factory';
 
 export async function diagnoseCommand(options: {

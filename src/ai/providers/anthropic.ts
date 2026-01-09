@@ -8,7 +8,7 @@ import {
   AIDetectedPattern,
   AIRecommendation,
 } from '../provider-interface';
-import { logger } from '../../core/logger';
+import { logger } from "../../core/utils/logger";
 
 export interface AnthropicConfig {
   apiKey: string;

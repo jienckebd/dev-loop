@@ -11,7 +11,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { AgentConfig } from '../../types';
 import { getAgentTemplate } from './cursor-agent-templates';
-import { logger } from '../../core/logger';
+import { logger } from "../../core/utils/logger";
 import { CursorChatOpener } from './cursor-chat-opener';
 
 export interface AgentInfo {

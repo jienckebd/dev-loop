@@ -3,8 +3,8 @@ import ora from 'ora';
 import * as fs from 'fs-extra';
 import * as path from 'path';
 import { loadConfig } from '../../config/loader';
-import { TaskMasterBridge } from '../../core/task-bridge';
-import { StateManager } from '../../core/state-manager';
+import { TaskMasterBridge } from "../../core/execution/task-bridge";
+import { StateManager } from "../../core/utils/state-manager";
 
 export async function handoffCreateCommand(options: {
   config?: string;

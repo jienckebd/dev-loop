@@ -1,6 +1,6 @@
 import { AIProviderManager } from './provider-manager';
 import { EmbeddingCacheManager, CodeItemMetadata } from './embedding-cache';
-import { logger } from '../core/logger';
+import { logger } from "../core/utils/logger";
 
 export interface CodeItem {
   id: string;

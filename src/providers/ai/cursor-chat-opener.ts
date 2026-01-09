@@ -9,14 +9,14 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { spawn, execSync, exec } from 'child_process';
 import { promisify } from 'util';
-import { logger } from '../../core/logger';
+import { logger } from "../../core/utils/logger";
 import { ChatRequest, Config, CodeChanges } from '../../types';
 import { CursorSessionManager } from './cursor-session-manager';
 import { SessionContext } from './session-manager';
 import { extractCodeChanges, parseCodeChangesFromText, JsonParsingContext } from './json-parser';
-import { ObservationTracker } from '../../core/observation-tracker';
-import { getParallelMetricsTracker } from '../../core/parallel-metrics';
-import { AgentIPCServer, IPCMessage } from '../../core/agent-ipc';
+import { ObservationTracker } from "../../core/tracking/observation-tracker";
+import { getParallelMetricsTracker } from "../../core/metrics/parallel";
+import { AgentIPCServer, IPCMessage } from '../../core/utils/agent-ipc';
 
 const execAsync = promisify(exec);
 

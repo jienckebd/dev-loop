@@ -3,14 +3,14 @@ import ora from 'ora';
 import * as fs from 'fs-extra';
 import * as path from 'path';
 import { loadConfig } from '../../config/loader';
-import { WorkflowEngine } from '../../core/workflow-engine';
-import { PrdTracker } from '../../core/prd-tracker';
+import { WorkflowEngine } from "../../core/execution/workflow";
+import { PrdTracker } from "../../core/tracking/prd-tracker";
 import { writePidFile, removePidFile } from './stop';
 import { ChatRequestAutoProcessor } from '../../providers/ai/cursor-chat-auto-processor';
-import { getReportGenerator, PrdExecutionReport } from '../../core/report-generator';
-import { getParallelMetricsTracker } from '../../core/parallel-metrics';
-import { ProgressTracker } from '../../core/progress-tracker';
-import { PrdConfigParser } from '../../core/prd-config-parser';
+import { getReportGenerator, PrdExecutionReport } from "../../core/reporting/generator";
+import { getParallelMetricsTracker } from "../../core/metrics/parallel";
+import { ProgressTracker } from "../../core/tracking/progress-tracker";
+import { PrdConfigParser } from "../../core/prd/parser/config-parser";
 
 export async function watchCommand(options: {
   config?: string;

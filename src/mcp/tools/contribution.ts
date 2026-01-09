@@ -1,7 +1,7 @@
 import { z } from 'zod';
 import * as fs from 'fs-extra';
 import * as path from 'path';
-import { PrdTracker } from '../../core/prd-tracker';
+import { PrdTracker } from "../../core/tracking/prd-tracker";
 import { ConfigLoader, FastMCPType } from './index';
 
 const CONTRIBUTION_MODE_FILE = path.join(process.cwd(), '.devloop', 'contribution-mode.json');
