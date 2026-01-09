@@ -176,6 +176,7 @@ export class AgentIPCServer extends EventEmitter {
               maxRetries: this.maxRetries,
               backoffMs,
               socketPath: this.socketPath,
+              retryDurationMs: backoffMs,
             }, { severity: 'warn' });
 
             // Wait with exponential backoff
@@ -199,10 +200,14 @@ export class AgentIPCServer extends EventEmitter {
           }
 
           // Max retries exceeded
+          const connectionStartTime = (this as any).connectionStartTime || Date.now();
+          const connectionDuration = Date.now() - connectionStartTime;
           emitEvent('ipc:connection_failed', {
             retryCount: this.retryCount,
             error: 'EADDRINUSE - max retries exceeded',
             socketPath: this.socketPath,
+            durationMs: connectionDuration,
+            totalRetries: this.retryCount,
           }, { severity: 'error' });
         }
 
@@ -211,11 +216,20 @@ export class AgentIPCServer extends EventEmitter {
         reject(err);
       });
 
+      const connectionStartTime = Date.now();
+      (this as any).connectionStartTime = connectionStartTime;
+      
       this.server.listen(this.socketPath, () => {
+        const connectionDuration = Date.now() - connectionStartTime;
+        
         if (this.debug) {
-          logger.debug(`[AgentIPCServer] Listening on ${this.socketPath}`);
+          logger.debug(`[AgentIPCServer] Listening on ${this.socketPath} (${connectionDuration}ms)`);
         }
 
+        // Emit connection success event (implicit success)
+        // Note: This isn't explicitly in event types, but we track successful connections
+        // by tracking health check successes
+        
         // Register with connection pool for cleanup
         IPCConnectionPool.getInstance().registerServer(this.serverId, this);
 

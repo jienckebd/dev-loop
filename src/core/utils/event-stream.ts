@@ -51,7 +51,9 @@ export type EventType =
   // IPC
   | 'ipc:connection_failed'
   | 'ipc:connection_retry'
-  | 'ipc:health_check';
+  | 'ipc:health_check'
+  // Contribution mode issues
+  | 'contribution:issue_detected';
 
 export type EventSeverity = 'info' | 'warn' | 'error' | 'critical';
 
@@ -85,6 +87,7 @@ class EventStreamImpl {
   private events: DevLoopEvent[] = [];
   private maxEvents: number = 1000;
   private eventCounter: number = 0;
+  private listeners: Array<(event: DevLoopEvent) => void> = [];
 
   /**
    * Emit a new event to the stream
@@ -117,6 +120,16 @@ class EventStreamImpl {
     // Trim buffer if needed
     if (this.events.length > this.maxEvents) {
       this.events = this.events.slice(-this.maxEvents);
+    }
+
+    // Notify listeners
+    for (const listener of this.listeners) {
+      try {
+        listener(event);
+      } catch (error) {
+        // Don't let listener errors break event emission
+        console.error('[EventStream] Listener error:', error);
+      }
     }
 
     return event;
@@ -197,6 +210,23 @@ class EventStreamImpl {
    */
   getFilteredFiles(): DevLoopEvent[] {
     return this.events.filter(e => e.type === 'file:filtered');
+  }
+
+  /**
+   * Add an event listener (callback when events are emitted)
+   */
+  addListener(listener: (event: DevLoopEvent) => void): void {
+    this.listeners.push(listener);
+  }
+
+  /**
+   * Remove an event listener
+   */
+  removeListener(listener: (event: DevLoopEvent) => void): void {
+    const index = this.listeners.indexOf(listener);
+    if (index > -1) {
+      this.listeners.splice(index, 1);
+    }
   }
 
   /**

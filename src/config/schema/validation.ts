@@ -59,6 +59,8 @@ export function validateConfigOverlay(
 }
 
 export function validateConfig(data: unknown): z.infer<typeof configSchema> {
+  // Note: Schema validation tracking is handled by SchemaTracker in workflow.ts
+  // This function performs low-level validation; tracking is done at the workflow level
   return configSchema.parse(data);
 }
 

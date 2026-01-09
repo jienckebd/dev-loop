@@ -293,7 +293,13 @@ export class TaskMasterBridge {
       : '';
 
     // Detect common error patterns and add specific guidance
+    const errorGuidanceStart = Date.now();
     const guidance = this.getErrorGuidance(errorDescription);
+    const errorGuidanceDuration = Date.now() - errorGuidanceStart;
+    
+    // Track error guidance feature if guidance was provided
+    // Note: Feature tracking will be done at workflow level when fix task is executed
+    // We track here that guidance was generated, but actual usage is tracked when applied
 
     return this.createTask({
       id: `fix-${originalTaskId}-${Date.now()}`,

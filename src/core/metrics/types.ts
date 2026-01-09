@@ -296,6 +296,44 @@ export interface ContributionModeMetrics {
   workaroundFixes: number;
   sessionDuration: number;
   improvementsIdentified: number;
+  // NEW: Issue detection for contribution mode
+  issues: {
+    moduleConfusion: {
+      detected: boolean;
+      filteredFileRate: number; // % of files filtered vs total
+      totalFileOperations: number;
+      incidents: Array<{
+        taskId: string;
+        targetModule: string;
+        wrongModule: string;
+        timestamp: string;
+      }>;
+      alertThreshold: number; // e.g., 0.10 (10%)
+    };
+    sessionPollution: {
+      detected: boolean;
+      sessionsWithMultipleModules: number;
+      incidents: Array<{
+        sessionId: string;
+        modules: string[];
+        taskIds: string[];
+        timestamp: string;
+      }>;
+    };
+    boundaryViolations: {
+      total: number;
+      rate: number; // % of file operations
+      byPattern: Record<string, number>;
+      alertThreshold: number; // e.g., 0.05 (5%)
+    };
+    targetModuleContextLoss: {
+      detected: boolean;
+      tasksWithoutTargetModule: number;
+      totalTasks: number;
+      rate: number; // % of tasks
+      alertThreshold: number; // e.g., 0.01 (1%)
+    };
+  };
 }
 
 // Timing Breakdown
@@ -622,6 +660,34 @@ export function createDefaultContributionModeMetrics(): ContributionModeMetrics 
     workaroundFixes: 0,
     sessionDuration: 0,
     improvementsIdentified: 0,
+    // NEW: Issue detection fields
+    issues: {
+      moduleConfusion: {
+        detected: false,
+        filteredFileRate: 0,
+        totalFileOperations: 0,
+        incidents: [],
+        alertThreshold: 0.10, // 10%
+      },
+      sessionPollution: {
+        detected: false,
+        sessionsWithMultipleModules: 0,
+        incidents: [],
+      },
+      boundaryViolations: {
+        total: 0,
+        rate: 0,
+        byPattern: {},
+        alertThreshold: 0.05, // 5%
+      },
+      targetModuleContextLoss: {
+        detected: false,
+        tasksWithoutTargetModule: 0,
+        totalTasks: 0,
+        rate: 0,
+        alertThreshold: 0.01, // 1%
+      },
+    },
   };
 }
 

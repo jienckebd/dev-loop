@@ -33,6 +33,10 @@ flowchart LR
 
 ## Event Types
 
+**Note**: All events automatically update relevant metrics when emitted via the event-to-metrics bridge. See the "Event-to-Metrics Bridge" section below for details.
+
+## Event Types
+
 ### File Filtering Events
 
 | Event | Severity | Description |
@@ -263,6 +267,72 @@ sequenceDiagram
     MCP->>Agent: { events: [...] }
 ```
 
+## Event-to-Metrics Bridge
+
+The event-to-metrics bridge automatically updates metrics when events are emitted, ensuring metrics stay synchronized with actual system behavior without manual tracking calls.
+
+### How It Works
+
+When an event is emitted via `emitEvent()`, the bridge:
+
+1. **Subscribes to events** - The bridge listens to all events emitted through the event stream
+2. **Maps events to metrics** - Each event type is mapped to the relevant metric update function
+3. **Updates metrics in real-time** - Metrics are updated immediately when events occur
+4. **Batches saves** - Metric saves are batched for performance (every 5 seconds or on workflow save)
+
+### Event Type → Metric Mapping
+
+| Event Category | Metrics Updated |
+|----------------|----------------|
+| `json:*` | `JsonParsingMetrics` (aiFallbackUsage, retry counts, success by strategy) |
+| `file:*` | `FileFilteringMetrics` (predictiveFilters, boundaryViolations, filesAllowed) |
+| `validation:*` | `ValidationMetrics` (recoverySuggestionsGenerated, errorsByCategory) |
+| `ipc:*` | `IpcMetrics` (connectionsAttempted, healthChecksPerformed, retries) |
+| `phase:*` / `prd:*` | Phase/PRD timing metrics (via explicit tracking) |
+
+### Example: JSON Parsing Events
+
+When a `json:parse_retry` event is emitted:
+
+```typescript
+emitEvent('json:parse_retry', {
+  retryCount: 2,
+  providerName: 'anthropic',
+}, {
+  prdId: 'my-prd',
+  taskId: 'task-1',
+});
+```
+
+The bridge automatically:
+- Increments `JsonParsingMetrics.totalAttempts`
+- Increments `JsonParsingMetrics.successByStrategy.retry`
+- Updates `JsonParsingMetrics.totalParsingTimeMs` if duration provided
+- Recalculates `JsonParsingMetrics.avgParsingTimeMs`
+
+### Benefits
+
+- **Automatic synchronization**: Metrics always reflect current system state
+- **Reduced code duplication**: No need to update metrics manually at every event emission
+- **Consistency**: Same event data used for both events and metrics
+- **Performance**: Batched saves prevent performance issues
+
+### Configuration
+
+The bridge is automatically initialized when metrics are enabled in workflow configuration:
+
+```typescript
+{
+  metrics: {
+    enabled: true,
+    prdMetricsPath: '.devloop/prd-metrics.json',
+    phaseMetricsPath: '.devloop/phase-metrics.json',
+  }
+}
+```
+
+The bridge is started automatically and stops when the workflow completes.
+
 ## Event Severity Levels
 
 | Severity | Use Case |
@@ -287,6 +357,10 @@ Event streaming is especially useful in contribution mode:
 
 1. **Outer agent monitors** without parsing logs
 2. **Structured data** enables automated decision-making
+3. **Automatic metrics updates** via event-to-metrics bridge provide real-time metrics for issue detection
+4. **Contribution mode issue detection** (module confusion, session pollution, boundary violations) emits `contribution:issue_detected` events when thresholds are exceeded
+
+See [CONTRIBUTION_MODE.md](./CONTRIBUTION_MODE.md) for details on issue detection metrics.
 3. **Real-time** feedback on boundary enforcement
 4. **Efficient polling** with timestamp-based queries
 

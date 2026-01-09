@@ -76,22 +76,58 @@ dev-loop report --prd browser_validation_test --compare previous_prd
 - Success rates
 
 ### Feature Usage
-- Features used during execution
-- Feature performance metrics
-- Success rates per feature
-- Token usage per feature
+
+Comprehensive feature usage statistics:
+- **Features used**: List of all 17 PRD features used during execution
+- **Feature performance metrics**:
+  - Usage count per feature
+  - Success rates per feature
+  - Average duration per feature
+  - Token usage per feature (input and output)
+- **Feature effectiveness**: Success rate analysis to identify most/least effective features
+- **Feature token breakdown**: Token usage broken down by feature type (code generation, AI fallback, retry, error analysis)
 
 ### Schema Operations
-- Schema operations performed
-- Success rates
-- Operation types and durations
-- Error analysis
+
+Detailed schema operation analysis:
+- **Operation types breakdown**: create, update, delete, validate, parse operations
+- **Success rates by operation**: Percentage of successful operations for each type
+- **Duration analysis**: Average and total time for each operation type
+- **Schema types**: Operations grouped by schema type (entity types, field storage, config overlays, etc.)
+- **Error analysis**: Errors by operation type and schema type
 
 ### Detailed Metrics
 - Timing breakdown
 - Token usage
 - Cost calculation
 - Efficiency metrics
+
+### IPC Health Report
+
+IPC connection health and performance:
+- **Connection statistics**: Attempts, successes, failures
+- **Retry analysis**: Retry count, average retry time, total retry time
+- **Health check results**: Health checks performed, failures, success rate
+- **Connection timing**: Average connection time, total connection time
+- **Connection pool statistics**: Active connections, pending results
+
+### Context Efficiency Report
+
+Context building efficiency metrics:
+- **Search operation efficiency**: Files found vs files used, search time
+- **Context window utilization**: Percentage of AI context window used
+- **File discovery patterns**: Discovery strategies used, patterns matched
+- **Context build statistics**: Average build time, context size, files included/truncated
+
+### Contribution Mode Issues Report
+
+Automatic issue detection for contribution mode:
+- **Module confusion incidents**: Files filtered due to wrong module targeting, filtered file rate
+- **Session pollution events**: Sessions used across multiple modules, session IDs affected
+- **Boundary violation rates**: Violation rate as % of file operations, violation patterns
+- **Target module context loss**: Tasks executed without target module context, context loss rate
+
+These metrics help the outer agent automatically detect and resolve systemic issues in contribution mode.
 
 ### Test Results
 - Total tests

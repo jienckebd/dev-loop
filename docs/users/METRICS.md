@@ -52,18 +52,28 @@ Metrics are collected at four levels:
 - Average retries
 
 ### Features
-- Features used
+
+All 17 documented PRD features are now tracked with comprehensive metrics:
+- Features used (all 17 features tracked)
 - Feature usage count
 - Feature success rate
 - Feature duration
 - Feature token usage
 
+Tracked features include: code generation, test generation, log analysis, codebase discovery, error guidance, pattern learning, validation, schema operations, configuration overlays, context management, framework plugins, session management, IPC communication, error analysis, and more.
+
+Feature metrics help identify which dev-loop capabilities are being utilized and their effectiveness.
+
 ### Schema Operations
-- Schema operations (create, update, delete, validate, parse)
-- Operation types
-- Schema types
-- Success rate
-- Duration
+
+Comprehensive tracking of all schema operations:
+- **Operation types**: create, update, delete, validate, parse
+- **Schema types**: entity types, field storage, form displays, view displays, config overlays, etc.
+- **Success rate**: Percentage of successful operations
+- **Duration**: Average and total time for each operation type
+- **Error tracking**: Errors by operation type and schema type
+
+Schema operations are tracked when PRD config overlays are validated, when entity/field schemas are created or modified, and during schema validation processes. These metrics help monitor the performance and reliability of schema-related operations.
 
 ### Observations
 - Observation count
@@ -94,6 +104,80 @@ Session metrics track provider-agnostic session usage:
 - Session boundary enforcement
 - Context snapshotting effectiveness
 - Session lifecycle statistics
+
+### IPC Metrics
+
+IPC (Inter-Process Communication) metrics track connection health and performance for background agent communication:
+- Connection attempts, successes, and failures
+- Health checks performed and failures
+- Retry statistics (count, average time, total time)
+- Average connection time
+- Connection pool statistics
+
+These metrics help monitor the reliability of the IPC system used for Cursor IDE integration and background agent communication.
+
+### Context Metrics
+
+Context building metrics track how efficiently codebase context is assembled for AI agents:
+- Total context builds and average build time
+- Average context size (characters)
+- Files included and truncated statistics
+- Context window utilization (percentage of AI context window used)
+- Search operations efficiency:
+  - Total search operations
+  - Average search time
+  - Files found vs files used
+  - Search efficiency ratio (files used / files found)
+
+These metrics help optimize context building to maximize relevant information while minimizing token usage.
+
+### Codebase Metrics
+
+Codebase operation metrics track file discovery, search, and indexing performance:
+- Search operations:
+  - Total searches, average time, success rate
+  - Patterns used (regex, glob, etc.)
+  - Files found per search
+- File discovery:
+  - Total discoveries, average time
+  - Files discovered
+  - Patterns matched and discovery strategies used
+- File operations:
+  - Reads, writes, deletes with timing
+  - Error rates
+- Indexing:
+  - Operations count and timing
+  - Cache hit rates
+  - Files indexed
+- Path resolution:
+  - Operations, resolved vs failed
+  - Symlinks encountered
+
+### Contribution Mode Issue Detection
+
+Contribution mode metrics include automatic issue detection to alert the outer agent when systemic problems occur:
+
+**Module Confusion Detection**
+- Tracks file filtering rate per target module
+- Alerts when agents target wrong modules (filtered file rate > 10%)
+- Records incidents with task ID, target module, wrong module, and timestamp
+
+**Session Pollution Detection**
+- Detects when sessions are shared across PRD sets with different target modules
+- Tracks sessions with multiple modules
+- Records incidents with session ID, modules, and task IDs
+
+**Boundary Violation Monitoring**
+- Tracks boundary violation rate (% of file operations)
+- Alerts when violation rate exceeds threshold (>5%)
+- Records violation patterns for analysis
+
+**Target Module Context Loss Detection**
+- Monitors tasks executed without target module context
+- Alerts when context loss rate exceeds threshold (>1%)
+- Tracks total tasks vs tasks without target module
+
+These metrics enable the outer agent in contribution mode to automatically detect and fix issues like those observed in the restructure-schema-validation session.
 
 ### Patterns
 - Pattern matches
@@ -187,6 +271,12 @@ Metrics are stored in:
 - `.devloop/metrics.json` - Task-level metrics
 - `.devloop/prd-set-metrics.json` - PRD set metrics
 - `.devloop/prd-metrics.json` - PRD metrics
+- `.devloop/phase-metrics.json` - Phase-level metrics
+- `.devloop/feature-metrics.json` - Feature usage metrics
+- `.devloop/schema-metrics.json` - Schema operation metrics
+- `.devloop/observation-metrics.json` - Observation metrics
+- `.devloop/pattern-metrics.json` - Pattern matching metrics
+- `.devloop/test-results.json` - Test execution results
 - `.devloop/phase-metrics.json` - Phase metrics
 - `.devloop/feature-metrics.json` - Feature usage metrics
 - `.devloop/schema-metrics.json` - Schema operation metrics

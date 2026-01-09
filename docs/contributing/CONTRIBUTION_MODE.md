@@ -108,6 +108,109 @@ devloop_contribution_status()
 devloop_contribution_stop()
 ```
 
+## Issue Detection & Monitoring
+
+Contribution mode includes automatic issue detection to alert the outer agent when systemic problems occur. These metrics enable proactive identification and resolution of issues before they impact execution.
+
+### Module Confusion Detection
+
+**Issue**: Agents targeting the wrong module (e.g., targeting `bd_devloop_enhancement_test` instead of `bd_restructure_validation_test`).
+
+**Detection**:
+- Tracks file filtering rate per target module
+- Alerts when filtered file rate exceeds threshold (>10%)
+- Records incidents with task ID, target module, wrong module, and timestamp
+
+**Metrics**:
+- `ContributionModeMetrics.issues.moduleConfusion.filteredFileRate`
+- `ContributionModeMetrics.issues.moduleConfusion.incidents[]`
+
+**Alert**: `contribution:issue_detected` event with `issueType: 'module-confusion'` is emitted when threshold exceeded.
+
+### Session Pollution Detection
+
+**Issue**: Sessions shared across PRD sets with different target modules, causing context pollution.
+
+**Detection**:
+- Tracks sessions used for multiple target modules
+- Detects when a session is reused for a different target module
+- Records incidents with session ID, modules, and task IDs
+
+**Metrics**:
+- `ContributionModeMetrics.issues.sessionPollution.sessionsWithMultipleModules`
+- `ContributionModeMetrics.issues.sessionPollution.incidents[]`
+
+**Alert**: `contribution:issue_detected` event with `issueType: 'session-pollution'` is emitted on first detection.
+
+### Boundary Violation Monitoring
+
+**Issue**: Repeated boundary violations indicating systemic issues with file filtering.
+
+**Detection**:
+- Tracks boundary violation rate (% of file operations)
+- Alerts when violation rate exceeds threshold (>5%)
+- Records violation patterns for analysis
+
+**Metrics**:
+- `ContributionModeMetrics.issues.boundaryViolations.rate`
+- `ContributionModeMetrics.issues.boundaryViolations.total`
+- `ContributionModeMetrics.issues.boundaryViolations.byPattern`
+
+**Alert**: `contribution:issue_detected` event with `issueType: 'boundary-violations'` is emitted when threshold exceeded.
+
+### Target Module Context Loss Detection
+
+**Issue**: Tasks executed without target module context, leading to confusion about which module to modify.
+
+**Detection**:
+- Monitors tasks executed without target module in context
+- Alerts when context loss rate exceeds threshold (>1%)
+- Tracks total tasks vs tasks without target module
+
+**Metrics**:
+- `ContributionModeMetrics.issues.targetModuleContextLoss.rate`
+- `ContributionModeMetrics.issues.targetModuleContextLoss.tasksWithoutTargetModule`
+
+**Alert**: `contribution:issue_detected` event with `issueType: 'target-module-context-loss'` is emitted when threshold exceeded.
+
+### Using Issue Detection Metrics
+
+Issue detection metrics are automatically collected during contribution mode execution. Access them via:
+
+**MCP Tools**:
+```typescript
+// Get contribution mode metrics
+const metrics = await devloop_metrics({ prdId: "my-prd" });
+
+// Check for issues
+if (metrics.contributionMode?.issues.moduleConfusion.detected) {
+  console.log(`Module confusion detected: ${metrics.contributionMode.issues.moduleConfusion.filteredFileRate * 100}% filtered file rate`);
+}
+
+if (metrics.contributionMode?.issues.sessionPollution.detected) {
+  console.log(`Session pollution: ${metrics.contributionMode.issues.sessionPollution.sessionsWithMultipleModules} sessions with multiple modules`);
+}
+```
+
+**Event Monitoring**:
+```typescript
+// Poll for issue detection events
+const issues = await devloop_events_poll({
+  types: ['contribution:issue_detected'],
+  since: lastEventId
+});
+
+for (const issue of issues) {
+  console.log(`Issue detected: ${issue.data.issueType} - ${JSON.stringify(issue.data)}`);
+}
+```
+
+These metrics enable the outer agent to automatically detect and fix issues like those observed in the restructure-schema-validation session, improving system reliability and reducing manual intervention.
+
+// Stop contribution mode
+devloop_contribution_stop()
+```
+
 ## State Management
 
 Contribution mode maintains state in `.devloop/contribution-mode.json`. See [Contribution State Schema](CONTRIBUTION_STATE_SCHEMA.md) for complete reference.

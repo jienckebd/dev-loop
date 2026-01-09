@@ -259,6 +259,36 @@ export class PrdMetrics {
         if (metrics.tokens?.output) {
           prdMetric.tokens.totalOutput += metrics.tokens.output;
         }
+
+            // Update token breakdown
+        if (metrics.tokens?.input || metrics.tokens?.output) {
+          // Token breakdown by feature type
+          // For code generation tasks, tokens go to codeGeneration
+          // AI fallback tokens tracked separately in jsonParsing metrics
+          // Retry tokens tracked in jsonParsing metrics
+          // Error analysis tokens tracked separately when error analysis occurs
+          if (!prdMetric.tokens.byFeature) {
+            prdMetric.tokens.byFeature = createDefaultTokenBreakdown();
+          }
+          prdMetric.tokens.byFeature.codeGeneration.input += metrics.tokens.input || 0;
+          prdMetric.tokens.byFeature.codeGeneration.output += metrics.tokens.output || 0;
+        }
+
+        // Update timing breakdown for AI calls
+        if (metrics.timing?.aiCallMs) {
+          this.updateTimingBreakdown(prdId, 'contextBuilding', 0); // Context building already tracked
+          // AI call time is captured in total timing, but we can track it separately if needed
+        }
+
+        // Update timing breakdown for validation
+        if (metrics.validation?.preValidationPassed !== undefined) {
+          // Validation timing tracked via validation events
+        }
+
+        // Update timing breakdown for test runs
+        if (metrics.timing?.testRunMs) {
+          // Test run timing is already in avgTestRunMs, could add to breakdown if needed
+        }
         // Calculate and update cost using CostCalculator static method
         if (metrics.tokens?.input && metrics.tokens?.output) {
           // Use default provider/model for cost calculation
@@ -372,6 +402,22 @@ export class PrdMetrics {
           : duration;
 
         featureMetric.totalTokens += tokens.input + tokens.output;
+
+        // Update token breakdown by feature type
+        // Map feature names to token breakdown categories
+        if (!prdMetric.tokens.byFeature) {
+          prdMetric.tokens.byFeature = createDefaultTokenBreakdown();
+        }
+        
+        // Map feature names to breakdown categories
+        if (featureName === 'error-analysis' && tokens.input + tokens.output > 0) {
+          prdMetric.tokens.byFeature.errorAnalysis.input += tokens.input;
+          prdMetric.tokens.byFeature.errorAnalysis.output += tokens.output;
+        } else if ((featureName === 'test-generation' || featureName === 'code-generation' || featureName === 'codebase-discovery') && tokens.input + tokens.output > 0) {
+          // Code generation features go to codeGeneration
+          prdMetric.tokens.byFeature.codeGeneration.input += tokens.input;
+          prdMetric.tokens.byFeature.codeGeneration.output += tokens.output;
+        }
 
       this.saveMetrics();
     }
@@ -520,6 +566,16 @@ export class PrdMetrics {
       if (data.tokensUsed) {
         jp.aiFallbackUsage.tokensUsed.input += data.tokensUsed.input;
         jp.aiFallbackUsage.tokensUsed.output += data.tokensUsed.output;
+
+        // Update token breakdown for AI fallback
+        const prdMetric = this.metrics.get(prdId);
+        if (prdMetric && prdMetric.tokens) {
+          if (!prdMetric.tokens.byFeature) {
+            prdMetric.tokens.byFeature = createDefaultTokenBreakdown();
+          }
+          prdMetric.tokens.byFeature.aiFallback.input += data.tokensUsed.input;
+          prdMetric.tokens.byFeature.aiFallback.output += data.tokensUsed.output;
+        }
       }
     }
 

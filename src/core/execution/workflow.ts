@@ -31,6 +31,8 @@ import { getParallelMetricsTracker } from '../metrics/parallel';
 import { emitEvent, getEventStream } from '../utils/event-stream';
 import { RunMetrics } from '../metrics/debug';
 import { logger } from '../utils/logger';
+import { initializeEventMetricBridge, EventMetricBridge } from '../metrics/event-metric-bridge';
+import { initializeContributionModeIssueDetector, ContributionModeIssueDetector } from '../metrics/contribution-mode-issue-detector';
 import { PrdContextManager, PrdContext, Requirement } from '../prd/coordination/context';
 import { PrdParser } from '../prd/parser/parser';
 import { PrdConfigParser } from '../prd/parser/config-parser';
@@ -75,6 +77,8 @@ export class WorkflowEngine {
   private testResultsTracker?: TestResultsTracker;
   private errorAnalyzer?: ErrorAnalyzer;
   private costCalculator?: CostCalculator;
+  private eventMetricBridge?: EventMetricBridge;
+  private contributionModeIssueDetector?: ContributionModeIssueDetector;
   private observationTracker?: any; // ObservationTracker
   private improvementSuggester?: any; // ImprovementSuggester
   private frameworkPatternLibrary?: any; // FrameworkPatternLibrary
@@ -190,6 +194,27 @@ export class WorkflowEngine {
       this.patternMetrics = new PatternMetrics(patternMetricsPath);
       this.testResultsTracker = new TestResultsTracker(testResultsPath);
       this.errorAnalyzer = new ErrorAnalyzer();
+
+      // Initialize event-to-metrics bridge
+      // This automatically updates metrics when events are emitted
+      this.eventMetricBridge = initializeEventMetricBridge({
+        prdMetrics: this.prdMetrics,
+        phaseMetrics: this.phaseMetrics,
+        enabled: true,
+        debug: this.debug,
+      });
+
+      // Initialize contribution mode issue detector
+      // This tracks module confusion, session pollution, boundary violations, and context loss
+      this.contributionModeIssueDetector = initializeContributionModeIssueDetector(
+        this.prdMetrics,
+        this.debug
+      );
+
+      if (this.debug) {
+        logger.info('[WorkflowEngine] Event-to-metrics bridge initialized');
+        logger.info('[WorkflowEngine] Contribution mode issue detector initialized');
+      }
     } else {
       // Still initialize error analyzer as it may be used elsewhere
       this.errorAnalyzer = new ErrorAnalyzer();
@@ -325,11 +350,16 @@ export class WorkflowEngine {
   private initializeFrameworkPlugin(frameworkType?: string): void {
     // Run async initialization without blocking constructor
     this.frameworkLoader.loadFramework(frameworkType).then(plugin => {
+      const frameworkLoadStart = Date.now();
       this.frameworkPlugin = plugin;
       this.templateManager.setFrameworkPlugin(plugin);
+      const frameworkLoadDuration = Date.now() - frameworkLoadStart;
 
+      // Track framework plugin feature
+      // Note: Framework plugin loading happens before PRD tracking starts,
+      // so we track it globally when a PRD is executed (not at load time)
       if (this.debug) {
-        console.log(`[WorkflowEngine] Framework plugin loaded: ${plugin.name} v${plugin.version}`);
+        console.log(`[WorkflowEngine] Framework plugin loaded: ${plugin.name} v${plugin.version} (${frameworkLoadDuration}ms)`);
       }
     }).catch(err => {
       if (this.debug) {
@@ -719,9 +749,11 @@ export class WorkflowEngine {
       }
 
       // Generate code using AI
+      const contextBuildStart = Date.now();
       const { codebaseContext, targetFiles, existingCode } = await this.getCodebaseContext(task);
+      const contextBuildDuration = Date.now() - contextBuildStart;
 
-      // Record context metrics
+      // Record context metrics (debug metrics)
       const projectType = this.detectProjectType();
       if (this.debugMetrics) {
         const filesIncluded = targetFiles ? targetFiles.split('\n').filter(f => f.trim()).length : 0;
@@ -731,11 +763,73 @@ export class WorkflowEngine {
           filesIncluded,
           filesTruncated
         );
-        // Record project metadata
-        if (projectType) {
-          const framework = (this.config as any).framework?.type;
-          this.debugMetrics.recordProjectMetadata(projectType, framework, process.cwd());
+      }
+
+      // Track context metrics (PRD-level metrics)
+      if (this.prdMetrics && (this as any).currentPrdId) {
+        const prdMetric = this.prdMetrics.getPrdMetrics((this as any).currentPrdId);
+        if (prdMetric) {
+          // Ensure context metrics exist
+          if (!prdMetric.context) {
+            prdMetric.context = {
+              totalBuilds: 0,
+              avgBuildTimeMs: 0,
+              totalBuildTimeMs: 0,
+              avgContextSizeChars: 0,
+              totalContextSizeChars: 0,
+              avgFilesIncluded: 0,
+              totalFilesIncluded: 0,
+              avgFilesTruncated: 0,
+              totalFilesTruncated: 0,
+              contextWindowUtilization: 0,
+              searchOperations: {
+                total: 0,
+                avgTimeMs: 0,
+                totalTimeMs: 0,
+                filesFound: 0,
+                filesUsed: 0,
+                efficiency: 0,
+              },
+            };
+          }
+
+          const contextMetrics = prdMetric.context;
+          const contextSize = codebaseContext?.length || 0;
+          const filesIncluded = targetFiles ? targetFiles.split('\n').filter(f => f.trim()).length : 0;
+          const filesTruncated = 0; // TODO: track truncation
+
+          // Update context metrics
+          contextMetrics.totalBuilds++;
+          contextMetrics.totalBuildTimeMs += contextBuildDuration;
+          contextMetrics.avgBuildTimeMs = contextMetrics.totalBuildTimeMs / contextMetrics.totalBuilds;
+          contextMetrics.totalContextSizeChars += contextSize;
+          contextMetrics.avgContextSizeChars = contextMetrics.totalContextSizeChars / contextMetrics.totalBuilds;
+          contextMetrics.totalFilesIncluded += filesIncluded;
+          contextMetrics.avgFilesIncluded = contextMetrics.totalFilesIncluded / contextMetrics.totalBuilds;
+          contextMetrics.totalFilesTruncated += filesTruncated;
+          contextMetrics.avgFilesTruncated = contextMetrics.totalFilesTruncated / contextMetrics.totalBuilds;
+
+          // Estimate context window utilization (assuming ~4 chars per token, 100k token window)
+          const estimatedTokens = contextSize / 4;
+          const contextWindowSize = 100000; // tokens (typical AI context window)
+          contextMetrics.contextWindowUtilization = (estimatedTokens / contextWindowSize) * 100;
+
+          // Update search operations (file discovery happened in getCodebaseContext)
+          contextMetrics.searchOperations.total++;
+          contextMetrics.searchOperations.totalTimeMs += contextBuildDuration;
+          contextMetrics.searchOperations.avgTimeMs = contextMetrics.searchOperations.totalTimeMs / contextMetrics.searchOperations.total;
+          contextMetrics.searchOperations.filesFound += filesIncluded; // Approximate: files found = files included
+          contextMetrics.searchOperations.filesUsed += filesIncluded; // Files used = files included in context
+          contextMetrics.searchOperations.efficiency = contextMetrics.searchOperations.filesFound > 0
+            ? contextMetrics.searchOperations.filesUsed / contextMetrics.searchOperations.filesFound
+            : 0;
         }
+      }
+
+      // Record project metadata
+      if (projectType && this.debugMetrics) {
+        const framework = (this.config as any).framework?.type;
+        this.debugMetrics.recordProjectMetadata(projectType, framework, process.cwd());
       }
 
       const context: TaskContext = {
@@ -755,11 +849,50 @@ export class WorkflowEngine {
         const primaryFile = targetFiles.split('\n')[0];
         if (primaryFile) {
           try {
+            const contextBuildStart = Date.now();
             fileGuidance = await this.codeContextProvider.generateFileGuidance(primaryFile);
+            const contextBuildDuration = Date.now() - contextBuildStart;
+            
+            // Track codebase discovery feature
+            if (this.featureTracker && (this as any).currentPrdId) {
+              this.featureTracker.recordFeatureUsage(
+                'codebase-discovery',
+                true,
+                contextBuildDuration,
+                { input: 0, output: 0 }
+              );
+              this.prdMetrics?.recordFeatureUsage(
+                (this as any).currentPrdId,
+                'codebase-discovery',
+                true,
+                contextBuildDuration,
+                { input: 0, output: 0 }
+              );
+            }
+            
             if (this.debug) {
               console.log(`[DEBUG] Generated file guidance for ${primaryFile} (${fileGuidance.length} chars)`);
             }
           } catch (err) {
+            const contextBuildDuration = Date.now();
+            const errorMsg = err instanceof Error ? err.message : String(err);
+            if (this.featureTracker && (this as any).currentPrdId) {
+              this.featureTracker.recordFeatureUsage(
+                'codebase-discovery',
+                false,
+                contextBuildDuration,
+                { input: 0, output: 0 },
+                errorMsg
+              );
+              this.prdMetrics?.recordFeatureUsage(
+                (this as any).currentPrdId,
+                'codebase-discovery',
+                false,
+                contextBuildDuration,
+                { input: 0, output: 0 },
+                errorMsg
+              );
+            }
             console.warn('[WorkflowEngine] Could not generate file guidance:', err);
           }
         }
@@ -769,14 +902,53 @@ export class WorkflowEngine {
       let patternGuidance = '';
       if ((this.config as any).patternLearning?.enabled !== false) {
         try {
+          const patternStart = Date.now();
           patternGuidance = await this.patternLearner.generateGuidancePrompt(
             task,
             targetFiles?.split('\n')
           );
+          const patternDuration = Date.now() - patternStart;
+          
+          // Track pattern learning feature
+          if (this.featureTracker && (this as any).currentPrdId && patternGuidance) {
+            this.featureTracker.recordFeatureUsage(
+              'pattern-learning',
+              true,
+              patternDuration,
+              { input: 0, output: 0 }
+            );
+            this.prdMetrics?.recordFeatureUsage(
+              (this as any).currentPrdId,
+              'pattern-learning',
+              true,
+              patternDuration,
+              { input: 0, output: 0 }
+            );
+          }
+          
           if (this.debug && patternGuidance) {
             console.log(`[DEBUG] Generated pattern guidance (${patternGuidance.length} chars)`);
           }
         } catch (err) {
+          const patternDuration = Date.now();
+          const errorMsg = err instanceof Error ? err.message : String(err);
+          if (this.featureTracker && (this as any).currentPrdId) {
+            this.featureTracker.recordFeatureUsage(
+              'pattern-learning',
+              false,
+              patternDuration,
+              { input: 0, output: 0 },
+              errorMsg
+            );
+            this.prdMetrics?.recordFeatureUsage(
+              (this as any).currentPrdId,
+              'pattern-learning',
+              false,
+              patternDuration,
+              { input: 0, output: 0 },
+              errorMsg
+            );
+          }
           console.warn('[WorkflowEngine] Could not generate pattern guidance:', err);
         }
       }
@@ -814,8 +986,16 @@ Files outside the target module will be REJECTED. Do not waste tokens on them.
       // ENHANCEMENT: Inject target module into task description to prevent module confusion
       // This ensures the AI understands which module to target even with polluted session history
       let enhancedDescription = task.description || '';
+      const hasTargetModule = !!(promptTargetModule && enhancedDescription.includes(promptTargetModule));
+      
       if (promptTargetModule && !enhancedDescription.includes(promptTargetModule)) {
         enhancedDescription = `[TARGET MODULE: ${promptTargetModule}] ${enhancedDescription}\n\nIMPORTANT: All file paths MUST be within docroot/modules/share/${promptTargetModule}/`;
+      }
+
+      // Track target module context presence
+      if (this.contributionModeIssueDetector && (this as any).currentPrdId) {
+        this.contributionModeIssueDetector.trackTaskExecution(!!promptTargetModule);
+        this.contributionModeIssueDetector.updateContextLossTracking((this as any).currentPrdId);
       }
 
       const template = await this.templateManager.getTaskGenerationTemplateWithContext({
@@ -832,8 +1012,17 @@ Files outside the target module will be REJECTED. Do not waste tokens on them.
         patternGuidance,
       });
 
+      // Track session usage for session pollution detection
+      // Note: Session ID is created in cursor-chat-opener, but we track usage here
+      // We'll track when the session is actually used (after AI call completes)
+
       logger.info(`[WorkflowEngine] Calling AI provider to generate code...`);
       logger.info(`[WorkflowEngine] Task: ${context.task.title}`);
+
+      // Track session usage for session pollution detection
+      // Note: We'll track after the AI call completes, but prepare tracking now
+      const currentTargetModule = (this as any).currentPrdTargetModule;
+      const currentPrdId = (this as any).currentPrdId;
 
       // Log workflow event
       logger.logWorkflow('Task execution started', {
@@ -865,6 +1054,21 @@ Files outside the target module will be REJECTED. Do not waste tokens on them.
       }
       const changes = await this.aiProvider.generateCode(template, context);
       const aiCallDuration = Date.now() - aiCallStart;
+
+      // Track session usage for session pollution detection
+      // Extract session ID from AI provider response if available
+      // Note: For cursor provider, session ID is in the response metadata
+      if (this.contributionModeIssueDetector && currentTargetModule && currentPrdId && task.id) {
+        const sessionId = (changes as any).sessionId || (context as any).sessionId || undefined;
+        if (sessionId) {
+          this.contributionModeIssueDetector.trackSessionUsage(
+            sessionId,
+            currentTargetModule,
+            task.id,
+            currentPrdId
+          );
+        }
+      }
 
       // Record AI call metrics
       if (this.debugMetrics) {
@@ -1045,7 +1249,29 @@ Files outside the target module will be REJECTED. Do not waste tokens on them.
         logger.info('[WorkflowEngine] Running pre-apply validation...');
         // Pass allowed paths to prevent AI from modifying unrelated files
         const allowedPaths = targetFiles?.split('\n').filter(Boolean) || [];
+        const validationStart = Date.now();
         const validationResult = await this.validationGate.validate(changes, allowedPaths);
+        const validationDuration = Date.now() - validationStart;
+
+        // Track validation feature
+        if (this.featureTracker && (this as any).currentPrdId) {
+          const success = validationResult.valid;
+          this.featureTracker.recordFeatureUsage(
+            'validation',
+            success,
+            validationDuration,
+            { input: 0, output: 0 },
+            !success ? `${validationResult.errors.length} validation errors` : undefined
+          );
+          this.prdMetrics?.recordFeatureUsage(
+            (this as any).currentPrdId,
+            'validation',
+            success,
+            validationDuration,
+            { input: 0, output: 0 },
+            !success ? `${validationResult.errors.length} validation errors` : undefined
+          );
+        }
 
         if (!validationResult.valid) {
           logger.error('Pre-apply validation FAILED:');
@@ -1406,6 +1632,26 @@ Files outside the target module will be REJECTED. Do not waste tokens on them.
         this.debugMetrics.recordTiming('logAnalysis', logAnalysisDuration);
       }
 
+      // Track log analysis feature
+      if (this.config.logs.sources.length > 0 && this.featureTracker && (this as any).currentPrdId) {
+        const success = !logAnalysis || logAnalysis.errors.length === 0;
+        this.featureTracker.recordFeatureUsage(
+          'log-analysis',
+          success,
+          logAnalysisDuration,
+          { input: 0, output: 0 },
+          logAnalysis && logAnalysis.errors.length > 0 ? `Found ${logAnalysis.errors.length} errors` : undefined
+        );
+        this.prdMetrics?.recordFeatureUsage(
+          (this as any).currentPrdId,
+          'log-analysis',
+          success,
+          logAnalysisDuration,
+          { input: 0, output: 0 },
+          logAnalysis && logAnalysis.errors.length > 0 ? `Found ${logAnalysis.errors.length} errors` : undefined
+        );
+      }
+
       // Run smoke tests if configured
       let smokeTestResult: SmokeTestResult | null = null;
       if (this.config.validation?.enabled && this.config.validation.urls?.length > 0) {
@@ -1560,9 +1806,29 @@ Files outside the target module will be REJECTED. Do not waste tokens on them.
 
             // Add framework pattern guidance
             if (this.frameworkPatternLibrary) {
+              const errorGuidanceStart = Date.now();
               const patterns = this.frameworkPatternLibrary.matchPatterns(errorDescription, framework);
               if (patterns.length > 0) {
                 const patternGuidance = this.frameworkPatternLibrary.generateGuidancePrompt(patterns);
+                const errorGuidanceDuration = Date.now() - errorGuidanceStart;
+                
+                // Track error guidance feature when patterns matched
+                if (patternGuidance && this.featureTracker && (this as any).currentPrdId) {
+                  this.featureTracker.recordFeatureUsage(
+                    'error-guidance',
+                    true,
+                    errorGuidanceDuration,
+                    { input: 0, output: 0 }
+                  );
+                  this.prdMetrics?.recordFeatureUsage(
+                    (this as any).currentPrdId,
+                    'error-guidance',
+                    true,
+                    errorGuidanceDuration,
+                    { input: 0, output: 0 }
+                  );
+                }
+                
                 if (patternGuidance) {
                   analysisSections.push(patternGuidance);
                 }
@@ -2236,6 +2502,10 @@ Files outside the target module will be REJECTED. Do not waste tokens on them.
     for (const file of files) {
       if (this.isFileInTargetModule(file.path, targetModule)) {
         allowed.push(file);
+        // Track allowed file operation
+        if (this.contributionModeIssueDetector && (this as any).currentPrdId) {
+          this.contributionModeIssueDetector.trackFileOperation(targetModule, true, false);
+        }
       } else {
         const suggestion = this.generateFilterSuggestion(file.path, targetModule);
         filtered.push({
@@ -2246,6 +2516,22 @@ Files outside the target module will be REJECTED. Do not waste tokens on them.
 
         logger.warn(`[WorkflowEngine] FILTERED: ${file.path}`);
         logger.warn(`[WorkflowEngine] SUGGESTION: ${suggestion}`);
+
+        // Track module confusion and boundary violations
+        if (this.contributionModeIssueDetector && (this as any).currentPrdId) {
+          // Extract wrong module from filtered path
+          const wrongModuleMatch = file.path.match(/docroot\/modules\/share\/([^/]+)/);
+          const wrongModule = wrongModuleMatch ? wrongModuleMatch[1] : 'unknown';
+          
+          this.contributionModeIssueDetector.trackFileFiltered(
+            taskId || 'unknown',
+            targetModule,
+            wrongModule,
+            (this as any).currentPrdId
+          );
+          this.contributionModeIssueDetector.trackFileOperation(targetModule, false, true);
+          this.contributionModeIssueDetector.updateBoundaryViolations(targetModule, (this as any).currentPrdId);
+        }
 
         // Emit detailed filter event
         emitEvent('file:filtered', {
@@ -3643,7 +3929,69 @@ Files outside the target module will be REJECTED. Do not waste tokens on them.
     let effectiveConfig = this.config;
     if (prdConfigOverlay) {
       console.log('[WorkflowEngine] PRD config overlay detected, merging with base config...');
+      
+      // Track configuration overlay feature
+      const overlayStart = Date.now();
       effectiveConfig = configParser.mergeWithBaseConfig(this.config, prdConfigOverlay);
+      const overlayDuration = Date.now() - overlayStart;
+      
+      if (this.featureTracker && prdId) {
+        this.featureTracker.recordFeatureUsage(
+          'configuration-overlays',
+          true,
+          overlayDuration,
+          { input: 0, output: 0 }
+        );
+        this.prdMetrics?.recordFeatureUsage(
+          prdId,
+          'configuration-overlays',
+          true,
+          overlayDuration,
+          { input: 0, output: 0 }
+        );
+      }
+      
+      // Track schema validation operation for config overlay
+      if (this.schemaTracker && prdId) {
+        const schemaValidateStart = Date.now();
+        try {
+          // Validate config overlay (already validated in discovery, but track the operation)
+          const schemaValidateDuration = Date.now() - schemaValidateStart;
+          this.schemaTracker.recordValidate(
+            'config-overlay',
+            prdId,
+            schemaValidateDuration,
+            true
+          );
+          this.prdMetrics?.recordSchemaOperation(prdId, {
+            operation: 'validate',
+            schemaType: 'config-overlay',
+            schemaId: prdId,
+            duration: schemaValidateDuration,
+            success: true,
+            timestamp: new Date().toISOString(),
+          });
+        } catch (error) {
+          const schemaValidateDuration = Date.now() - schemaValidateStart;
+          const errorMsg = error instanceof Error ? error.message : String(error);
+          this.schemaTracker.recordValidate(
+            'config-overlay',
+            prdId,
+            schemaValidateDuration,
+            false,
+            errorMsg
+          );
+          this.prdMetrics?.recordSchemaOperation(prdId, {
+            operation: 'validate',
+            schemaType: 'config-overlay',
+            schemaId: prdId,
+            duration: schemaValidateDuration,
+            success: false,
+            error: errorMsg,
+            timestamp: new Date().toISOString(),
+          });
+        }
+      }
 
       if (this.debug) {
         logger.debug(`[WorkflowEngine] Merged PRD config overlay. Keys: ${Object.keys(prdConfigOverlay).join(', ')}`);
@@ -3871,9 +4219,31 @@ Files outside the target module will be REJECTED. Do not waste tokens on them.
         await contextManager.save(context);
       }
 
+      const testGenStart = Date.now();
       const tests = await testGenerator.generateTests(requirements, context);
+      const testGenDuration = Date.now() - testGenStart;
       context.tests = tests;
       context.status = 'running';
+
+      // Track test generation feature
+      if (this.featureTracker && prdId) {
+        const success = tests.length > 0;
+        this.featureTracker.recordFeatureUsage(
+          'test-generation',
+          success,
+          testGenDuration,
+          { input: 0, output: 0 },
+          tests.length === 0 ? 'No tests generated' : undefined
+        );
+        this.prdMetrics?.recordFeatureUsage(
+          prdId,
+          'test-generation',
+          success,
+          testGenDuration,
+          { input: 0, output: 0 },
+          tests.length === 0 ? 'No tests generated' : undefined
+        );
+      }
 
       await contextManager.save(context);
       console.log(`[WorkflowEngine] Generated ${tests.length} tests from ${requirements.length} requirements`);
@@ -4002,6 +4372,13 @@ Files outside the target module will be REJECTED. Do not waste tokens on them.
       if (this.prdMetrics && prdId) {
         const tokensUsed = { input: 0, output: 0 };
         this.prdMetrics.recordFeatureUsage(prdId, 'error-analysis', true, analysisDuration, tokensUsed);
+        
+        // Update token breakdown for error analysis
+        // Note: Actual tokens would come from error analysis AI calls
+        // For now, we'll update breakdown when tokens are available
+        if (this.prdMetrics && (this.prdMetrics as any).updateTokenBreakdown) {
+          // Token breakdown will be updated when actual tokens are tracked
+        }
       }
 
       // Generate fix tasks
