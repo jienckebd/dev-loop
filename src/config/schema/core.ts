@@ -97,6 +97,82 @@ const configSchemaBase = z.object({
         trackRollbacks: z.boolean().default(true),
       }).optional(),
     }).optional(),
+    // Contribution mode issue detection configuration
+    contributionMode: z.object({
+      enabled: z.boolean().default(true).describe('Enable contribution mode issue detection'),
+      issueDetection: z.object({
+        codeGenerationDegradation: z.object({
+          enabled: z.boolean().default(true),
+          alertThreshold: z.number().default(0.20).describe('Alert if degradation rate exceeds X%'),
+          trendWindowHours: z.number().default(24).describe('Time window for trend analysis in hours'),
+          autoAction: z.boolean().default(false),
+          confidence: z.number().min(0).max(1).default(0.75),
+        }).optional(),
+        contextWindowInefficiency: z.object({
+          enabled: z.boolean().default(true),
+          efficiencyThreshold: z.number().default(0.001).describe('Minimum acceptable efficiency ratio'),
+          missingFileRateThreshold: z.number().default(0.20).describe('Alert if missing file rate exceeds X%'),
+          autoAction: z.boolean().default(false),
+          confidence: z.number().min(0).max(1).default(0.70),
+        }).optional(),
+        taskDependencyDeadlock: z.object({
+          enabled: z.boolean().default(true),
+          maxWaitTimeMinutes: z.number().default(30).describe('Max wait time before alerting in minutes'),
+          autoAction: z.boolean().default(true),
+          confidence: z.number().min(0).max(1).default(0.80),
+        }).optional(),
+        testGenerationQuality: z.object({
+          enabled: z.boolean().default(true),
+          successRateThreshold: z.number().default(0.70).describe('Minimum acceptable success rate'),
+          immediateFailureRateThreshold: z.number().default(0.30).describe('Alert if immediate failure rate exceeds X%'),
+          autoAction: z.boolean().default(false),
+          confidence: z.number().min(0).max(1).default(0.75),
+        }).optional(),
+        validationGateOverBlocking: z.object({
+          enabled: z.boolean().default(true),
+          falsePositiveRateThreshold: z.number().default(0.30).describe('Alert if false positive rate exceeds X%'),
+          autoAction: z.boolean().default(false),
+          confidence: z.number().min(0).max(1).default(0.70),
+        }).optional(),
+        aiProviderInstability: z.object({
+          enabled: z.boolean().default(true),
+          errorRateThreshold: z.number().default(0.10).describe('Alert if error rate exceeds X%'),
+          timeoutRateThreshold: z.number().default(0.10).describe('Alert if timeout rate exceeds X%'),
+          qualityTrendThreshold: z.number().default(-0.10).describe('Alert if quality trend is below X (negative = degrading)'),
+          autoAction: z.boolean().default(true),
+          confidence: z.number().min(0).max(1).default(0.75),
+        }).optional(),
+        resourceExhaustion: z.object({
+          enabled: z.boolean().default(true),
+          memoryUsageThreshold: z.number().default(0.80).describe('Alert if memory usage exceeds X%'),
+          diskUsageThreshold: z.number().default(0.80).describe('Alert if disk usage exceeds X%'),
+          timeoutRateThreshold: z.number().default(0.10).describe('Alert if timeout rate exceeds X%'),
+          autoAction: z.boolean().default(false),
+          confidence: z.number().min(0).max(1).default(0.70),
+        }).optional(),
+        phaseProgressionStalling: z.object({
+          enabled: z.boolean().default(true),
+          minProgressRate: z.number().default(0.1).describe('Minimum acceptable progress rate (tasks/hour)'),
+          maxStallDurationMinutes: z.number().default(60).describe('Max stall duration before alerting in minutes'),
+          autoAction: z.boolean().default(true),
+          confidence: z.number().min(0).max(1).default(0.75),
+        }).optional(),
+        patternLearningInefficacy: z.object({
+          enabled: z.boolean().default(true),
+          matchToApplicationRateThreshold: z.number().default(0.50).describe('Minimum acceptable match-to-application rate'),
+          recurringPatternRateThreshold: z.number().default(0.30).describe('Alert if recurring pattern rate exceeds X%'),
+          autoAction: z.boolean().default(false),
+          confidence: z.number().min(0).max(1).default(0.70),
+        }).optional(),
+        schemaValidationConsistency: z.object({
+          enabled: z.boolean().default(true),
+          falsePositiveRateThreshold: z.number().default(0.20).describe('Alert if false positive rate exceeds X%'),
+          validationTimeTrendThreshold: z.number().default(1000).describe('Alert if validation time trend exceeds X ms'),
+          autoAction: z.boolean().default(false),
+          confidence: z.number().min(0).max(1).default(0.70),
+        }).optional(),
+      }).optional(),
+    }).optional(),
     // MCP adapter configurations (for future open source MCP integration)
     adapters: z.object({
       filesystem: z.object({

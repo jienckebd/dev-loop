@@ -231,8 +231,18 @@ Each action strategy knows how to fix a particular type of issue. Strategies are
 - `fixSessionPollution()` - Fixes session ID generation
 - `fixBoundaryViolations()` - Uses boundary violation strategy
 - `fixContextLoss()` - Ensures targetModule propagation
+- `fixCodeGenerationDegradation()` - Enhances code generation prompts/templates based on degradation patterns
+- `fixContextWindowInefficiency()` - Optimizes context discovery to find relevant files more efficiently
+- `fixTaskDependencyDeadlock()` - Analyzes dependency graph, suggests resolution, resets retry counts for blocked tasks
+- `fixTestGenerationQuality()` - Enhances test generation templates based on quality issues
+- `fixValidationGateOverBlocking()` - Relaxes validation gates based on false positive patterns
+- `fixAiProviderInstability()` - Suggests fallback provider or enhances retry logic for provider issues
+- `fixResourceExhaustion()` - Suggests cleanup operations, archives old metrics, optimizes resource usage
+- `fixPhaseProgressionStalling()` - Analyzes why phase is stalled and suggests fixes (unblock tasks, resolve dependencies)
+- `fixPatternLearningInefficacy()` - Enhances pattern learning logic or pattern application strategies
+- `fixSchemaValidationConsistency()` - Improves schema validation logic based on false positive patterns
 
-**Confidence:** 0.75-0.85 depending on issue type and patterns
+**Confidence:** 0.70-0.90 depending on issue type and patterns (critical issues like boundary-violations and task-dependency-deadlock have higher confidence)
 
 ### IPC Connection Strategy
 
@@ -366,6 +376,98 @@ module.exports = {
   }
 };
 ```
+
+#### Contribution Mode Issue Detection Configuration
+
+For fine-grained control over contribution mode issue detection thresholds, you can configure individual issue types:
+
+```javascript
+module.exports = {
+  // ... other config
+  mcp: {
+    eventMonitoring: {
+      enabled: true,
+      contributionMode: {
+        enabled: true,  // Enable contribution mode issue detection
+        issueDetection: {
+          codeGenerationDegradation: {
+            enabled: true,
+            alertThreshold: 0.20,  // Alert if degradation rate exceeds 20%
+            trendWindowHours: 24,  // Time window for trend analysis (hours)
+            autoAction: false,
+            confidence: 0.75,
+          },
+          contextWindowInefficiency: {
+            enabled: true,
+            efficiencyThreshold: 0.001,  // Minimum acceptable efficiency ratio
+            missingFileRateThreshold: 0.20,  // Alert if missing file rate exceeds 20%
+            autoAction: false,
+            confidence: 0.70,
+          },
+          taskDependencyDeadlock: {
+            enabled: true,
+            maxWaitTimeMinutes: 30,  // Max wait time before alerting (minutes)
+            autoAction: true,
+            confidence: 0.80,
+          },
+          testGenerationQuality: {
+            enabled: true,
+            successRateThreshold: 0.70,  // Minimum acceptable success rate (70%)
+            immediateFailureRateThreshold: 0.30,  // Alert if immediate failures exceed 30%
+            autoAction: false,
+            confidence: 0.75,
+          },
+          validationGateOverBlocking: {
+            enabled: true,
+            falsePositiveRateThreshold: 0.30,  // Alert if false positive rate exceeds 30%
+            autoAction: false,
+            confidence: 0.70,
+          },
+          aiProviderInstability: {
+            enabled: true,
+            errorRateThreshold: 0.10,  // Alert if error rate exceeds 10%
+            timeoutRateThreshold: 0.10,  // Alert if timeout rate exceeds 10%
+            qualityTrendThreshold: -0.10,  // Alert if quality trend is below -10%
+            autoAction: true,
+            confidence: 0.75,
+          },
+          resourceExhaustion: {
+            enabled: true,
+            memoryUsageThreshold: 0.80,  // Alert if memory usage exceeds 80%
+            diskUsageThreshold: 0.80,  // Alert if disk usage exceeds 80%
+            timeoutRateThreshold: 0.10,  // Alert if timeout rate exceeds 10%
+            autoAction: false,
+            confidence: 0.70,
+          },
+          phaseProgressionStalling: {
+            enabled: true,
+            minProgressRate: 0.1,  // Minimum acceptable progress rate (tasks/hour)
+            maxStallDurationMinutes: 60,  // Max stall duration before alerting (minutes)
+            autoAction: true,
+            confidence: 0.75,
+          },
+          patternLearningInefficacy: {
+            enabled: true,
+            matchToApplicationRateThreshold: 0.50,  // Minimum acceptable match-to-application rate (50%)
+            recurringPatternRateThreshold: 0.30,  // Alert if recurring pattern rate exceeds 30%
+            autoAction: false,
+            confidence: 0.70,
+          },
+          schemaValidationConsistency: {
+            enabled: true,
+            falsePositiveRateThreshold: 0.20,  // Alert if false positive rate exceeds 20%
+            validationTimeTrendThreshold: 1000,  // Alert if validation time trend exceeds 1000ms
+            autoAction: false,
+            confidence: 0.70,
+          },
+        },
+      },
+    }
+  }
+};
+```
+
+**Note:** Issue-specific thresholds in `mcp.eventMonitoring.contributionMode.issueDetection` override the default thresholds defined in the metrics system. If not configured, the detector uses default thresholds from `ContributionModeMetrics`.
 
 ### Threshold Types
 

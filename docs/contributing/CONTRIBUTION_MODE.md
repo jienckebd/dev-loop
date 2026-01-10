@@ -119,6 +119,8 @@ devloop_contribution_stop()
 
 Contribution mode includes automatic issue detection to alert the outer agent when systemic problems occur. These metrics enable proactive identification and resolution of issues before they impact execution.
 
+**CRITICAL: The outer agent should monitor via event streaming, NOT log parsing.** All issue detection emits `contribution:issue_detected` events that can be polled via `devloop_events_poll` or monitored proactively via `devloop_event_monitor_start`. Log parsing is deprecated in favor of structured event streaming.
+
 ### Module Confusion Detection
 
 **Issue**: Agents targeting the wrong module (e.g., targeting `bd_devloop_enhancement_test` instead of `bd_restructure_validation_test`).
@@ -180,6 +182,197 @@ Contribution mode includes automatic issue detection to alert the outer agent wh
 
 **Alert**: `contribution:issue_detected` event with `issueType: 'target-module-context-loss'` is emitted when threshold exceeded.
 
+### Code Generation Degradation Detection
+
+**Issue**: Code generation quality degrading over time (e.g., increasing test failures after code generation, decreasing success rates).
+
+**Detection**:
+- Tracks code generation success rate over time window (default: 24 hours)
+- Monitors test pass rate trends after code generation
+- Calculates degradation rate from baseline success rate
+- Alerts when degradation rate exceeds threshold (>20% degradation) or pass rate trend is negative
+
+**Metrics**:
+- `ContributionModeMetrics.issues.codeGenerationDegradation.successRateTrend`
+- `ContributionModeMetrics.issues.codeGenerationDegradation.testPassRateTrend`
+- `ContributionModeMetrics.issues.codeGenerationDegradation.degradationRate`
+
+**Alert**: `contribution:issue_detected` event with `issueType: 'code-generation-degradation'` when threshold exceeded.
+
+**Intervention Strategy**: `enhance-code-generation-prompts` - Analyze failing patterns and enhance AI prompts/templates.
+
+### Context Window Inefficiency Detection
+
+**Issue**: Context building becoming inefficient (e.g., large context windows but still missing critical files, token usage growing without value).
+
+**Detection**:
+- Tracks context window size vs. task success rate
+- Monitors token usage per task vs. success rate
+- Detects pattern: large context → still missing files → task failure
+- Alerts when context efficiency ratio (success rate / tokens per task) degrades significantly or missing file rate exceeds threshold (>20%)
+
+**Metrics**:
+- `ContributionModeMetrics.issues.contextWindowInefficiency.avgContextSize`
+- `ContributionModeMetrics.issues.contextWindowInefficiency.tokensPerSuccess`
+- `ContributionModeMetrics.issues.contextWindowInefficiency.missingFileRate`
+- `ContributionModeMetrics.issues.contextWindowInefficiency.efficiencyRatio`
+
+**Alert**: `contribution:issue_detected` event with `issueType: 'context-window-inefficiency'` when efficiency drops.
+
+**Intervention Strategy**: `optimize-context-discovery` - Enhance codebase discovery to find relevant files more efficiently.
+
+### Task Dependency Deadlock Detection
+
+**Issue**: Tasks getting blocked due to circular dependencies or dependency resolution issues.
+
+**Detection**:
+- Tracks tasks stuck in "pending" due to unresolved dependencies
+- Detects circular dependency patterns in task graph using DFS algorithm
+- Monitors tasks waiting longer than threshold (>30 minutes) with unresolved dependencies
+- Alerts when dependency deadlock pattern detected or average wait time exceeds threshold
+
+**Metrics**:
+- `ContributionModeMetrics.issues.taskDependencyDeadlock.blockedTasks`
+- `ContributionModeMetrics.issues.taskDependencyDeadlock.circularDependencies`
+- `ContributionModeMetrics.issues.taskDependencyDeadlock.avgWaitTime`
+
+**Alert**: `contribution:issue_detected` event with `issueType: 'task-dependency-deadlock'` when deadlock detected.
+
+**Intervention Strategy**: `resolve-dependency-deadlock` - Analyze dependency graph and suggest dependency resolution or task reordering, reset retry counts for blocked tasks.
+
+### Test Generation Quality Detection
+
+**Issue**: Generated tests consistently failing to validate requirements or missing edge cases.
+
+**Detection**:
+- Tracks test generation success rate (tests that pass on first run)
+- Monitors test coverage vs. requirements coverage
+- Detects pattern: test generated → immediately fails → indicates test quality issue
+- Alerts when test generation success rate drops below threshold (<70%) or immediate failure rate exceeds threshold (>30%)
+
+**Metrics**:
+- `ContributionModeMetrics.issues.testGenerationQuality.successRate`
+- `ContributionModeMetrics.issues.testGenerationQuality.coverageGap`
+- `ContributionModeMetrics.issues.testGenerationQuality.immediateFailureRate`
+
+**Alert**: `contribution:issue_detected` event with `issueType: 'test-generation-quality'` when quality degrades.
+
+**Intervention Strategy**: `enhance-test-generation-templates` - Improve test generation prompts and templates based on failure patterns.
+
+### Validation Gate Over-Blocking Detection
+
+**Issue**: Validation gates blocking too many valid changes, causing unnecessary retries and delays.
+
+**Detection**:
+- Tracks validation failure rate vs. actual issue rate (false positives)
+- Monitors pattern: validation fails → change is actually valid → retry succeeds
+- Tracks validation failure reasons and frequency
+- Alerts when validation false positive rate exceeds threshold (>30%)
+
+**Metrics**:
+- `ContributionModeMetrics.issues.validationGateOverBlocking.falsePositiveRate`
+- `ContributionModeMetrics.issues.validationGateOverBlocking.blockedValidChanges`
+- `ContributionModeMetrics.issues.validationGateOverBlocking.retrySuccessRate`
+
+**Alert**: `contribution:issue_detected` event with `issueType: 'validation-gate-over-blocking'` when false positive rate too high.
+
+**Intervention Strategy**: `relax-validation-gates` - Adjust validation thresholds or improve validation logic based on false positive patterns.
+
+### AI Provider Instability Detection
+
+**Issue**: AI provider responses becoming inconsistent or unreliable (timeouts, rate limits, degraded quality).
+
+**Detection**:
+- Tracks provider response time trends
+- Monitors provider error rates (timeouts, rate limits, API errors)
+- Tracks response quality degradation (JSON parsing failures, malformed responses)
+- Alerts when provider stability metrics degrade significantly (error rate >10%, timeout rate >10%, or quality trend < -10%)
+
+**Metrics**:
+- `ContributionModeMetrics.issues.aiProviderInstability.errorRate`
+- `ContributionModeMetrics.issues.aiProviderInstability.timeoutRate`
+- `ContributionModeMetrics.issues.aiProviderInstability.qualityTrend`
+
+**Alert**: `contribution:issue_detected` event with `issueType: 'ai-provider-instability'` when provider issues detected.
+
+**Intervention Strategy**: `enhance-retry-logic` or `switch-ai-provider` - Suggest fallback provider or improve retry/timeout handling.
+
+### Resource Exhaustion Detection
+
+**Issue**: System resources (memory, disk, network) being exhausted during execution.
+
+**Detection**:
+- Tracks memory usage trends during execution
+- Monitors disk space usage (especially `.devloop/` growth)
+- Tracks network timeout rates
+- Alerts when resource usage exceeds thresholds or shows rapid growth (memory/disk >80%, timeout rate >10%)
+
+**Metrics**:
+- `ContributionModeMetrics.issues.resourceExhaustion.memoryUsageTrend`
+- `ContributionModeMetrics.issues.resourceExhaustion.diskUsageTrend`
+- `ContributionModeMetrics.issues.resourceExhaustion.timeoutRate`
+
+**Alert**: `contribution:issue_detected` event with `issueType: 'resource-exhaustion'` when resources constrained.
+
+**Intervention Strategy**: `cleanup-resources` - Suggest cleanup operations, archive old metrics, or optimize resource usage.
+
+### Phase Progression Stalling Detection
+
+**Issue**: Phases getting stuck with no progress (tasks not advancing, no new tasks being processed).
+
+**Detection**:
+- Tracks phase progression rate (tasks completed per hour)
+- Monitors phases with no progress for extended periods (>60 minutes)
+- Detects pattern: phase started → no tasks completed → stalling
+- Alerts when phase progression rate drops to zero or below threshold (<0.1 tasks/hour) or stall duration exceeds threshold
+
+**Metrics**:
+- `ContributionModeMetrics.issues.phaseProgressionStalling.stalledPhases`
+- `ContributionModeMetrics.issues.phaseProgressionStalling.avgProgressRate`
+- `ContributionModeMetrics.issues.phaseProgressionStalling.stallDuration`
+
+**Alert**: `contribution:issue_detected` event with `issueType: 'phase-progression-stalling'` when phase stalls.
+
+**Intervention Strategy**: `unblock-phase` - Analyze why phase is stalled and suggest fixes (unblock tasks, resolve dependencies, etc.).
+
+### Pattern Learning Inefficacy Detection
+
+**Issue**: Pattern learning system not effectively improving outcomes (patterns matched but not applied, or applied but ineffective).
+
+**Detection**:
+- Tracks pattern match rate vs. application rate
+- Monitors pattern application success rate
+- Detects pattern: pattern matched → not applied → same error recurs
+- Alerts when pattern learning effectiveness drops below threshold (<50% match-to-application rate) or recurring pattern rate exceeds threshold (>30%)
+
+**Metrics**:
+- `ContributionModeMetrics.issues.patternLearningInefficacy.matchToApplicationRate`
+- `ContributionModeMetrics.issues.patternLearningInefficacy.applicationSuccessRate`
+- `ContributionModeMetrics.issues.patternLearningInefficacy.recurringPatternRate`
+
+**Alert**: `contribution:issue_detected` event with `issueType: 'pattern-learning-inefficacy'` when learning ineffective.
+
+**Intervention Strategy**: `enhance-pattern-learning` - Improve pattern matching logic or pattern application strategies.
+
+### Schema Validation Consistency Detection
+
+**Issue**: Schema validation producing inconsistent results or blocking valid schema operations.
+
+**Detection**:
+- Tracks schema validation success/failure patterns
+- Monitors schema validation time vs. schema complexity
+- Detects pattern: valid schema → validation fails → indicates validation issue
+- Alerts when schema validation false positive rate exceeds threshold (>20%) or validation time trend increases significantly (>1000ms)
+
+**Metrics**:
+- `ContributionModeMetrics.issues.schemaValidationConsistency.falsePositiveRate`
+- `ContributionModeMetrics.issues.schemaValidationConsistency.validationTimeTrend`
+- `ContributionModeMetrics.issues.schemaValidationConsistency.inconsistencyRate`
+
+**Alert**: `contribution:issue_detected` event with `issueType: 'schema-validation-consistency'` when inconsistencies detected.
+
+**Intervention Strategy**: `fix-schema-validation` - Improve schema validation logic based on false positive patterns.
+
 ### Using Issue Detection Metrics
 
 Issue detection metrics are automatically collected during contribution mode execution. Access them via:
@@ -196,6 +389,42 @@ if (metrics.contributionMode?.issues.moduleConfusion.detected) {
 
 if (metrics.contributionMode?.issues.sessionPollution.detected) {
   console.log(`Session pollution: ${metrics.contributionMode.issues.sessionPollution.sessionsWithMultipleModules} sessions with multiple modules`);
+}
+
+if (metrics.contributionMode?.issues.codeGenerationDegradation.detected) {
+  console.log(`Code generation degradation: ${(metrics.contributionMode.issues.codeGenerationDegradation.degradationRate * 100).toFixed(1)}% degradation`);
+}
+
+if (metrics.contributionMode?.issues.contextWindowInefficiency.detected) {
+  console.log(`Context window inefficiency: efficiency ratio ${metrics.contributionMode.issues.contextWindowInefficiency.efficiencyRatio.toFixed(4)}, missing file rate ${(metrics.contributionMode.issues.contextWindowInefficiency.missingFileRate * 100).toFixed(1)}%`);
+}
+
+if (metrics.contributionMode?.issues.taskDependencyDeadlock.detected) {
+  console.log(`Task dependency deadlock: ${metrics.contributionMode.issues.taskDependencyDeadlock.blockedTasks} blocked tasks, ${metrics.contributionMode.issues.taskDependencyDeadlock.circularDependencies.length} circular dependencies`);
+}
+
+if (metrics.contributionMode?.issues.testGenerationQuality.detected) {
+  console.log(`Test generation quality: success rate ${(metrics.contributionMode.issues.testGenerationQuality.successRate * 100).toFixed(1)}%, immediate failures ${(metrics.contributionMode.issues.testGenerationQuality.immediateFailureRate * 100).toFixed(1)}%`);
+}
+
+if (metrics.contributionMode?.issues.validationGateOverBlocking.detected) {
+  console.log(`Validation gate over-blocking: false positive rate ${(metrics.contributionMode.issues.validationGateOverBlocking.falsePositiveRate * 100).toFixed(1)}%, ${metrics.contributionMode.issues.validationGateOverBlocking.blockedValidChanges} valid changes blocked`);
+}
+
+if (metrics.contributionMode?.issues.aiProviderInstability.detected) {
+  console.log(`AI provider instability: error rate ${(metrics.contributionMode.issues.aiProviderInstability.errorRate * 100).toFixed(1)}%, timeout rate ${(metrics.contributionMode.issues.aiProviderInstability.timeoutRate * 100).toFixed(1)}%`);
+}
+
+if (metrics.contributionMode?.issues.phaseProgressionStalling.detected) {
+  console.log(`Phase progression stalling: ${metrics.contributionMode.issues.phaseProgressionStalling.stalledPhases.length} stalled phases, progress rate ${metrics.contributionMode.issues.phaseProgressionStalling.avgProgressRate.toFixed(2)} tasks/hour`);
+}
+
+if (metrics.contributionMode?.issues.patternLearningInefficacy.detected) {
+  console.log(`Pattern learning inefficacy: match-to-application rate ${(metrics.contributionMode.issues.patternLearningInefficacy.matchToApplicationRate * 100).toFixed(1)}%, recurring pattern rate ${(metrics.contributionMode.issues.patternLearningInefficacy.recurringPatternRate * 100).toFixed(1)}%`);
+}
+
+if (metrics.contributionMode?.issues.schemaValidationConsistency.detected) {
+  console.log(`Schema validation consistency: false positive rate ${(metrics.contributionMode.issues.schemaValidationConsistency.falsePositiveRate * 100).toFixed(1)}%, validation time trend ${metrics.contributionMode.issues.schemaValidationConsistency.validationTimeTrend.toFixed(0)}ms`);
 }
 ```
 
@@ -240,6 +469,16 @@ The system includes pre-configured fix strategies for common issue types:
 | Validation failures | `enhance-validation-gates` | Improves validation gates, adds recovery suggestions |
 | Contribution mode issues | `fix-contribution-mode-issue` | Fixes based on specific issue type (module confusion, session pollution, etc.) |
 | IPC connection failures | `enhance-ipc-connection` | Adds retry logic with exponential backoff |
+| Code generation degradation | `enhance-code-generation-prompts` | Analyzes failure patterns and enhances AI prompts/templates |
+| Context window inefficiency | `optimize-context-discovery` | Enhances codebase discovery to find relevant files more efficiently |
+| Task dependency deadlock | `resolve-dependency-deadlock` | Analyzes dependency graph, suggests resolution, resets retry counts |
+| Test generation quality | `enhance-test-generation-templates` | Improves test generation prompts and templates based on failure patterns |
+| Validation gate over-blocking | `relax-validation-gates` | Adjusts validation thresholds or improves logic based on false positive patterns |
+| AI provider instability | `enhance-retry-logic` or `switch-ai-provider` | Suggests fallback provider or improves retry/timeout handling |
+| Resource exhaustion | `cleanup-resources` | Suggests cleanup operations, archives old metrics, optimizes resource usage |
+| Phase progression stalling | `unblock-phase` | Analyzes why phase is stalled and suggests fixes (unblock tasks, resolve dependencies) |
+| Pattern learning inefficacy | `enhance-pattern-learning` | Improves pattern matching logic or pattern application strategies |
+| Schema validation consistency | `fix-schema-validation` | Improves schema validation logic based on false positive patterns |
 
 See [Proactive Monitoring Guide](./PROACTIVE_MONITORING.md) for detailed strategy reference and configuration.
 
@@ -393,27 +632,55 @@ Dev-loop validates boundaries programmatically:
    ```
 
 3. **Monitor Progress:**
-   - Watch dev-loop output
-   - Check task status via Task Master MCP
-   - Review test results
+   - **Monitor via event streaming**: Use `devloop_events_poll` or `devloop_event_monitor_start` to monitor `contribution:issue_detected` events
+   - Check task status via Task Master MCP: `task_master: list_tasks`
+   - Review test results: Check test execution status
+   - **DO NOT parse logs** - Use structured event streaming instead
 
 ## Watching During Execution
 
-When in contribution mode, you can watch dev-loop execution in real-time:
+When in contribution mode, the outer agent should monitor via event streaming:
 
 ```bash
 # In one terminal: Start contribution mode
 npx dev-loop contribution start --prd <path>
 
-# In another terminal: Watch execution
+# In another terminal: Start watch mode (inner agent executes)
 npx dev-loop watch --until-complete
+```
+
+**Outer Agent Monitoring (via MCP tools):**
+
+```typescript
+// Start proactive event monitoring (recommended)
+await devloop_event_monitor_start();
+
+// Or poll events manually
+let lastEventId = null;
+while (true) {
+  const { events } = await devloop_events_poll({
+    types: ['contribution:issue_detected'],
+    since: lastEventId
+  });
+  
+  for (const event of events) {
+    console.log(`Issue detected: ${event.data.issueType}`);
+    // Handle issue based on type
+  }
+  
+  lastEventId = events[events.length - 1]?.id;
+  await sleep(5000); // Poll every 5 seconds
+}
 ```
 
 This provides real-time feedback on:
 - Task execution progress
-- Parallel agent execution
+- Contribution mode issue detection (14 issue types)
 - Pattern learning observations
 - Error patterns and fixes
+- Proactive interventions and their outcomes
+
+**NOTE: Do NOT monitor via log parsing.** Use structured event streaming via MCP tools for efficient, real-time monitoring.
 
 ## Real-Time Observation
 

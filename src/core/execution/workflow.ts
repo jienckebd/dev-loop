@@ -617,6 +617,17 @@ export class WorkflowEngine {
    * Execute a single task (extracted from runOnce for parallel execution)
    */
   private async executeSingleTask(task: Task): Promise<WorkflowResult> {
+    // Track task dependencies for deadlock detection
+    if (this.contributionModeIssueDetector && (this as any).currentPrdId && task.id) {
+      const dependencies = (task as any).dependencies || [];
+      if (dependencies.length > 0) {
+        this.contributionModeIssueDetector.trackTaskDependency(
+          task.id,
+          dependencies,
+          (this as any).currentPrdId
+        );
+      }
+    }
     try {
       await this.updateState({
         status: 'executing-ai',
@@ -826,6 +837,40 @@ export class WorkflowEngine {
         }
       }
 
+      // Track context build for inefficiency detection
+      if (this.contributionModeIssueDetector && (this as any).currentPrdId) {
+        const contextSize = codebaseContext?.length || 0;
+        const parallelMetrics = getParallelMetricsTracker();
+        const currentExecution = parallelMetrics.getCurrentExecution();
+        const tokensUsed = currentExecution?.tokens.totalInput || 0;
+        const contextBuildSuccess = contextSize > 0; // Success if context was built
+        
+        // Count missing required files (files that were requested but not found in context)
+        const taskDetails = (task as any).details || '';
+        const requiredFiles = this.extractRequiredFilePaths(taskDetails);
+        let missingFiles = 0;
+        if (targetFiles) {
+          const includedFiles = targetFiles.split('\n').filter(Boolean);
+          for (const requiredPath of requiredFiles) {
+            if (requiredPath.includes('/') && (requiredPath.startsWith('docroot/') || requiredPath.startsWith('config/'))) {
+              // Check if required file is in included files
+              const found = includedFiles.some(included => included.includes(requiredPath) || requiredPath.includes(included));
+              if (!found) {
+                missingFiles++;
+              }
+            }
+          }
+        }
+        
+        this.contributionModeIssueDetector.trackContextBuild(
+          contextSize,
+          tokensUsed,
+          contextBuildSuccess,
+          missingFiles,
+          (this as any).currentPrdId
+        );
+      }
+
       // Record project metadata
       if (projectType && this.debugMetrics) {
         const framework = (this.config as any).framework?.type;
@@ -908,6 +953,26 @@ export class WorkflowEngine {
             targetFiles?.split('\n')
           );
           const patternDuration = Date.now() - patternStart;
+          
+          // Track pattern learning for inefficacy detection
+          if (this.contributionModeIssueDetector && (this as any).currentPrdId && patternGuidance) {
+            // Pattern was matched (guidance generated means patterns matched)
+            const patternMatched = patternGuidance.length > 0;
+            // Pattern is being applied (guidance included in prompt)
+            const patternApplied = patternMatched; // Guidance generation = application
+            // Pattern success will be determined after task execution (when we see if error recurs)
+            const patternSucceeded = false; // Will be updated if no error occurs
+            // Pattern recurring will be determined if same error occurs after pattern was applied
+            const patternRecurring = false; // Will be updated if error occurs again
+            
+            this.contributionModeIssueDetector.trackPatternLearning(
+              patternMatched,
+              patternApplied,
+              patternSucceeded,
+              patternRecurring,
+              (this as any).currentPrdId
+            );
+          }
           
           // Track pattern learning feature
           if (this.featureTracker && (this as any).currentPrdId && patternGuidance) {
@@ -1044,6 +1109,21 @@ export class WorkflowEngine {
       const changes = await this.aiProvider.generateCode(template, context);
       const aiCallDuration = Date.now() - aiCallStart;
 
+      // Track provider response for instability detection
+      if (this.contributionModeIssueDetector && currentPrdId) {
+        const providerError = !changes || changes.files === undefined;
+        const providerTimeout = aiCallDuration > 300000; // 5 minutes timeout
+        // Quality score based on response: 1.0 = perfect (files generated), 0.5 = partial (summary only), 0.0 = failed
+        const qualityScore = changes && changes.files && changes.files.length > 0 ? 1.0 : 
+                            (changes && changes.summary ? 0.5 : 0.0);
+        this.contributionModeIssueDetector.trackProviderResponse(
+          providerError,
+          providerTimeout,
+          qualityScore,
+          currentPrdId
+        );
+      }
+
       // Track session usage for session pollution detection
       // Extract session ID from AI provider response if available
       // Note: For cursor provider, session ID is in the response metadata
@@ -1088,6 +1168,8 @@ export class WorkflowEngine {
       if (changes.summary) {
         logger.debug(`AI summary: ${changes.summary}`);
       }
+
+      // Note: Code generation tracking with test results will be done after test execution below
 
       // CRITICAL: Filter out files outside target module BEFORE any validation
       // This prevents AI from modifying files in other modules (e.g., bd/ when target is bd_agent_chat_test/)
@@ -1262,6 +1344,20 @@ export class WorkflowEngine {
           );
         }
 
+        // Track validation for over-blocking detection
+        if (this.contributionModeIssueDetector && (this as any).currentPrdId) {
+          const validationFailed = !validationResult.valid;
+          // Check if this task is a fix task (indicates retry after previous validation failure)
+          const isFixTask = task.title?.toLowerCase().includes('fix') || task.id?.includes('fix');
+          const retrySucceeded = false; // Will be updated after retry if this is a fix task
+          
+          this.contributionModeIssueDetector.trackValidation(
+            validationFailed,
+            retrySucceeded, // Will be true if this is a fix task that succeeds
+            (this as any).currentPrdId
+          );
+        }
+
         if (!validationResult.valid) {
           logger.error('Pre-apply validation FAILED:');
           for (const error of validationResult.errors) {
@@ -1294,6 +1390,19 @@ export class WorkflowEngine {
                 error.suggestion
               );
               const patternDuration = Date.now() - patternStartTime;
+
+              // Track pattern learning - error occurred after pattern was applied (recurring pattern)
+              if (this.contributionModeIssueDetector && (this as any).currentPrdId && patternGuidance) {
+                // If pattern guidance was generated earlier, this error means pattern didn't prevent it (recurring)
+                const patternRecurring = patternGuidance.length > 0; // Pattern was applied but error still occurred
+                this.contributionModeIssueDetector.trackPatternLearning(
+                  true, // pattern matched (we're recording it)
+                  true, // pattern applied (guidance was in prompt)
+                  false, // pattern failed (error occurred)
+                  patternRecurring, // pattern recurring if guidance was present
+                  (this as any).currentPrdId
+                );
+              }
 
               // Record pattern metrics (prdId not available in this scope, skip for now)
               // Pattern metrics will be recorded at task level
@@ -1386,6 +1495,19 @@ export class WorkflowEngine {
         if (this.debugMetrics) {
           this.debugMetrics.recordValidation(true, 0);
         }
+        
+        // Track successful validation (may be a retry success if this was a fix task)
+        if (this.contributionModeIssueDetector && (this as any).currentPrdId) {
+          const isFixTask = task.title?.toLowerCase().includes('fix') || task.id?.includes('fix');
+          const retrySucceeded = isFixTask; // If this was a fix task and validation passed, it's a retry success
+          
+          this.contributionModeIssueDetector.trackValidation(
+            false, // validation did not fail
+            retrySucceeded, // true if this was a fix task that succeeded (false positive detection)
+            (this as any).currentPrdId
+          );
+        }
+        
         console.log('[WorkflowEngine] Pre-apply validation passed');
       }
 
@@ -1603,6 +1725,31 @@ export class WorkflowEngine {
       // Record test run metrics
       if (this.debugMetrics) {
         this.debugMetrics.recordTiming('testRun', testRunDuration);
+      }
+
+      // Track test generation quality and update code generation tracking with test results
+      if (this.contributionModeIssueDetector && (this as any).currentPrdId && task.id) {
+        const testPassed = testResult?.success || false;
+        // Determine if this was an immediate failure (test failed on first run)
+        const immediateFailure = !testPassed && testStrategy !== 'code'; // Code tasks don't run tests
+        
+        // Update code generation tracking with test result
+        // Note: We already tracked code generation above, but now we update with test result
+        // For accurate tracking, we should re-track with test result, but the detector maintains history
+        // So we track again with the correct test result
+        this.contributionModeIssueDetector.trackCodeGeneration(
+          task.id,
+          changes.files && changes.files.length > 0, // code generation success
+          testPassed,
+          (this as any).currentPrdId
+        );
+        
+        // Track test generation quality
+        this.contributionModeIssueDetector.trackTestGeneration(
+          testPassed,
+          immediateFailure,
+          (this as any).currentPrdId
+        );
       }
 
       // Update state: AnalyzingLogs
@@ -1940,6 +2087,23 @@ export class WorkflowEngine {
         } else {
           // Max retries exceeded - task was marked as blocked
           console.log(`[WorkflowEngine] Task ${task.id} blocked after max retries, moving to next task`);
+          
+          // Track blocked task for deadlock detection
+          if (this.contributionModeIssueDetector && (this as any).currentPrdId && task.id) {
+            const dependencies = (task as any).dependencies || [];
+            // Track task dependencies
+            this.contributionModeIssueDetector.trackTaskDependency(
+              task.id,
+              dependencies,
+              (this as any).currentPrdId
+            );
+            // Track blocked task
+            this.contributionModeIssueDetector.trackBlockedTask(
+              task.id,
+              'Max retries exceeded',
+              (this as any).currentPrdId
+            );
+          }
         }
 
         // Complete metrics with failure
@@ -1977,6 +2141,26 @@ export class WorkflowEngine {
 
       // Mark task as done
       await this.taskBridge.updateTaskStatus(task.id, 'done');
+
+      // Track phase progression after task completion
+      if (this.contributionModeIssueDetector && (this as any).currentPrdId && (this as any).currentPhaseId !== undefined) {
+        const phaseId = `${(this as any).currentPrdId}-phase-${(this as any).currentPhaseId}`;
+        // Get tasks completed in this phase from phase metrics
+        const phaseMetrics = this.phaseMetrics?.getPhaseMetrics((this as any).currentPhaseId, (this as any).currentPrdId);
+        const tasksCompleted = phaseMetrics?.tasks?.completed || 0;
+        this.contributionModeIssueDetector.trackPhaseProgression(
+          phaseId,
+          tasksCompleted,
+          (this as any).currentPrdId
+        );
+      }
+      
+      // Unblock any tasks that depended on this task
+      if (this.contributionModeIssueDetector && (this as any).currentPrdId && task.id) {
+        // When a task completes, it may unblock dependent tasks
+        // The detector will check for deadlocks after dependency tracking
+        this.contributionModeIssueDetector.unblockTask(task.id);
+      }
 
       // Complete metrics with success
       const totalDuration = Date.now() - startTime;
@@ -3964,6 +4148,16 @@ export class WorkflowEngine {
             success: true,
             timestamp: new Date().toISOString(),
           });
+          
+          // Track schema validation for consistency detection
+          if (this.contributionModeIssueDetector && prdId) {
+            this.contributionModeIssueDetector.trackSchemaValidation(
+              false, // validation did not fail
+              false, // not a false positive (validation passed)
+              schemaValidateDuration,
+              prdId
+            );
+          }
         } catch (error) {
           const schemaValidateDuration = Date.now() - schemaValidateStart;
           const errorMsg = error instanceof Error ? error.message : String(error);
@@ -3983,6 +4177,19 @@ export class WorkflowEngine {
             error: errorMsg,
             timestamp: new Date().toISOString(),
           });
+          
+          // Track schema validation for consistency detection
+          if (this.contributionModeIssueDetector && prdId) {
+            // Determine if this is a false positive (validation failed but schema is actually valid)
+            // This is hard to determine automatically, but we can track failures
+            const falsePositive = false; // Would need additional logic to detect false positives
+            this.contributionModeIssueDetector.trackSchemaValidation(
+              true, // validation failed
+              falsePositive, // TODO: Add logic to detect false positives
+              schemaValidateDuration,
+              prdId
+            );
+          }
         }
       }
 

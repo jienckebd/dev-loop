@@ -245,9 +245,85 @@ export class IssueClassifier {
    */
   private classifyContributionMode(events: DevLoopEvent[]): IssueClassification {
     const issueTypes = new Set<string>();
+    const context: Record<string, unknown> = {};
+    
     for (const event of events) {
       if (event.data.issueType && typeof event.data.issueType === 'string') {
         issueTypes.add(event.data.issueType);
+        
+        // Extract additional context from event data
+        if (event.data.degradationRate !== undefined) {
+          context.degradationRate = event.data.degradationRate;
+        }
+        if (event.data.successRateTrend !== undefined) {
+          context.successRateTrend = event.data.successRateTrend;
+        }
+        if (event.data.efficiencyRatio !== undefined) {
+          context.efficiencyRatio = event.data.efficiencyRatio;
+        }
+        if (event.data.missingFileRate !== undefined) {
+          context.missingFileRate = event.data.missingFileRate;
+        }
+        if (event.data.blockedTasks !== undefined) {
+          context.blockedTasks = event.data.blockedTasks;
+        }
+        if (event.data.circularDependencies !== undefined) {
+          context.circularDependencies = event.data.circularDependencies;
+        }
+        if (event.data.avgWaitTime !== undefined) {
+          context.avgWaitTime = event.data.avgWaitTime;
+        }
+        if (event.data.successRate !== undefined) {
+          context.successRate = event.data.successRate;
+        }
+        if (event.data.immediateFailureRate !== undefined) {
+          context.immediateFailureRate = event.data.immediateFailureRate;
+        }
+        if (event.data.falsePositiveRate !== undefined) {
+          context.falsePositiveRate = event.data.falsePositiveRate;
+        }
+        if (event.data.blockedValidChanges !== undefined) {
+          context.blockedValidChanges = event.data.blockedValidChanges;
+        }
+        if (event.data.errorRate !== undefined) {
+          context.errorRate = event.data.errorRate;
+        }
+        if (event.data.timeoutRate !== undefined) {
+          context.timeoutRate = event.data.timeoutRate;
+        }
+        if (event.data.qualityTrend !== undefined) {
+          context.qualityTrend = event.data.qualityTrend;
+        }
+        if (event.data.stalledPhases !== undefined) {
+          context.stalledPhases = event.data.stalledPhases;
+        }
+        if (event.data.avgProgressRate !== undefined) {
+          context.avgProgressRate = event.data.avgProgressRate;
+        }
+        if (event.data.stallDuration !== undefined) {
+          context.stallDuration = event.data.stallDuration;
+        }
+        if (event.data.matchToApplicationRate !== undefined) {
+          context.matchToApplicationRate = event.data.matchToApplicationRate;
+        }
+        if (event.data.applicationSuccessRate !== undefined) {
+          context.applicationSuccessRate = event.data.applicationSuccessRate;
+        }
+        if (event.data.recurringPatternRate !== undefined) {
+          context.recurringPatternRate = event.data.recurringPatternRate;
+        }
+        if (event.data.validationTimeTrend !== undefined) {
+          context.validationTimeTrend = event.data.validationTimeTrend;
+        }
+        if (event.data.inconsistencyRate !== undefined) {
+          context.inconsistencyRate = event.data.inconsistencyRate;
+        }
+        if (event.data.memoryUsageTrend !== undefined) {
+          context.memoryUsageTrend = event.data.memoryUsageTrend;
+        }
+        if (event.data.diskUsageTrend !== undefined) {
+          context.diskUsageTrend = event.data.diskUsageTrend;
+        }
       }
     }
 
@@ -255,21 +331,39 @@ export class IssueClassifier {
     const primaryIssueType = issueTypeList[0] || 'unknown';
 
     // High confidence for contribution mode issues (clear patterns)
+    // Adjust confidence based on issue type severity
     let confidence = 0.85;
     if (issueTypeList.length > 1) {
       confidence = 0.75; // Multiple issue types reduce confidence
     }
+    
+    // Adjust confidence based on issue type
+    const criticalIssues = ['boundary-violations', 'change:unauthorized', 'task-dependency-deadlock'];
+    if (criticalIssues.includes(primaryIssueType)) {
+      confidence = 0.90; // Higher confidence for critical issues
+    }
+    
+    // Adjust severity based on issue type
+    let severity: 'low' | 'medium' | 'high' | 'critical' = 'high';
+    if (criticalIssues.includes(primaryIssueType)) {
+      severity = 'critical';
+    } else if (['code-generation-degradation', 'ai-provider-instability'].includes(primaryIssueType)) {
+      severity = 'high';
+    } else if (['context-window-inefficiency', 'validation-gate-over-blocking', 'pattern-learning-inefficacy'].includes(primaryIssueType)) {
+      severity = 'medium';
+    }
 
     return {
-      issueType: primaryIssueType,
+      issueType: 'contribution:issue_detected', // Use consistent issue type for strategy lookup
       category: 'contribution-mode',
       confidence,
-      severity: 'high',
+      severity,
       pattern: `Contribution mode issue: ${primaryIssueType} (${issueTypeList.length} types detected)`,
       suggestedAction: `fix-${primaryIssueType.replace(/-/g, '-')}`,
       context: {
         issueTypes: issueTypeList,
-        primaryIssueType,
+        primaryIssueType, // Store actual issue type in context
+        ...context,
       },
     };
   }
@@ -372,7 +466,8 @@ export class IssueClassifier {
     let maxCount = 0;
     let mostCommon: string | null = null;
 
-    for (const [value, count] of counts.entries()) {
+    for (const value of Array.from(counts.keys())) {
+      const count = counts.get(value) || 0;
       if (count > maxCount) {
         maxCount = count;
         mostCommon = value;

@@ -155,11 +155,12 @@ Control whether the inner agent requires approval:
 
 Dev-loop emits structured events for efficient contribution mode monitoring:
 
-- **Event Types**: `file:filtered`, `validation:failed`, `task:blocked`, `change:unauthorized`, `change:reverted`, `intervention:triggered`, `intervention:successful`, `intervention:failed`, `intervention:rolled_back`
+- **Event Types**: `file:filtered`, `validation:failed`, `task:blocked`, `change:unauthorized`, `change:reverted`, `contribution:issue_detected`, `intervention:triggered`, `intervention:successful`, `intervention:failed`, `intervention:rolled_back`
 - **MCP Tools**: Use `devloop_events_poll`, `devloop_events_latest`, `devloop_blocked_tasks`, `devloop_filtered_files`, `devloop_issues`
 - **Proactive Event Monitoring**: Automated event monitoring service that triggers interventions when thresholds are exceeded
 - **Enhanced Observation Tools**: Pattern detection, session analysis, context gap detection, dependency graph visualization
 - **Early File Filtering**: Files outside `targetModule` are filtered before validation, reducing error noise
+- **Comprehensive Issue Detection**: 14 issue types automatically detected and alerted via event streaming (module confusion, session pollution, boundary violations, context loss, code generation degradation, context window inefficiency, task dependency deadlock, test generation quality, validation over-blocking, AI provider instability, resource exhaustion, phase progression stalling, pattern learning inefficacy, schema validation consistency)
 
 **Proactive Monitoring Tools:**
 - `devloop_event_monitor_start` - Start proactive event monitoring service

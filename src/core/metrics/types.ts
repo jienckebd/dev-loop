@@ -333,6 +333,78 @@ export interface ContributionModeMetrics {
       rate: number; // % of tasks
       alertThreshold: number; // e.g., 0.01 (1%)
     };
+    codeGenerationDegradation: {
+      detected: boolean;
+      successRateTrend: number; // Trend in success rate (negative = degrading)
+      testPassRateTrend: number; // Trend in test pass rate
+      degradationRate: number; // % degradation from baseline
+      alertThreshold: number; // e.g., 0.20 (20% degradation)
+      trendWindowHours: number; // Time window for trend analysis
+    };
+    contextWindowInefficiency: {
+      detected: boolean;
+      avgContextSize: number; // Average context window size
+      tokensPerSuccess: number; // Average tokens per successful task
+      missingFileRate: number; // % of tasks with missing file errors
+      efficiencyRatio: number; // success rate / tokens per task
+      alertThreshold: number; // Minimum acceptable efficiency ratio
+    };
+    taskDependencyDeadlock: {
+      detected: boolean;
+      blockedTasks: number; // Tasks stuck due to dependencies
+      circularDependencies: string[]; // Detected circular dependency paths
+      avgWaitTime: number; // Average wait time in minutes
+      alertThreshold: number; // Max wait time in minutes (e.g., 30)
+    };
+    testGenerationQuality: {
+      detected: boolean;
+      successRate: number; // Tests that pass on first run
+      coverageGap: number; // Gap between test coverage and requirements coverage
+      immediateFailureRate: number; // Tests that fail immediately after generation
+      alertThreshold: number; // Minimum success rate (e.g., 0.70 = 70%)
+    };
+    validationGateOverBlocking: {
+      detected: boolean;
+      falsePositiveRate: number; // % of validation failures that are false positives
+      blockedValidChanges: number; // Count of valid changes blocked
+      retrySuccessRate: number; // Success rate after validation retry
+      alertThreshold: number; // Max false positive rate (e.g., 0.30 = 30%)
+    };
+    aiProviderInstability: {
+      detected: boolean;
+      errorRate: number; // % of API calls that error
+      timeoutRate: number; // % of API calls that timeout
+      qualityTrend: number; // Trend in response quality (negative = degrading)
+      alertThreshold: number; // Max error rate (e.g., 0.10 = 10%)
+    };
+    resourceExhaustion: {
+      detected: boolean;
+      memoryUsageTrend: number; // Trend in memory usage (positive = increasing)
+      diskUsageTrend: number; // Trend in disk usage (positive = increasing)
+      timeoutRate: number; // Network timeout rate
+      alertThreshold: number; // Max resource usage threshold
+    };
+    phaseProgressionStalling: {
+      detected: boolean;
+      stalledPhases: string[]; // Phase IDs that are stalled
+      avgProgressRate: number; // Tasks completed per hour
+      stallDuration: number; // Duration of current stall in minutes
+      alertThreshold: number; // Min progress rate (tasks/hour) or max stall duration (minutes)
+    };
+    patternLearningInefficacy: {
+      detected: boolean;
+      matchToApplicationRate: number; // % of matched patterns that are applied
+      applicationSuccessRate: number; // % of applied patterns that succeed
+      recurringPatternRate: number; // % of patterns that recur after matching
+      alertThreshold: number; // Min match-to-application rate (e.g., 0.50 = 50%)
+    };
+    schemaValidationConsistency: {
+      detected: boolean;
+      falsePositiveRate: number; // % of validation failures that are false positives
+      validationTimeTrend: number; // Trend in validation time (positive = increasing)
+      inconsistencyRate: number; // % of inconsistent validation results
+      alertThreshold: number; // Max false positive rate (e.g., 0.20 = 20%)
+    };
   };
 }
 
@@ -686,6 +758,78 @@ export function createDefaultContributionModeMetrics(): ContributionModeMetrics 
         totalTasks: 0,
         rate: 0,
         alertThreshold: 0.01, // 1%
+      },
+      codeGenerationDegradation: {
+        detected: false,
+        successRateTrend: 0,
+        testPassRateTrend: 0,
+        degradationRate: 0,
+        alertThreshold: 0.20, // 20% degradation
+        trendWindowHours: 24,
+      },
+      contextWindowInefficiency: {
+        detected: false,
+        avgContextSize: 0,
+        tokensPerSuccess: 0,
+        missingFileRate: 0,
+        efficiencyRatio: 0,
+        alertThreshold: 0.001, // Minimum efficiency ratio
+      },
+      taskDependencyDeadlock: {
+        detected: false,
+        blockedTasks: 0,
+        circularDependencies: [],
+        avgWaitTime: 0,
+        alertThreshold: 30, // 30 minutes
+      },
+      testGenerationQuality: {
+        detected: false,
+        successRate: 0,
+        coverageGap: 0,
+        immediateFailureRate: 0,
+        alertThreshold: 0.70, // 70%
+      },
+      validationGateOverBlocking: {
+        detected: false,
+        falsePositiveRate: 0,
+        blockedValidChanges: 0,
+        retrySuccessRate: 0,
+        alertThreshold: 0.30, // 30%
+      },
+      aiProviderInstability: {
+        detected: false,
+        errorRate: 0,
+        timeoutRate: 0,
+        qualityTrend: 0,
+        alertThreshold: 0.10, // 10%
+      },
+      resourceExhaustion: {
+        detected: false,
+        memoryUsageTrend: 0,
+        diskUsageTrend: 0,
+        timeoutRate: 0,
+        alertThreshold: 0.80, // 80% resource usage
+      },
+      phaseProgressionStalling: {
+        detected: false,
+        stalledPhases: [],
+        avgProgressRate: 0,
+        stallDuration: 0,
+        alertThreshold: 60, // 60 minutes or 0.1 tasks/hour
+      },
+      patternLearningInefficacy: {
+        detected: false,
+        matchToApplicationRate: 0,
+        applicationSuccessRate: 0,
+        recurringPatternRate: 0,
+        alertThreshold: 0.50, // 50%
+      },
+      schemaValidationConsistency: {
+        detected: false,
+        falsePositiveRate: 0,
+        validationTimeTrend: 0,
+        inconsistencyRate: 0,
+        alertThreshold: 0.20, // 20%
       },
     },
   };
