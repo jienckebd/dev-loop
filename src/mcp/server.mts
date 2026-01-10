@@ -559,6 +559,58 @@ try {
 }
 
 // ============================================
+// Event Streaming Tools
+// ============================================
+
+// Import and register event tools
+try {
+  const { registerEventTools } = await import('./tools/events.js');
+  registerEventTools(mcp);
+} catch (error) {
+  console.error('Failed to register event tools:', error);
+  // Continue without event tools if import fails
+}
+
+// ============================================
+// Observation Tools
+// ============================================
+
+// Import and register observation tools
+try {
+  const { registerObservationTools } = await import('./tools/observations.js');
+  registerObservationTools(mcp);
+} catch (error) {
+  console.error('Failed to register observation tools:', error);
+  // Continue without observation tools if import fails
+}
+
+// ============================================
+// Metrics Tools
+// ============================================
+
+// Import and register metrics tools
+try {
+  const { registerMetricsTools } = await import('./tools/metrics.js');
+  registerMetricsTools(mcp);
+} catch (error) {
+  console.error('Failed to register metrics tools:', error);
+  // Continue without metrics tools if import fails
+}
+
+// ============================================
+// Contribution Mode Tools
+// ============================================
+
+// Import and register contribution mode tools
+try {
+  const { registerContributionModeTools } = await import('./tools/contribution-mode.js');
+  registerContributionModeTools(mcp);
+} catch (error) {
+  console.error('Failed to register contribution mode tools:', error);
+  // Continue without contribution mode tools if import fails
+}
+
+// ============================================
 // Proactive Event Monitoring Tools (5)
 // ============================================
 
