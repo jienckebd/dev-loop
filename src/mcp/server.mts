@@ -190,6 +190,22 @@ function addLoggedTool(tool: { name: string; description: string; parameters: an
   mcp.addTool(tool);
 }
 
+// Create a wrapper object that provides server.tool() method for compatibility
+// with tool registration functions that use server.tool() API
+const serverWrapper = {
+  tool: (name: string, description: string, parameters: any, execute: any) => {
+    addLoggedTool({
+      name,
+      description,
+      parameters,
+      execute,
+    });
+  },
+  addTool: (tool: { name: string; description: string; parameters: any; execute: any }) => {
+    addLoggedTool(tool);
+  },
+};
+
 // ============================================
 // Core Workflow Tools (5)
 // ============================================
@@ -540,7 +556,7 @@ addLoggedTool({
 // Cursor AI Tools (2)
 // ============================================
 
-// Import and register Cursor AI tools
+// Import and register Cursor AI tools (uses mcp.addTool directly, not server.tool)
 try {
   const { registerCursorAITools } = await import('./tools/cursor-ai.js');
   registerCursorAITools(mcp);
@@ -549,7 +565,7 @@ try {
   // Continue without Cursor AI tools if import fails
 }
 
-// Import and register Cursor Chat tools
+// Import and register Cursor Chat tools (uses mcp.addTool directly, not server.tool)
 try {
   const { registerCursorChatTools } = await import('./tools/cursor-chat.js');
   registerCursorChatTools(mcp);
@@ -565,7 +581,7 @@ try {
 // Import and register event tools
 try {
   const { registerEventTools } = await import('./tools/events.js');
-  registerEventTools(mcp);
+  registerEventTools(serverWrapper);
 } catch (error) {
   console.error('Failed to register event tools:', error);
   // Continue without event tools if import fails
@@ -578,7 +594,7 @@ try {
 // Import and register observation tools
 try {
   const { registerObservationTools } = await import('./tools/observations.js');
-  registerObservationTools(mcp);
+  registerObservationTools(serverWrapper);
 } catch (error) {
   console.error('Failed to register observation tools:', error);
   // Continue without observation tools if import fails
@@ -591,7 +607,7 @@ try {
 // Import and register metrics tools
 try {
   const { registerMetricsTools } = await import('./tools/metrics.js');
-  registerMetricsTools(mcp);
+  registerMetricsTools(serverWrapper);
 } catch (error) {
   console.error('Failed to register metrics tools:', error);
   // Continue without metrics tools if import fails
@@ -604,7 +620,7 @@ try {
 // Import and register contribution mode tools
 try {
   const { registerContributionModeTools } = await import('./tools/contribution-mode.js');
-  registerContributionModeTools(mcp);
+  registerContributionModeTools(serverWrapper);
 } catch (error) {
   console.error('Failed to register contribution mode tools:', error);
   // Continue without contribution mode tools if import fails
@@ -617,7 +633,7 @@ try {
 // Import and register event monitoring tools
 try {
   const { registerEventMonitoringTools } = await import('./tools/event-monitoring.js');
-  registerEventMonitoringTools(mcp);
+  registerEventMonitoringTools(serverWrapper);
 } catch (error) {
   console.error('Failed to register event monitoring tools:', error);
   // Continue without event monitoring tools if import fails
@@ -630,7 +646,7 @@ try {
 // Import and register enhanced observation tools
 try {
   const { registerObservationEnhancedTools } = await import('./tools/observation-enhanced.js');
-  registerObservationEnhancedTools(mcp);
+  registerObservationEnhancedTools(serverWrapper);
 } catch (error) {
   console.error('Failed to register enhanced observation tools:', error);
   // Continue without enhanced observation tools if import fails
