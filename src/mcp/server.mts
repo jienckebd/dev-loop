@@ -558,6 +558,32 @@ try {
   // Continue without Cursor Chat tools if import fails
 }
 
+// ============================================
+// Proactive Event Monitoring Tools (5)
+// ============================================
+
+// Import and register event monitoring tools
+try {
+  const { registerEventMonitoringTools } = await import('./tools/event-monitoring.js');
+  registerEventMonitoringTools(mcp);
+} catch (error) {
+  console.error('Failed to register event monitoring tools:', error);
+  // Continue without event monitoring tools if import fails
+}
+
+// ============================================
+// Enhanced Observation Tools (5)
+// ============================================
+
+// Import and register enhanced observation tools
+try {
+  const { registerObservationEnhancedTools } = await import('./tools/observation-enhanced.js');
+  registerObservationEnhancedTools(mcp);
+} catch (error) {
+  console.error('Failed to register enhanced observation tools:', error);
+  // Continue without enhanced observation tools if import fails
+}
+
 // Start the MCP server
 mcp.start({ transportType: 'stdio' }).catch((error) => {
   console.error('Failed to start MCP server:', error);
