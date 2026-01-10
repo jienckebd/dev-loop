@@ -957,30 +957,11 @@ export class WorkflowEngine {
       // ENHANCEMENT: Add target module boundary warning to prompt
       const promptTargetModule = (this as any).currentPrdTargetModule;
       let moduleBoundaryGuidance = '';
-      if (promptTargetModule) {
-        moduleBoundaryGuidance = `## ⚠️ CRITICAL: TARGET MODULE BOUNDARY ⚠️
-
-**You MUST ONLY modify files in module: \`${promptTargetModule}\`**
-
-All file paths MUST be within: \`docroot/modules/share/${promptTargetModule}/\`
-
-❌ FORBIDDEN - Do NOT create or modify files in other modules:
-- docroot/modules/share/bd/... (wrong module)
-- docroot/modules/share/bd_devloop_enhancement_test/... (wrong module)
-- docroot/modules/share/design_system/... (wrong module)
-- Any path not containing /${promptTargetModule}/
-
-✅ ALLOWED - Only these paths are permitted:
-- docroot/modules/share/${promptTargetModule}/${promptTargetModule}.info.yml
-- docroot/modules/share/${promptTargetModule}/${promptTargetModule}.module
-- docroot/modules/share/${promptTargetModule}/${promptTargetModule}.services.yml
-- docroot/modules/share/${promptTargetModule}/${promptTargetModule}.routing.yml
-- docroot/modules/share/${promptTargetModule}/src/**/*.php
-- docroot/modules/share/${promptTargetModule}/config/**/*.yml
-
-Files outside the target module will be REJECTED. Do not waste tokens on them.
-
-`;
+      if (promptTargetModule && this.frameworkPlugin) {
+        // Use framework plugin for boundary warning if available
+        if (this.frameworkPlugin.generateModuleBoundaryWarning) {
+          moduleBoundaryGuidance = this.frameworkPlugin.generateModuleBoundaryWarning(promptTargetModule);
+        }
       }
 
       // ENHANCEMENT: Inject target module into task description to prevent module confusion
@@ -989,7 +970,15 @@ Files outside the target module will be REJECTED. Do not waste tokens on them.
       const hasTargetModule = !!(promptTargetModule && enhancedDescription.includes(promptTargetModule));
       
       if (promptTargetModule && !enhancedDescription.includes(promptTargetModule)) {
-        enhancedDescription = `[TARGET MODULE: ${promptTargetModule}] ${enhancedDescription}\n\nIMPORTANT: All file paths MUST be within docroot/modules/share/${promptTargetModule}/`;
+        // Use framework plugin for paths if available
+        let targetModulePaths = '';
+        if (this.frameworkPlugin?.getTargetModulePaths) {
+          const paths = this.frameworkPlugin.getTargetModulePaths(promptTargetModule);
+          targetModulePaths = paths.length > 0 ? paths[0] : promptTargetModule;
+        } else {
+          targetModulePaths = promptTargetModule;
+        }
+        enhancedDescription = `[TARGET MODULE: ${promptTargetModule}] ${enhancedDescription}\n\nIMPORTANT: All file paths MUST be within ${targetModulePaths}`;
       }
 
       // Track target module context presence
@@ -2361,19 +2350,27 @@ Files outside the target module will be REJECTED. Do not waste tokens on them.
       }
     }
 
-    // Allow files in the module directory (various path patterns)
-    const modulePatterns = [
-      `modules/share/${targetModule}/`,
-      `modules/${targetModule}/`,
-      `docroot/modules/share/${targetModule}/`,
-      `docroot/modules/${targetModule}/`,
-      `web/modules/share/${targetModule}/`,
-      `web/modules/${targetModule}/`,
-    ];
-
-    for (const pattern of modulePatterns) {
-      if (normalizedPath.includes(pattern)) {
-        return true;
+    // Use framework plugin for module path patterns if available
+    if (this.frameworkPlugin?.getTargetModulePaths) {
+      const modulePatterns = this.frameworkPlugin.getTargetModulePaths(targetModule);
+      for (const pattern of modulePatterns) {
+        if (normalizedPath.includes(pattern)) {
+          return true;
+        }
+      }
+    } else {
+      // Fallback: generic module patterns
+      const modulePatterns = [
+        `modules/${targetModule}/`,
+        `src/${targetModule}/`,
+        `lib/${targetModule}/`,
+        `app/${targetModule}/`,
+        `packages/${targetModule}/`,
+      ];
+      for (const pattern of modulePatterns) {
+        if (normalizedPath.includes(pattern)) {
+          return true;
+        }
       }
     }
 
@@ -2412,34 +2409,30 @@ Files outside the target module will be REJECTED. Do not waste tokens on them.
     // Extract the filename
     const filename = path.basename(filePath);
 
+    // Use framework plugin for module paths if available
+    let targetModulePath = targetModule;
+    if (this.frameworkPlugin?.getTargetModulePaths) {
+      const paths = this.frameworkPlugin.getTargetModulePaths(targetModule);
+      targetModulePath = paths.length > 0 ? paths[0] : targetModule;
+    }
+
     // Common patterns and their corrections
-    if (filePath.includes('modules/share/') && !filePath.includes(`modules/share/${targetModule}/`)) {
-      const wrongModule = filePath.match(/modules\/share\/([^/]+)/)?.[1];
-      if (wrongModule) {
-        return `File is in module "${wrongModule}" but target is "${targetModule}". ` +
-               `Did you mean: docroot/modules/share/${targetModule}/src/.../${filename}?`;
-      }
+    const modulePattern = new RegExp(`modules/(?:share/)?([^/]+)/`, 'i');
+    const match = filePath.match(modulePattern);
+    if (match && match[1] !== targetModule) {
+      const wrongModule = match[1];
+      return `File is in module "${wrongModule}" but target is "${targetModule}". ` +
+             `Did you mean: ${targetModulePath}src/.../${filename}?`;
     }
 
-    if (filePath.includes('.module') || filePath.includes('.info.yml')) {
-      return `Module file should be: docroot/modules/share/${targetModule}/${targetModule}${path.extname(filePath)}`;
-    }
-
-    if (filePath.includes('/src/Plugin/')) {
-      const pluginType = filePath.match(/Plugin\/([^/]+)/)?.[1];
-      return `Plugin file should be in: docroot/modules/share/${targetModule}/src/Plugin/${pluginType || 'Type'}/${filename}`;
-    }
-
-    if (filePath.includes('/tests/') || filePath.includes('.spec.ts') || filePath.includes('.test.ts')) {
-      return `Test file should be in: tests/playwright/${targetModule}/${filename}`;
-    }
-
-    if (filePath.includes('/config/')) {
-      return `Config file should include module name: config/default/${targetModule}.*.yml`;
+    // Framework-specific guidance if available
+    if (this.frameworkPlugin?.getTargetModuleGuidance) {
+      const guidance = this.frameworkPlugin.getTargetModuleGuidance(targetModule);
+      return `File outside target module.\n\n${guidance}`;
     }
 
     // Generic suggestion
-    return `File should be within: docroot/modules/share/${targetModule}/ or tests/playwright/${targetModule}/`;
+    return `File should be within: ${targetModulePath} or tests/${targetModule}/`;
   }
 
   /**

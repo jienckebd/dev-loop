@@ -411,4 +411,79 @@ When task details specify an EXACT file path to create (e.g., "Create config/def
       },
     ];
   }
+
+  // ===== Target Module Operations (For Contribution Mode) =====
+
+  getTargetModulePaths(targetModule: string): string[] {
+    // Return all valid Drupal module path patterns for the given module
+    return [
+      `docroot/modules/share/${targetModule}/`,
+      `docroot/modules/custom/${targetModule}/`,
+      `web/modules/share/${targetModule}/`,
+      `web/modules/custom/${targetModule}/`,
+    ];
+  }
+
+  getTargetModuleGuidance(targetModule: string): string {
+    return `
+## Drupal Module Structure
+
+In Drupal, all custom module code must be organized within a specific directory structure:
+
+**Allowed paths for module "${targetModule}":**
+- \`docroot/modules/share/${targetModule}/\` (preferred for shared modules)
+- \`docroot/modules/custom/${targetModule}/\` (for custom modules)
+- \`web/modules/share/${targetModule}/\` (alternate docroot)
+- \`web/modules/custom/${targetModule}/\` (alternate docroot)
+
+**Standard Drupal module files:**
+- \`${targetModule}.info.yml\` - Module metadata (required)
+- \`${targetModule}.module\` - Module hook implementations
+- \`${targetModule}.services.yml\` - Service definitions
+- \`${targetModule}.routing.yml\` - Route definitions
+- \`${targetModule}.permissions.yml\` - Permission definitions
+- \`src/\` - PHP class files (PSR-4 autoloaded)
+- \`config/schema/\` - Configuration schema definitions
+- \`config/install/\` - Default configuration
+
+**Do NOT create files in:**
+- Other modules (e.g., \`docroot/modules/share/bd/\` if targetModule is not "bd")
+- Contrib modules (\`docroot/modules/contrib/\`)
+- Core (\`docroot/core/\`)
+`;
+  }
+
+  generateModuleBoundaryWarning(targetModule: string): string {
+    const paths = this.getTargetModulePaths(targetModule);
+    const allowedPaths = paths.map(p => `- ${p}**/*.{php,yml,module,install,theme,twig}`).join('\n');
+    const forbiddenExamples = [
+      'docroot/modules/share/bd/',
+      'docroot/modules/share/design_system/',
+      'docroot/modules/share/entity_form_wizard/',
+      'docroot/modules/contrib/',
+      'docroot/core/',
+    ].filter(p => !p.includes(`/${targetModule}/`))
+     .map(p => `- ${p} (wrong module or forbidden area)`)
+     .join('\n');
+
+    return `## ⚠️ CRITICAL: TARGET MODULE BOUNDARY ⚠️
+
+**You MUST ONLY modify files in module: \`${targetModule}\`**
+
+✅ **ALLOWED - Only these paths are permitted:**
+${allowedPaths}
+
+❌ **FORBIDDEN - Do NOT create or modify files in:**
+${forbiddenExamples}
+
+**Drupal-specific rules:**
+1. All file paths must start with one of the allowed prefixes above
+2. File paths must use forward slashes (/)
+3. PHP classes must follow PSR-4 namespace: \\Drupal\\${targetModule}\\...
+4. Configuration files go in config/install/ or config/schema/
+5. Hook implementations go in ${targetModule}.module file
+
+**Files outside the target module will be REJECTED. Do not waste tokens on them.**
+`;
+  }
 }

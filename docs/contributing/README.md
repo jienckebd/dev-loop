@@ -63,6 +63,4 @@ Dev-loop includes a comprehensive metrics and reporting system. When adding new 
 - Track feature usage via `FeatureTracker`
 - Track schema operations via `SchemaTracker`
 - Record errors via `ErrorAnalyzer`
-- Generate reports via `PrdReportGenerator`
-
-See [`../users/METRICS.md`](../users/METRICS.md) for user-facing documentation.
+- Generate reports via `PrdReportGenerator`See [`../users/METRICS.md`](../users/METRICS.md) for user-facing documentation.

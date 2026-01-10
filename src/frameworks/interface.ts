@@ -294,6 +294,34 @@ export interface FrameworkPlugin {
    * @returns Array of recommendation patterns
    */
   getRecommendationPatterns?(): RecommendationPattern[];
+
+  // ===== Target Module Operations (For Contribution Mode) =====
+
+  /**
+   * Get valid paths for a target module.
+   * Used for boundary enforcement and file filtering in contribution mode.
+   * @param targetModule The module name (e.g., 'bd', 'design_system')
+   * @returns Array of valid path patterns for the module
+   * @example For Drupal: ['docroot/modules/share/bd/', 'docroot/modules/custom/bd/']
+   */
+  getTargetModulePaths?(targetModule: string): string[];
+
+  /**
+   * Get framework-specific guidance for working within a target module.
+   * Used in AI prompts to provide context-specific instructions.
+   * @param targetModule The module name
+   * @returns Guidance text for the AI agent
+   * @example 'In Drupal, all custom module code must be under docroot/modules/share/{module}/'
+   */
+  getTargetModuleGuidance?(targetModule: string): string;
+
+  /**
+   * Generate a module boundary warning for AI prompts.
+   * Used to provide prominent boundary warnings in contribution mode.
+   * @param targetModule The module name
+   * @returns Formatted warning text with allowed/forbidden paths
+   */
+  generateModuleBoundaryWarning?(targetModule: string): string;
 }
 
 /**

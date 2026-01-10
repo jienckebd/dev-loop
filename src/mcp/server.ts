@@ -14,6 +14,7 @@ import { registerPlaywrightTDDTools } from './tools/playwright-tdd';
 import { registerEventTools } from './tools/events';
 import { registerObservationTools } from './tools/observations';
 import { registerMetricsTools } from './tools/metrics';
+import { registerContributionModeTools } from './tools/contribution-mode';
 
 // Load .env file from project root before anything else
 // This ensures API keys are available when config loads
@@ -107,6 +108,7 @@ async function main() {
   registerEventTools(mcp);
   registerObservationTools(mcp);
   registerMetricsTools(mcp);
+  registerContributionModeTools(mcp);
 
   // Start the MCP server with stdio transport
   await mcp.start({ transportType: 'stdio' });

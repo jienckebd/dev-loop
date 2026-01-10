@@ -116,4 +116,63 @@ Return JSON with code changes:
       /\bexport\s+(?:default\s+)?(?:function|class|const)\s+([a-zA-Z_][a-zA-Z0-9_]*)/g,
     ];
   }
+
+  // ===== Target Module Operations (For Contribution Mode) =====
+
+  getTargetModulePaths(targetModule: string): string[] {
+    // Generic fallback - common project structures
+    return [
+      `src/${targetModule}/`,
+      `lib/${targetModule}/`,
+      `app/${targetModule}/`,
+      `packages/${targetModule}/`,
+      `modules/${targetModule}/`,
+    ];
+  }
+
+  getTargetModuleGuidance(targetModule: string): string {
+    return `
+## Module Structure
+
+All code for module "${targetModule}" should be organized within a module directory:
+
+**Typical paths for module "${targetModule}":**
+- \`src/${targetModule}/\` (source code)
+- \`lib/${targetModule}/\` (library code)
+- \`app/${targetModule}/\` (application code)
+- \`packages/${targetModule}/\` (monorepo packages)
+- \`modules/${targetModule}/\` (modular architecture)
+
+**Do NOT create files in:**
+- Other modules (check path starts with correct module name)
+- Root directory (use appropriate module subdirectory)
+- Build/dist directories
+`;
+  }
+
+  generateModuleBoundaryWarning(targetModule: string): string {
+    const paths = this.getTargetModulePaths(targetModule);
+    const allowedPaths = paths.map(p => `- ${p}**/*`).join('\n');
+
+    return `## ⚠️ CRITICAL: TARGET MODULE BOUNDARY ⚠️
+
+**You MUST ONLY modify files in module: \`${targetModule}\`**
+
+✅ **ALLOWED - Only these paths are permitted:**
+${allowedPaths}
+
+❌ **FORBIDDEN - Do NOT create or modify files in:**
+- Other module directories
+- Root directory files (unless specifically part of this module)
+- node_modules/, vendor/, dist/, build/ directories
+
+**General rules:**
+1. All file paths must start with one of the allowed prefixes above
+2. Keep module code self-contained within module directory
+3. Use relative imports within the module
+4. Avoid cross-module dependencies when possible
+
+**Files outside the target module will be REJECTED. Do not waste tokens on them.**
+`;
+  }
 }

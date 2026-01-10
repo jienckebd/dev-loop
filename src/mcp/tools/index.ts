@@ -17,3 +17,4 @@ export { registerControlTools } from './control';
 export { registerContributionTools } from './contribution';
 export { registerCursorAITools } from './cursor-ai';
 export { registerCursorChatTools } from './cursor-chat';
+export { registerContributionModeTools } from './contribution-mode';
