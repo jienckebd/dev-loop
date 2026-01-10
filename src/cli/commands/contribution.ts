@@ -79,6 +79,19 @@ export async function contributionCommand(options: {
       };
 
       await saveContributionModeState(state);
+      
+      // Start event monitoring service if enabled in config
+      const config = await loadConfig(options.config);
+      const eventMonitoringEnabled = (config.mcp as any)?.eventMonitoring?.enabled;
+      
+      if (eventMonitoringEnabled) {
+        const { initializeEventMonitor, setMonitorService } = await import('../../core/monitoring/event-monitor');
+        const monitor = initializeEventMonitor(config);
+        setMonitorService(monitor);
+        monitor.start();
+        console.log(chalk.green('✓ Proactive event monitoring service started'));
+      }
+      
       spinner.succeed('Contribution mode activated');
 
       console.log(chalk.cyan('\n╔════════════════════════════════════════════════════════════╗'));
@@ -138,6 +151,28 @@ export async function contributionCommand(options: {
         console.log(`  Blocked: ${status.blockedTasks}`);
         console.log(`  Tests Passing: ${status.testsPassing ? chalk.green('Yes') : chalk.red('No')}`);
 
+        // Check event monitoring status
+        const eventMonitoringEnabled = (config.mcp as any)?.eventMonitoring?.enabled;
+        if (eventMonitoringEnabled) {
+          try {
+            const { getInterventionMetricsTracker } = await import('../../core/metrics/intervention-metrics');
+            const tracker = getInterventionMetricsTracker();
+            const metrics = tracker.getMetrics();
+            
+            console.log(chalk.cyan('\nEvent Monitoring Status:'));
+            console.log(`  Enabled: ${chalk.green('Yes')}`);
+            console.log(`  Total Interventions: ${metrics.totalInterventions}`);
+            console.log(`  Success Rate: ${(metrics.successRate * 100).toFixed(1)}%`);
+            console.log(`  Successful: ${chalk.green(metrics.successfulInterventions)}`);
+            console.log(`  Failed: ${chalk.red(metrics.failedInterventions)}`);
+            console.log(`  Rolled Back: ${chalk.yellow(metrics.rolledBackInterventions)}`);
+          } catch (error) {
+            console.log(chalk.yellow('\nCould not load event monitoring status'));
+          }
+        } else {
+          console.log(chalk.cyan('\nEvent Monitoring:') + chalk.gray(' Disabled'));
+        }
+
         if (await tracker.isComplete()) {
           console.log(chalk.green('\n✓ PRD is 100% complete!'));
         } else {
@@ -158,6 +193,23 @@ export async function contributionCommand(options: {
         active: false,
       };
 
+      // Stop event monitoring service if running
+      try {
+        const config = await loadConfig(options.config);
+        const eventMonitoringEnabled = (config.mcp as any)?.eventMonitoring?.enabled;
+        
+        if (eventMonitoringEnabled) {
+          const { getMonitorService } = await import('../../core/monitoring/event-monitor');
+          const monitor = getMonitorService();
+          if (monitor) {
+            monitor.stop();
+            console.log(chalk.yellow('Event monitoring service stopped'));
+          }
+        }
+      } catch (error) {
+        // Ignore errors when stopping monitoring
+      }
+      
       await saveContributionModeState(stoppedState);
       spinner.succeed('Contribution mode deactivated');
       console.log(chalk.green('Contribution mode is now inactive'));

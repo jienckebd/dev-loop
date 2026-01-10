@@ -53,9 +53,7 @@ Dev-loop is an autonomous development orchestrator that transforms PRDs into val
 - **Framework-agnostic** - Keep dev-loop core framework-agnostic. Framework-specific behavior belongs in plugins or project config.
 - **Test-driven** - All features should include tests.
 - **Documentation** - Update relevant documentation when adding features.
-- **Metrics** - New features should integrate with the hierarchical metrics system (PRD Set → PRD → Phase → Task) for tracking and reporting.
-
-## Metrics and Reporting
+- **Metrics** - New features should integrate with the hierarchical metrics system (PRD Set → PRD → Phase → Task) for tracking and reporting.## Metrics and Reporting
 
 Dev-loop includes a comprehensive metrics and reporting system. When adding new features:
 

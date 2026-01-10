@@ -53,7 +53,22 @@ export type EventType =
   | 'ipc:connection_retry'
   | 'ipc:health_check'
   // Contribution mode issues
-  | 'contribution:issue_detected';
+  | 'contribution:issue_detected'
+  | 'contribution:fix_applied'
+  | 'contribution:agent_unblocked'
+  | 'contribution:agent_reset'
+  // Intervention events (proactive monitoring)
+  | 'intervention:triggered'
+  | 'intervention:successful'
+  | 'intervention:failed'
+  | 'intervention:rolled_back'
+  | 'intervention:approval_required'
+  | 'intervention:rate_limited'
+  | 'intervention:possible_regression'
+  | 'intervention:fix_applied'
+  | 'intervention:error'
+  | 'intervention:threshold_exceeded'
+  | 'intervention:issue_prevented';
 
 export type EventSeverity = 'info' | 'warn' | 'error' | 'critical';
 

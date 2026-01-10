@@ -714,3 +714,69 @@ export function createDefaultTokenBreakdown(): TokenBreakdown {
   };
 }
 
+// Intervention Metrics
+export interface InterventionMetrics {
+  totalInterventions: number;
+  successfulInterventions: number;
+  failedInterventions: number;
+  rolledBackInterventions: number;
+  successRate: number;
+  byIssueType: Record<string, {
+    count: number;
+    successful: number;
+    failed: number;
+    rolledBack: number;
+    avgFixTimeMs: number;
+    effectiveness: number; // success / (success + failed + rolledBack)
+  }>;
+  byEventType: Record<string, {
+    interventions: number;
+    preventedIssues: number; // Issues prevented by intervention
+    avgPreventionTimeMs: number;
+  }>;
+  patterns: {
+    mostEffectiveStrategies: Array<{ strategy: string; successRate: number }>;
+    leastEffectiveStrategies: Array<{ strategy: string; successRate: number }>;
+    commonFailureModes: Array<{ issueType: string; failureReason: string; count: number }>;
+  };
+  timing: {
+    avgDetectionTimeMs: number; // Time from event to intervention
+    avgFixTimeMs: number; // Time from intervention to fix applied
+    avgValidationTimeMs: number; // Time to validate fix effectiveness
+    totalTimeMs: number;
+  };
+  thresholds: {
+    exceededCount: number; // Number of times thresholds were exceeded
+    preventedCount: number; // Number of issues prevented by interventions
+    falsePositives: number; // Interventions that weren't needed
+  };
+}
+
+export function createDefaultInterventionMetrics(): InterventionMetrics {
+  return {
+    totalInterventions: 0,
+    successfulInterventions: 0,
+    failedInterventions: 0,
+    rolledBackInterventions: 0,
+    successRate: 0,
+    byIssueType: {},
+    byEventType: {},
+    patterns: {
+      mostEffectiveStrategies: [],
+      leastEffectiveStrategies: [],
+      commonFailureModes: [],
+    },
+    timing: {
+      avgDetectionTimeMs: 0,
+      avgFixTimeMs: 0,
+      avgValidationTimeMs: 0,
+      totalTimeMs: 0,
+    },
+    thresholds: {
+      exceededCount: 0,
+      preventedCount: 0,
+      falsePositives: 0,
+    },
+  };
+}
+

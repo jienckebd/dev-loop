@@ -212,9 +212,7 @@ export interface AgentConfig {
     prdSetId?: string | null;
     taskId?: string;
   };
-}
-
-/**
+}/**
  * Chat request for creating visible chat sessions in Cursor IDE
  */
 export interface ChatRequest {

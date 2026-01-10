@@ -145,6 +145,10 @@ export class EventMetricBridge {
         this.updateValidationMetrics(event, prdId, phaseId);
       } else if (event.type.startsWith('ipc:')) {
         this.updateIpcMetrics(event, prdId, phaseId);
+      } else if (event.type.startsWith('intervention:')) {
+        // Intervention metrics are handled by InterventionMetricsTracker directly
+        // Just mark PRD for save if it has intervention context
+        this.pendingSaves.add(prdId);
       }
 
       // Update phase/PRD timing if applicable

@@ -73,6 +73,108 @@ const configSchemaBase = z.object({
   taskMaster: z.object({
     tasksPath: z.string(),
   }),
+  // MCP (Model Context Protocol) configuration
+  mcp: z.object({
+    // Event monitoring configuration for proactive intervention
+    eventMonitoring: z.object({
+      enabled: z.boolean().default(false),
+      pollingInterval: z.number().default(5000).describe('Polling interval in milliseconds'),
+      thresholds: z.record(z.object({
+        count: z.number().optional().describe('Number of events before triggering'),
+        rate: z.number().optional().describe('Percentage rate (0-1) before triggering'),
+        windowMs: z.number().optional().describe('Time window in milliseconds (0 = no time limit)'),
+        autoAction: z.boolean().default(false).describe('Whether to auto-execute fix'),
+        confidence: z.number().min(0).max(1).default(0.7).describe('Confidence level required (0-1)'),
+      })).optional(),
+      actions: z.object({
+        requireApproval: z.array(z.string()).default([]).describe('Events that require approval before action'),
+        autoExecute: z.array(z.string()).default([]).describe('Events that can auto-execute'),
+        maxInterventionsPerHour: z.number().default(10).describe('Rate limiting for interventions'),
+      }).optional(),
+      metrics: z.object({
+        trackInterventions: z.boolean().default(true),
+        trackSuccessRate: z.boolean().default(true),
+        trackRollbacks: z.boolean().default(true),
+      }).optional(),
+    }).optional(),
+    // MCP adapter configurations (for future open source MCP integration)
+    adapters: z.object({
+      filesystem: z.object({
+        enabled: z.boolean().default(false),
+        allowedPaths: z.array(z.string()).optional(),
+        readOnlyPaths: z.array(z.string()).optional(),
+        tddIntegration: z.object({
+          enabled: z.boolean().default(false),
+          testFilePatterns: z.array(z.string()).optional(),
+          implementationFilePatterns: z.array(z.string()).optional(),
+          comparePairs: z.boolean().default(true),
+          trackCoverage: z.boolean().default(true),
+        }).optional(),
+      }).optional(),
+      git: z.object({
+        enabled: z.boolean().default(false),
+        devloopPath: z.string().default('node_modules/dev-loop'),
+        autoCommit: z.boolean().default(false),
+        validateBeforeCommit: z.boolean().default(true),
+        tddValidation: z.object({
+          enabled: z.boolean().default(false),
+          enforceTestFirst: z.boolean().default(true),
+          checkCommitOrder: z.boolean().default(true),
+          maxTimeBetweenCommits: z.number().default(3600),
+        }).optional(),
+      }).optional(),
+      playwright: z.object({
+        enabled: z.boolean().default(false),
+        browser: z.enum(['chromium', 'firefox', 'webkit']).default('chromium'),
+        headless: z.boolean().default(true),
+        screenshotOnFailure: z.boolean().default(true),
+        traceOnFailure: z.boolean().default(true),
+        tddIntegration: z.object({
+          enabled: z.boolean().default(false),
+          testFirstExecution: z.boolean().default(true),
+          generateTestsFromBrowser: z.boolean().default(true),
+          visualRegression: z.boolean().default(true),
+          traceAnalysis: z.boolean().default(true),
+          testGeneration: z.object({
+            recordInteractions: z.boolean().default(true),
+            generateAssertions: z.boolean().default(true),
+            framework: z.string().default('playwright'),
+          }).optional(),
+        }).optional(),
+      }).optional(),
+      database: z.object({
+        enabled: z.boolean().default(false),
+        type: z.string().optional(),
+        connectionString: z.string().optional(),
+        readOnly: z.boolean().default(true),
+        tddIntegration: z.object({
+          enabled: z.boolean().default(false),
+          schemaValidation: z.boolean().default(true),
+          stateReset: z.boolean().default(true),
+          dataSeeding: z.boolean().default(true),
+        }).optional(),
+      }).optional(),
+    }).optional(),
+    // MCP tools configuration
+    tools: z.object({
+      observation: z.object({
+        enabled: z.boolean().default(true),
+        patternDetection: z.boolean().default(true),
+      }).optional(),
+      testAutomation: z.object({
+        enabled: z.boolean().default(true),
+        testFirst: z.boolean().default(true),
+      }).optional(),
+      codeQuality: z.object({
+        enabled: z.boolean().default(true),
+        realTime: z.boolean().default(false),
+      }).optional(),
+      workflowOrchestration: z.object({
+        enabled: z.boolean().default(true),
+        parallelControl: z.boolean().default(true),
+      }).optional(),
+    }).optional(),
+  }).optional(),
   hooks: z.object({
     preTest: z.array(z.string()).optional(),
     postTest: z.array(z.string()).optional(),

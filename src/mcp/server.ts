@@ -109,6 +109,14 @@ async function main() {
   registerObservationTools(mcp);
   registerMetricsTools(mcp);
   registerContributionModeTools(mcp);
+  
+  // Register proactive event monitoring tools
+  const { registerEventMonitoringTools } = await import('./tools/event-monitoring');
+  registerEventMonitoringTools(mcp);
+  
+  // Register enhanced observation tools
+  const { registerObservationEnhancedTools } = await import('./tools/observation-enhanced');
+  registerObservationEnhancedTools(mcp);
 
   // Start the MCP server with stdio transport
   await mcp.start({ transportType: 'stdio' });
