@@ -6,7 +6,7 @@
  */
 
 import { AIProvider, AIProviderConfig } from './interface';
-import { CodeChanges, TaskContext, LogAnalysis } from '../../types';
+import { CodeChanges, TaskContext, LogAnalysis, Task, TaskType } from '../../types';
 import { logger } from "../../core/utils/logger";
 import { executeCursorGenerateCode } from '../../mcp/tools/cursor-ai';
 import { generateAgentConfig } from './cursor-agent-generator';
@@ -124,11 +124,36 @@ export class CursorProvider implements AIProvider {
 
         if (result.success && result.response) {
           const codeChanges = this.extractCodeChangesFromResponse(result.response, context);
+          const taskType = context.task.taskType || this.inferTaskTypeFromTask(context.task);
+          const isAnalysisTask = taskType === 'analysis' || taskType === 'investigate';
+          
           if (codeChanges) {
-            logger.info(`[CursorProvider] Successfully received code changes from background agent: ${codeChanges.files.length} files`);
-            return codeChanges;
-          } else {
-            logger.warn(`[CursorProvider] Background agent succeeded but no CodeChanges extracted`);
+            // For analysis tasks, empty files array is valid - return immediately
+            if (isAnalysisTask && codeChanges.files.length === 0) {
+              logger.info(`[CursorProvider] Analysis task completed successfully with summary: ${codeChanges.summary?.substring(0, 100) || 'no summary'}`);
+              return codeChanges;
+            }
+            
+            // For code generation tasks, empty files array should trigger retry
+            if (!isAnalysisTask && codeChanges.files.length === 0) {
+              logger.warn(`[CursorProvider] Code generation task returned empty files array, will retry`);
+              // Fall through to retry logic below
+            } else {
+              // Task has files - success
+              logger.info(`[CursorProvider] Successfully received code changes from background agent: ${codeChanges.files.length} files`);
+              return codeChanges;
+            }
+          }
+          
+          // For analysis tasks with no codeChanges (null), return empty result as success
+          if (!codeChanges && isAnalysisTask) {
+            logger.info(`[CursorProvider] Analysis task completed with no code changes extracted (valid for analysis tasks)`);
+            return { files: [], summary: 'Analysis completed with no code changes extracted' };
+          }
+          
+          // Retry logic: only retry if codeChanges is null (and not analysis task) OR if it's a code generation task with empty files
+          if (!codeChanges || (!isAnalysisTask && codeChanges && codeChanges.files.length === 0)) {
+            logger.warn(`[CursorProvider] ${codeChanges ? 'Code generation task returned empty files' : 'Background agent succeeded but no CodeChanges extracted'}, will retry`);
             // Retry with stricter JSON instruction (up to 2 retries)
             const maxRetries = 2;
             for (let retryAttempt = 1; retryAttempt <= maxRetries; retryAttempt++) {
@@ -144,14 +169,27 @@ export class CursorProvider implements AIProvider {
               if (retryResult.success && retryResult.response) {
                 const retryChanges = this.extractCodeChangesFromResponse(retryResult.response, context);
                 if (retryChanges) {
-                  logger.info(`[CursorProvider] Retry ${retryAttempt} succeeded: ${retryChanges.files.length} files`);
-                  return retryChanges;
+                  // Check task type again for retry response
+                  const retryTaskType = context.task.taskType || this.inferTaskTypeFromTask(context.task);
+                  const retryIsAnalysisTask = retryTaskType === 'analysis' || retryTaskType === 'investigate';
+                  
+                  // For analysis tasks, empty files is valid
+                  if (retryIsAnalysisTask && retryChanges.files.length === 0) {
+                    logger.info(`[CursorProvider] Retry ${retryAttempt} succeeded for analysis task with summary`);
+                    return retryChanges;
+                  }
+                  
+                  // For code generation tasks, only return if files exist
+                  if (!retryIsAnalysisTask && retryChanges.files.length > 0) {
+                    logger.info(`[CursorProvider] Retry ${retryAttempt} succeeded: ${retryChanges.files.length} files`);
+                    return retryChanges;
+                  }
                 }
               }
             }
 
-            // AI Fallback: Use AI to extract from the original response
-            if (shouldUseAiFallback(result.response)) {
+            // AI Fallback: Use AI to extract from the original response (only for code generation tasks)
+            if (!isAnalysisTask && shouldUseAiFallback(result.response)) {
               logger.info(`[CursorProvider] Attempting AI-assisted extraction fallback`);
               try {
                 const aiFallbackChanges = await extractCodeChangesWithAiFallback(
@@ -178,19 +216,32 @@ export class CursorProvider implements AIProvider {
                   { providerName: 'cursor', taskId: context.task.id }
                 );
 
-                if (aiFallbackChanges && aiFallbackChanges.files.length > 0) {
-                  logger.info(`[CursorProvider] AI fallback succeeded: ${aiFallbackChanges.files.length} files`);
-                  return aiFallbackChanges;
+                // For analysis tasks, accept empty files; for code generation, require files
+                if (aiFallbackChanges) {
+                  if (isAnalysisTask && aiFallbackChanges.files.length === 0) {
+                    logger.info(`[CursorProvider] AI fallback succeeded for analysis task with summary`);
+                    return aiFallbackChanges;
+                  } else if (!isAnalysisTask && aiFallbackChanges.files.length > 0) {
+                    logger.info(`[CursorProvider] AI fallback succeeded: ${aiFallbackChanges.files.length} files`);
+                    return aiFallbackChanges;
+                  }
                 }
               } catch (fallbackError) {
                 logger.warn(`[CursorProvider] AI fallback failed: ${fallbackError}`);
               }
             }
 
-            // HALT: JSON parsing failed after all retries and AI fallback
-            const haltError = this.createJsonParsingHaltError(context, maxRetries, result.response);
-            logger.error(haltError.message);
-            throw haltError;
+            // HALT: JSON parsing failed after all retries and AI fallback (only for code generation tasks)
+            // Analysis tasks with empty files should not reach here
+            if (!isAnalysisTask) {
+              const haltError = this.createJsonParsingHaltError(context, maxRetries, result.response);
+              logger.error(haltError.message);
+              throw haltError;
+            } else {
+              // Analysis task with no codeChanges - return empty result as success
+              logger.info(`[CursorProvider] Analysis task completed with no code changes (valid for analysis tasks)`);
+              return { files: [], summary: 'Analysis completed with no code changes required' };
+            }
           }
         } else {
           logger.warn(`[CursorProvider] Background agent failed: ${result.message}`);
@@ -396,6 +447,56 @@ export class CursorProvider implements AIProvider {
       projectType: (this.config as any).projectType,
     };
     return extractCodeChanges(response, this.observationTracker, parsingContext);
+  }
+
+  /**
+   * Infer task type from task title and description
+   * Similar to TaskMasterBridge.inferTaskType but implemented here for cursor provider
+   */
+  private inferTaskTypeFromTask(task: Task): TaskType {
+    // Return explicit task type if set
+    if (task.taskType) {
+      return task.taskType;
+    }
+
+    const title = (task.title || '').toLowerCase();
+    const description = (task.description || '').toLowerCase();
+    const combined = `${title} ${description}`;
+
+    // Investigation/analysis tasks
+    if (
+      combined.includes('investigate') ||
+      combined.includes('investigation') ||
+      combined.includes('analyze') ||
+      combined.includes('analysis') ||
+      combined.includes('why') ||
+      combined.includes('root cause') ||
+      combined.includes('diagnose') ||
+      combined.includes('debug')
+    ) {
+      // If it's asking to investigate a failure, it's an investigate task
+      if (combined.includes('failure') || combined.includes('error') || combined.includes('issue')) {
+        return 'investigate';
+      }
+      // Otherwise it's a general analysis
+      return 'analysis';
+    }
+
+    // Fix tasks (fixing existing code)
+    if (
+      title.startsWith('fix') ||
+      title.startsWith('fix:') ||
+      combined.includes('fix') ||
+      combined.includes('resolve') ||
+      combined.includes('correct') ||
+      combined.includes('repair') ||
+      combined.includes('patch')
+    ) {
+      return 'fix';
+    }
+
+    // Generate tasks (creating new code) - default
+    return 'generate';
   }
 
   /**

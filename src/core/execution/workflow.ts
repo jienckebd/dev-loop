@@ -2,6 +2,7 @@ import * as fs from 'fs-extra';
 import * as path from 'path';
 import { exec } from 'child_process';
 import { promisify } from 'util';
+import * as crypto from 'crypto';
 import { Config } from '../../config/schema/core';
 import { Task, WorkflowState, CodeChanges, TaskContext } from '../../types';
 import { TaskMasterBridge } from './task-bridge';
@@ -89,6 +90,14 @@ export class WorkflowEngine {
   private rootCauseAnalyzer?: any; // RootCauseAnalyzer
   private shutdownRequested = false;
   private debug = false;
+  // Stall detection: track test failures per test signature across iterations
+  private testFailureHistory: Map<string, { iterations: number; firstSeen: number; lastSeen: number; testSignature: string }> = new Map();
+  // Progress tracking: track test pass count across iterations
+  private iterationPassCounts: number[] = [];
+  // Phase 6: Investigation consolidation - track investigation attempts per test signature
+  private investigationAttempts: Map<string, { attempts: number; firstAttempt: number; lastAttempt: number; learnings: string[]; testSignature: string }> = new Map();
+  // Phase 7: Token budget tracking - track cumulative token usage per PRD execution
+  private tokenUsage: Map<string, { cumulativeTokens: number; startTime: number; lastUpdated: number }> = new Map();
 
   constructor(private config: Config) {
     this.debug = (config as any).debug || false;
@@ -106,6 +115,10 @@ export class WorkflowEngine {
     if (this.debug) {
       logger.debug('Debug mode enabled');
     }
+    
+    // Phase 7: Load token usage from persistent storage
+    this.loadTokenUsage();
+    
     this.taskBridge = new TaskMasterBridge(config);
     this.stateManager = new StateManager(config);
     this.templateManager = new TemplateManager(
@@ -715,18 +728,48 @@ export class WorkflowEngine {
               // Get target files first (needed for investigation tasks)
               const { targetFiles: invTargetFiles } = await this.getCodebaseContext(task);
 
-              const invTasks = this.investigationTaskGenerator.generateInvestigationTasks(combinedDescription, {
-                framework,
-                components: this.extractComponentsFromError(combinedDescription),
-                targetFiles: invTargetFiles?.split('\n').filter(f => f.trim()),
-                previousFixAttempts: await this.getPreviousFixAttempts(task.id),
-              });
+              // Phase 6: Check if we need to consolidate investigations (before generating tasks)
+              // Extract test signature if this is related to a test failure
+              // Note: This is a simplified version - in production, you'd track actual investigation task failures
+              const testSignature = task.description?.toLowerCase().includes('test') || task.title?.toLowerCase().includes('test') 
+                ? this.createTestSignature(task.description || task.title, task.title || '')
+                : null;
+              
+              const shouldConsolidate = testSignature && this.shouldConsolidateInvestigations(testSignature, task.id);
+              
+              let invTasks: any[] = [];
+              if (shouldConsolidate) {
+                // Phase 6: Create consolidated investigation task
+                const consolidatedTask = await this.createConsolidatedInvestigationTask(
+                  testSignature,
+                  task.id,
+                  combinedDescription,
+                  invTargetFiles
+                );
+                if (consolidatedTask) {
+                  // Use consolidated task instead of generating new ones
+                  invTasks = [consolidatedTask];
+                  logger.info(`[WorkflowEngine] Created consolidated investigation task after ${this.getInvestigationAttemptCount(testSignature)} attempts`);
+                }
+              } else {
+                // Normal investigation task generation
+                invTasks = this.investigationTaskGenerator.generateInvestigationTasks(combinedDescription, {
+                  framework,
+                  components: this.extractComponentsFromError(combinedDescription),
+                  targetFiles: invTargetFiles?.split('\n').filter(f => f.trim()),
+                  previousFixAttempts: await this.getPreviousFixAttempts(task.id),
+                });
+              }
 
               if (invTasks.length > 0) {
                 console.log(`[WorkflowEngine] Task requires investigation - creating ${invTasks.length} investigation task(s) first`);
                 for (const invTask of invTasks) {
                   const taskMasterTask = this.investigationTaskGenerator.toTaskMasterTask(invTask, task.id);
-                  await this.taskBridge.createTask(taskMasterTask as any);
+                  const createdTask = await this.taskBridge.createTask(taskMasterTask as any);
+                  // Phase 6: Track investigation attempt (only for non-consolidated tasks)
+                  if (testSignature && createdTask && !shouldConsolidate) {
+                    this.trackInvestigationAttempt(testSignature, task.id, createdTask.id, combinedDescription);
+                  }
                   if (this.debug) {
                     console.log(`[WorkflowEngine] Created investigation task: ${invTask.title}`);
                   }
@@ -1151,6 +1194,9 @@ export class WorkflowEngine {
           const totalOutput = currentExecution.tokens.totalOutput;
           if (totalInput > 0 || totalOutput > 0) {
             this.debugMetrics.recordTokens(totalInput, totalOutput);
+            // Phase 7: Track token budget per PRD execution
+            const prdId = (this as any).currentPrdId || 'default';
+            this.trackTokenBudget(totalInput + totalOutput, prdId);
           }
         }
 
@@ -1160,6 +1206,9 @@ export class WorkflowEngine {
           const tokens = (this.aiProvider as any).getLastTokens();
           if (tokens.input || tokens.output) {
             this.debugMetrics!.recordTokens(tokens.input || 0, tokens.output || 0);
+            // Phase 7: Track token budget per PRD execution
+            const prdId = (this as any).currentPrdId || 'default';
+            this.trackTokenBudget((tokens.input || 0) + (tokens.output || 0), prdId);
           }
         }
       }
@@ -1860,6 +1909,11 @@ export class WorkflowEngine {
         (logAnalysis && logAnalysis.errors.length > 0) ||
         (smokeTestResult && !smokeTestResult.success);
 
+      // Phase 4: Stall Detection - track test failures per test signature
+      if (relevantTestFailure && !testResult.success && testResult.output) {
+        this.trackTestFailure(testResult.output, task.id);
+      }
+
       if (hasErrors) {
         try {
         // Create fix task
@@ -1912,19 +1966,44 @@ export class WorkflowEngine {
 
             // Generate investigation tasks if needed
             if (classification.needsInvestigation) {
-              investigationTasks = this.investigationTaskGenerator.generateInvestigationTasks(errorDescription, {
-                framework,
-                components: this.extractComponentsFromError(errorDescription),
-                targetFiles: targetFiles?.split('\n').filter(f => f.trim()),
-                previousFixAttempts: await this.getPreviousFixAttempts(task.id),
-              });
+              // Phase 6: Check if we need to consolidate investigations
+              const testSignature = relevantTestFailure && testResult.output ? this.createTestSignature(testResult.output, testResult.output.split('\n')[0] || '') : null;
+              const shouldConsolidate = testSignature && this.shouldConsolidateInvestigations(testSignature, task.id);
+              
+              if (shouldConsolidate) {
+                // Phase 6: Create consolidated investigation task with full history
+                const consolidatedTask = await this.createConsolidatedInvestigationTask(
+                  testSignature!,
+                  task.id,
+                  enhancedErrorDescription,
+                  targetFiles
+                );
+                if (consolidatedTask) {
+                  // Replace investigation tasks with consolidated task
+                  investigationTasks = [consolidatedTask];
+                  logger.info(`[WorkflowEngine] Created consolidated investigation task for test signature: ${testSignature.substring(0, 100)} after ${this.getInvestigationAttemptCount(testSignature)} attempts`);
+                }
+              } else {
+                // Normal investigation task creation
+                investigationTasks = this.investigationTaskGenerator.generateInvestigationTasks(enhancedErrorDescription, {
+                  framework,
+                  components: this.extractComponentsFromError(errorDescription),
+                  targetFiles: targetFiles?.split('\n').filter(f => f.trim()),
+                  previousFixAttempts: await this.getPreviousFixAttempts(task.id),
+                });
 
-              // Create investigation tasks first
-              for (const invTask of investigationTasks) {
-                const taskMasterTask = this.investigationTaskGenerator.toTaskMasterTask(invTask, task.id);
-                await this.taskBridge.createTask(taskMasterTask as any);
-                if (this.debug) {
-                  console.log(`[WorkflowEngine] Created investigation task: ${invTask.title}`);
+                // Create investigation tasks first
+                for (const invTask of investigationTasks) {
+                  const taskMasterTask = this.investigationTaskGenerator.toTaskMasterTask(invTask, task.id);
+                  const createdTask = await this.taskBridge.createTask(taskMasterTask as any);
+                  // Phase 6: Track investigation attempt (simplified - tracks creation, not failure)
+                  // In production, you'd track actual investigation task failures
+                  if (testSignature && createdTask) {
+                    this.trackInvestigationAttempt(testSignature, task.id, createdTask.id, enhancedErrorDescription);
+                  }
+                  if (this.debug) {
+                    console.log(`[WorkflowEngine] Created investigation task: ${invTask.title}`);
+                  }
                 }
               }
             }
@@ -4542,6 +4621,9 @@ export class WorkflowEngine {
 
       console.log(`[WorkflowEngine] Tests: ${testResult.passed}/${testResult.total} passing`);
 
+      // Phase 5: Progress Requirement - track test pass count across iterations
+      this.trackProgress(testResult.passed, testResult.total, prdId);
+
       // Analyze failures
       const analysisStartTime = Date.now();
       const analysis = await failureAnalyzer.analyze(testResult, context);
@@ -5110,6 +5192,409 @@ export class WorkflowEngine {
         logger.debug(`[WorkflowEngine] Phase validation error:`, error);
       }
     }
+  }
+
+  /**
+   * Phase 4: Track test failure for stall detection
+   * Creates a test signature from test output and tracks failures per signature
+   */
+  private trackTestFailure(testOutput: string, taskId: string): void {
+    // Extract test signature from output (first 200 chars + hash of first error line)
+    const firstLine = testOutput.split('\n')[0] || '';
+    const testSignature = this.createTestSignature(testOutput, firstLine);
+    
+    const now = Date.now();
+    const existing = this.testFailureHistory.get(testSignature);
+    
+    if (existing) {
+      // Increment failure count for this test
+      existing.iterations++;
+      existing.lastSeen = now;
+    } else {
+      // First failure for this test
+      this.testFailureHistory.set(testSignature, {
+        iterations: 1,
+        firstSeen: now,
+        lastSeen: now,
+        testSignature,
+      });
+    }
+
+    // Check for stall: same test failing for N iterations (default: 3)
+    const maxIterations = (this.config as any).stall?.maxIterationsPerTest || 3;
+    const failureRecord = this.testFailureHistory.get(testSignature);
+    
+    if (failureRecord && failureRecord.iterations >= maxIterations) {
+      // Test has stalled - emit event
+      logger.warn(
+        `[WorkflowEngine] Test stalled: same test failing for ${failureRecord.iterations} iterations. ` +
+        `Test signature: ${testSignature.substring(0, 100)}`
+      );
+      
+      emitEvent('test:stalled', {
+        testSignature: testSignature.substring(0, 500), // Limit size
+        testOutputPreview: testOutput.substring(0, 500),
+        iterations: failureRecord.iterations,
+        firstSeen: new Date(failureRecord.firstSeen).toISOString(),
+        lastSeen: new Date(failureRecord.lastSeen).toISOString(),
+        taskId,
+        prdId: (this as any).currentPrdId,
+        phaseId: (this as any).currentPhaseId,
+        maxIterations,
+      }, {
+        severity: 'warn',
+        taskId,
+        prdId: (this as any).currentPrdId,
+      });
+    }
+  }
+
+  /**
+   * Phase 5: Track progress across iterations
+   * Tracks test pass count and detects when no progress is made
+   */
+  private trackProgress(passing: number, total: number, prdId?: string): void {
+    // Store pass count for this iteration
+    this.iterationPassCounts.push(passing);
+    
+    // Keep only last 10 iterations for analysis
+    if (this.iterationPassCounts.length > 10) {
+      this.iterationPassCounts.shift();
+    }
+
+    // Need at least 2 iterations to check for progress
+    if (this.iterationPassCounts.length < 2) {
+      return;
+    }
+
+    // Check for no progress: last N iterations have same or lower pass count
+    const maxNoProgressIterations = (this.config as any).progress?.maxNoProgressIterations || 5;
+    
+    if (this.iterationPassCounts.length >= maxNoProgressIterations) {
+      // Check last N iterations
+      const recentCounts = this.iterationPassCounts.slice(-maxNoProgressIterations);
+      const firstCount = recentCounts[0];
+      const lastCount = recentCounts[recentCounts.length - 1];
+      const allSame = recentCounts.every(count => count === firstCount);
+      const noImprovement = lastCount <= firstCount;
+
+      if (allSame || noImprovement) {
+        // No progress detected - emit event
+        logger.warn(
+          `[WorkflowEngine] Progress stalled: test pass count has not improved over ${maxNoProgressIterations} iterations. ` +
+          `Pass counts: ${recentCounts.join(', ')} (current: ${passing}/${total})`
+        );
+
+        emitEvent('progress:stalled', {
+          passing,
+          total,
+          passRate: total > 0 ? (passing / total) * 100 : 0,
+          iterations: maxNoProgressIterations,
+          recentPassCounts: recentCounts,
+          firstPassCount: firstCount,
+          lastPassCount: lastCount,
+          prdId,
+          timestamp: new Date().toISOString(),
+          maxNoProgressIterations,
+        }, {
+          severity: 'warn',
+          prdId,
+        });
+      }
+    }
+  }
+
+  /**
+   * Phase 7: Track token budget per PRD execution
+   * Tracks cumulative token usage and emits warnings/halts at thresholds
+   */
+  private trackTokenBudget(tokensUsed: number, prdId: string): void {
+    if (tokensUsed <= 0) {
+      return; // No tokens to track
+    }
+
+    const now = Date.now();
+    const existing = this.tokenUsage.get(prdId);
+    
+    if (existing) {
+      // Add to cumulative usage
+      existing.cumulativeTokens += tokensUsed;
+      existing.lastUpdated = now;
+    } else {
+      // First token usage for this PRD
+      this.tokenUsage.set(prdId, {
+        cumulativeTokens: tokensUsed,
+        startTime: now,
+        lastUpdated: now,
+      });
+    }
+
+    const usage = this.tokenUsage.get(prdId)!;
+    const maxTokens = (this.config as any).budget?.maxTokensPerExecution || 5000000; // Default 5M tokens
+    const warningThreshold = maxTokens * 0.8; // 80% of budget
+    const haltThreshold = maxTokens; // 100% of budget
+
+    // Check for 80% warning threshold
+    if (usage.cumulativeTokens >= warningThreshold && usage.cumulativeTokens < haltThreshold) {
+      // Only emit warning once (check if we've already warned)
+      const lastWarning = (usage as any).lastWarningAt;
+      if (!lastWarning || now - lastWarning > 60000) { // Warn once per minute max
+        logger.warn(
+          `[WorkflowEngine] Token budget warning: ${usage.cumulativeTokens.toLocaleString()}/${maxTokens.toLocaleString()} tokens used (${((usage.cumulativeTokens / maxTokens) * 100).toFixed(1)}%)`
+        );
+
+        emitEvent('token_budget:warning', {
+          cumulativeTokens: usage.cumulativeTokens,
+          maxTokens,
+          percentage: (usage.cumulativeTokens / maxTokens) * 100,
+          remainingTokens: maxTokens - usage.cumulativeTokens,
+          prdId,
+          timestamp: new Date(now).toISOString(),
+        }, {
+          severity: 'warn',
+          prdId,
+        });
+
+        (usage as any).lastWarningAt = now;
+        this.saveTokenUsage(); // Persist warning state
+      }
+    }
+
+    // Check for 100% halt threshold
+    if (usage.cumulativeTokens >= haltThreshold) {
+      logger.error(
+        `[WorkflowEngine] Token budget EXCEEDED: ${usage.cumulativeTokens.toLocaleString()}/${maxTokens.toLocaleString()} tokens used (100%+)`
+      );
+
+      emitEvent('token_budget:exceeded', {
+        cumulativeTokens: usage.cumulativeTokens,
+        maxTokens,
+        percentage: (usage.cumulativeTokens / maxTokens) * 100,
+        overage: usage.cumulativeTokens - maxTokens,
+        prdId,
+        timestamp: new Date(now).toISOString(),
+      }, {
+        severity: 'error',
+        prdId,
+      });
+
+      this.saveTokenUsage(); // Persist before halt
+
+      // Halt execution - throw error to stop workflow
+      throw new Error(
+        `Token budget exceeded: ${usage.cumulativeTokens.toLocaleString()} tokens used (max: ${maxTokens.toLocaleString()}). ` +
+        `PRD execution halted to prevent excessive token usage.`
+      );
+    }
+
+    // Save token usage periodically (every 100K tokens or every 5 minutes)
+    const shouldSave = !(usage as any).lastSavedAt || 
+                       now - (usage as any).lastSavedAt > 300000 || // 5 minutes
+                       tokensUsed > 100000; // Large token usage
+    if (shouldSave) {
+      this.saveTokenUsage();
+      (usage as any).lastSavedAt = now;
+    }
+  }
+
+  /**
+   * Phase 7: Save token usage to persistent storage
+   */
+  private saveTokenUsage(): void {
+    try {
+      const tokenUsagePath = path.resolve(process.cwd(), '.devloop/token-usage.json');
+      fs.ensureDirSync(path.dirname(tokenUsagePath));
+
+      // Convert Map to object for JSON serialization
+      const usageData: Record<string, { cumulativeTokens: number; startTime: number; lastUpdated: number; prdId?: string }> = {};
+      for (const [prdId, usage] of this.tokenUsage.entries()) {
+        usageData[prdId] = {
+          ...usage,
+          prdId, // Include PRD ID in data
+        };
+      }
+
+      // Atomic write: write to temp file then rename
+      const tempPath = `${tokenUsagePath}.${process.pid}.${Date.now()}.tmp`;
+      fs.writeFileSync(tempPath, JSON.stringify(usageData, null, 2), 'utf-8');
+      fs.renameSync(tempPath, tokenUsagePath);
+    } catch (error) {
+      logger.warn(`[WorkflowEngine] Failed to save token usage: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
+
+  /**
+   * Phase 7: Load token usage from persistent storage
+   */
+  private loadTokenUsage(): void {
+    try {
+      const tokenUsagePath = path.resolve(process.cwd(), '.devloop/token-usage.json');
+      if (fs.existsSync(tokenUsagePath)) {
+        const content = fs.readFileSync(tokenUsagePath, 'utf-8');
+        const usageData = JSON.parse(content) as Record<string, { cumulativeTokens: number; startTime: number; lastUpdated: number }>;
+        
+        // Restore Map from object
+        for (const [prdId, usage] of Object.entries(usageData)) {
+          this.tokenUsage.set(prdId, usage);
+        }
+        
+        logger.info(`[WorkflowEngine] Loaded token usage for ${this.tokenUsage.size} PRD execution(s)`);
+      }
+    } catch (error) {
+      logger.warn(`[WorkflowEngine] Failed to load token usage: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
+
+  /**
+   * Phase 6: Track investigation attempt per test signature
+   */
+  private trackInvestigationAttempt(testSignature: string, taskId: string, investigationTaskId: string, errorDescription: string): void {
+    const now = Date.now();
+    const existing = this.investigationAttempts.get(testSignature);
+    
+    if (existing) {
+      // Increment attempt count
+      existing.attempts++;
+      existing.lastAttempt = now;
+      // Add error description to learnings (keep last 5)
+      if (errorDescription && !existing.learnings.includes(errorDescription.substring(0, 500))) {
+        existing.learnings.push(errorDescription.substring(0, 500));
+        if (existing.learnings.length > 5) {
+          existing.learnings.shift(); // Keep only last 5 learnings
+        }
+      }
+    } else {
+      // First investigation attempt for this test
+      this.investigationAttempts.set(testSignature, {
+        attempts: 1,
+        firstAttempt: now,
+        lastAttempt: now,
+        learnings: errorDescription ? [errorDescription.substring(0, 500)] : [],
+        testSignature,
+      });
+    }
+  }
+
+  /**
+   * Phase 6: Check if investigations should be consolidated (3+ attempts)
+   */
+  private shouldConsolidateInvestigations(testSignature: string, taskId: string): boolean {
+    const existing = this.investigationAttempts.get(testSignature);
+    if (!existing) {
+      return false;
+    }
+    
+    // Consolidate after 3 failed investigation attempts
+    const minAttempts = 3;
+    return existing.attempts >= minAttempts;
+  }
+
+  /**
+   * Phase 6: Get investigation attempt count for a test signature
+   */
+  private getInvestigationAttemptCount(testSignature: string): number {
+    const existing = this.investigationAttempts.get(testSignature);
+    return existing ? existing.attempts : 0;
+  }
+
+  /**
+   * Phase 6: Create consolidated investigation task with full history
+   */
+  private async createConsolidatedInvestigationTask(
+    testSignature: string,
+    taskId: string,
+    errorDescription: string,
+    targetFiles?: string
+  ): Promise<Task | null> {
+    const existing = this.investigationAttempts.get(testSignature);
+    if (!existing || existing.attempts < 3) {
+      return null;
+    }
+
+    // Consolidate all learnings into a single context
+    const consolidatedLearnings = existing.learnings.join('\n\n--- Previous Investigation Attempt ---\n\n');
+    const consolidatedDescription = `Consolidated Investigation (${existing.attempts} attempts)\n\n` +
+      `Test Signature: ${testSignature.substring(0, 200)}\n\n` +
+      `Previous Investigation History:\n${consolidatedLearnings}\n\n` +
+      `Current Error:\n${errorDescription}\n\n` +
+      `This test has failed investigation ${existing.attempts} times. All previous learnings are consolidated above. ` +
+      `If this investigation also fails, the test may need human intervention.`;
+
+    // Create consolidated investigation task
+    const consolidatedTask = await this.taskBridge.createTask({
+      id: `investigation-consolidated-${testSignature.substring(0, 50).replace(/[^a-z0-9]/gi, '-')}-${Date.now()}`,
+      title: `Consolidated Investigation: ${testSignature.substring(0, 100)} (${existing.attempts} attempts)`,
+      description: consolidatedDescription,
+      priority: 'critical',
+      dependencies: [taskId],
+      taskType: 'investigate',
+      details: `Consolidated investigation after ${existing.attempts} failed attempts. Previous learnings consolidated.`,
+    });
+
+    // Phase 6: Emit investigation consolidated event
+    emitEvent('investigation:consolidated', {
+      testSignature: testSignature.substring(0, 500),
+      attempts: existing.attempts,
+      firstAttempt: new Date(existing.firstAttempt).toISOString(),
+      lastAttempt: new Date(existing.lastAttempt).toISOString(),
+      learningsCount: existing.learnings.length,
+      taskId,
+      prdId: (this as any).currentPrdId,
+      phaseId: (this as any).currentPhaseId,
+    }, {
+      severity: 'warn',
+      taskId,
+      prdId: (this as any).currentPrdId,
+    });
+
+    // Reset attempt count after consolidation (mark as consolidated)
+    existing.attempts = 0; // Reset to allow tracking new attempts after consolidation
+    existing.learnings = []; // Clear learnings after consolidation
+
+    return consolidatedTask;
+  }
+
+  /**
+   * Create a test signature from test output for tracking
+   * Uses first error line + hash of key parts to create a unique identifier
+   */
+  private createTestSignature(testOutput: string, firstLine: string): string {
+    // Extract test name/ID patterns from common test frameworks
+    // Pattern 1: "FAIL  tests/path/to/test.spec.ts:123" (Playwright/Jest)
+    // Pattern 2: "Error: Test name (path/to/test.spec.ts)" (Playwright)
+    // Pattern 3: "× Test name" (Playwright)
+    
+    let testId = '';
+    const patterns = [
+      /FAIL\s+(.+?\.(?:spec|test)\.(?:ts|js|tsx|jsx))(?::\d+)?/i,
+      /Error:\s*(.+?)\s*\((.+?\.(?:spec|test)\.(?:ts|js|tsx|jsx))\)/i,
+      /×\s*(.+?)\s+\((.+?\.(?:spec|test)\.(?:ts|js|tsx|jsx))\)/i,
+      /FAIL\s+(.+?\.(?:spec|test)\.(?:ts|js|tsx|jsx))/i,
+      /Test\s+(.+?)\s+failed/i,
+    ];
+
+    for (const pattern of patterns) {
+      const match = testOutput.match(pattern);
+      if (match) {
+        testId = match[1] || match[0];
+        break;
+      }
+    }
+
+    // If no pattern matched, use first line as test ID
+    if (!testId) {
+      testId = firstLine.trim().substring(0, 200);
+    }
+
+    // Create hash of test output for uniqueness (use first 1000 chars)
+    const outputHash = crypto
+      .createHash('sha256')
+      .update(testOutput.substring(0, 1000))
+      .digest('hex')
+      .substring(0, 16);
+
+    // Combine test ID with hash for signature
+    return `${testId.substring(0, 100)}_${outputHash}`;
   }
 }
 

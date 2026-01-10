@@ -3,7 +3,7 @@ import * as path from 'path';
 import { exec } from 'child_process';
 import { promisify } from 'util';
 import { Config } from '../../config/schema/core';
-import { Task, TaskStatus } from '../../types';
+import { Task, TaskStatus, TaskType } from '../../types';
 import { emitEvent } from '../utils/event-stream';
 
 const execAsync = promisify(exec);
@@ -113,6 +113,62 @@ export class TaskMasterBridge {
       return this.getBaseTaskId(fixMatch[1]); // Recursive to handle nested fixes
     }
     return idStr;
+  }
+
+  /**
+   * Infer task type from task title and description
+   * 
+   * Heuristics:
+   * - "investigate", "investigation", "analyze", "analysis" -> investigate/analysis
+   * - "fix", "fix:", "resolve", "correct" -> fix
+   * - "generate", "create", "implement", "add" -> generate
+   * - Default: generate (assumes code generation unless explicitly marked as analysis)
+   */
+  inferTaskType(task: Task | Partial<Task>): TaskType {
+    // Return explicit task type if set
+    if (task.taskType) {
+      return task.taskType;
+    }
+
+    const title = (task.title || '').toLowerCase();
+    const description = (task.description || '').toLowerCase();
+    const combined = `${title} ${description}`;
+
+    // Investigation/analysis tasks
+    if (
+      combined.includes('investigate') ||
+      combined.includes('investigation') ||
+      combined.includes('analyze') ||
+      combined.includes('analysis') ||
+      combined.includes('why') ||
+      combined.includes('root cause') ||
+      combined.includes('diagnose') ||
+      combined.includes('debug')
+    ) {
+      // If it's asking to investigate a failure, it's an investigate task
+      if (combined.includes('failure') || combined.includes('error') || combined.includes('issue')) {
+        return 'investigate';
+      }
+      // Otherwise it's a general analysis
+      return 'analysis';
+    }
+
+    // Fix tasks (fixing existing code)
+    if (
+      title.startsWith('fix') ||
+      title.startsWith('fix:') ||
+      combined.includes('fix') ||
+      combined.includes('resolve') ||
+      combined.includes('correct') ||
+      combined.includes('repair') ||
+      combined.includes('patch')
+    ) {
+      return 'fix';
+    }
+
+    // Generate tasks (creating new code)
+    // Default assumption: most tasks are code generation tasks
+    return 'generate';
   }
 
   async getPendingTasks(): Promise<Task[]> {
@@ -240,7 +296,9 @@ export class TaskMasterBridge {
 
       const newTask: Task = {
         ...task,
-        status: task.status || 'pending',
+        status: (task.status || 'pending') as TaskStatus,
+        // Infer task type if not explicitly provided
+        taskType: task.taskType || this.inferTaskType(task as Task),
       };
       tasks.push(newTask);
       await this.saveTasks(tasks);
@@ -308,6 +366,7 @@ export class TaskMasterBridge {
       priority: 'critical', // Fix tasks are always critical
       dependencies: [originalTaskId],
       details: originalTask.details, // Preserve original task details
+      taskType: 'fix', // Fix tasks are explicitly 'fix' type
     });
   }
 
@@ -523,17 +582,26 @@ export class TaskMasterBridge {
         // Flatten subtasks into main task list
         const allTasks: Task[] = [];
         for (const task of rawTasks) {
+          // Infer task type if not set
+          if (!task.taskType) {
+            task.taskType = this.inferTaskType(task);
+          }
           allTasks.push(task);
           // Add pending subtasks as separate tasks
           if (task.subtasks && Array.isArray(task.subtasks)) {
             for (const subtask of task.subtasks) {
               if (subtask.status === 'pending') {
-                allTasks.push({
+                // Infer task type for subtask if not set
+                const subtaskWithType: Task = {
                   ...subtask,
                   id: `${task.id}.${subtask.id}`,
                   parentId: task.id,
                   priority: subtask.priority || task.priority || 'medium',
-                });
+                };
+                if (!subtaskWithType.taskType) {
+                  subtaskWithType.taskType = this.inferTaskType(subtaskWithType);
+                }
+                allTasks.push(subtaskWithType);
               }
             }
           }
@@ -542,9 +610,17 @@ export class TaskMasterBridge {
         // Assign IDs to tasks with null/undefined IDs
         const tasksWithIds = this.assignMissingIds(allTasks);
 
-        const pending = tasksWithIds.filter(t => t.status === 'pending');
+        // Ensure all tasks have taskType inferred (for any tasks without IDs that couldn't be inferred above)
+        const tasksWithTypes = tasksWithIds.map(task => {
+          if (!task.taskType) {
+            task.taskType = this.inferTaskType(task);
+          }
+          return task;
+        });
+
+        const pending = tasksWithTypes.filter(t => t.status === 'pending');
         console.log(`[TaskBridge] Loaded ${rawTasks.length} tasks, ${pending.length} pending (including subtasks)`);
-        return tasksWithIds;
+        return tasksWithTypes;
       } catch (error) {
         console.error(`[TaskBridge] Error parsing tasks file:`, error);
         return [];

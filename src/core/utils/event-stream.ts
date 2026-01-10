@@ -57,6 +57,15 @@ export type EventType =
   | 'contribution:fix_applied'
   | 'contribution:agent_unblocked'
   | 'contribution:agent_reset'
+  // Test stall detection
+  | 'test:stalled'
+  // Progress tracking
+  | 'progress:stalled'
+  // Investigation consolidation
+  | 'investigation:consolidated'
+  // Token budget tracking
+  | 'token_budget:warning'
+  | 'token_budget:exceeded'
   // Intervention events (proactive monitoring)
   | 'intervention:triggered'
   | 'intervention:successful'

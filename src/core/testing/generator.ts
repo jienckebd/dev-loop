@@ -183,10 +183,14 @@ export class TestGenerator {
       "import { test, expect } from '@playwright/test';"
     ];
 
+    // Extract only the first line of the error message to prevent writing
+    // uncommented multi-line error details that create invalid TypeScript syntax
+    const errorSummary = errorMessage.split('\n')[0].trim();
+
     return `${imports.join('\n')}
 
 // STUB TEST: Test generation failed for requirement ${req.id}
-// Error: ${errorMessage}
+// Error: ${errorSummary}
 // This test will fail but allows PRD execution to continue for metrics validation
 
 test('${req.id}: Stub test (generation failed)', async ({ page }) => {

@@ -1,5 +1,7 @@
 export type TaskStatus = 'pending' | 'in-progress' | 'done' | 'blocked';
 
+export type TaskType = 'analysis' | 'fix' | 'generate' | 'investigate';
+
 export type InterventionMode = 'autonomous' | 'review' | 'hybrid';
 
 export type AIProviderName = 'anthropic' | 'openai' | 'gemini' | 'ollama' | 'cursor';
@@ -18,6 +20,7 @@ export interface Task {
   details?: string;
   subtasks?: Task[];
   parentId?: string;
+  taskType?: TaskType; // Optional for backward compatibility - will be inferred if not provided
 }
 
 export interface TaskContext {

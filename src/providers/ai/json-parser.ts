@@ -182,9 +182,36 @@ export function parseCodeChangesFromText(
   }
 
   try {
-    const parsed = JSON.parse(text);
+    let parsed = JSON.parse(text);
+    
+    // Check if parsed object is itself a nested result object and recursively extract
+    if (parsed && typeof parsed === 'object' && parsed.type === 'result' && parsed.result !== undefined) {
+      const extractedResult = extractResultTextRecursively(parsed.result);
+      // If extracted result is a string, try to parse it again
+      if (typeof extractedResult === 'string') {
+        try {
+          parsed = JSON.parse(extractedResult);
+        } catch {
+          // If parsing fails, use the extracted string as-is for further processing
+          parsed = extractedResult;
+        }
+      } else {
+        parsed = extractedResult;
+      }
+    }
+    
+    // Check if we now have a CodeChanges object
     if (parsed && parsed.files && Array.isArray(parsed.files)) {
       return parsed as CodeChanges;
+    }
+    
+    // If parsed object is still a result object after extraction, try to extract CodeChanges from it
+    if (parsed && typeof parsed === 'object' && parsed.type === 'result' && parsed.result !== undefined) {
+      // Recursively call extractCodeChanges on the result to handle deeply nested structures
+      const nestedCodeChanges = extractCodeChanges(parsed, observationTracker, context);
+      if (nestedCodeChanges) {
+        return nestedCodeChanges;
+      }
     }
   } catch (error) {
     if (observationTracker && context?.providerName && context?.taskId) {
