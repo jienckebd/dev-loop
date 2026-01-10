@@ -51,6 +51,15 @@ Metrics are collected at four levels:
 - Iterations per task
 - Average retries
 
+### Intervention
+- Total interventions
+- Success rate
+- Successful, failed, and rolled back interventions
+- Effectiveness by issue type and event type
+- Timing metrics (detection, fix, validation time)
+- Pattern analysis (most/least effective strategies, common failure modes)
+- Threshold tracking (exceeded count, prevented count, false positives)
+
 ### Features
 
 All 17 documented PRD features are now tracked with comprehensive metrics:
@@ -104,6 +113,152 @@ Session metrics track provider-agnostic session usage:
 - Session boundary enforcement
 - Context snapshotting effectiveness
 - Session lifecycle statistics
+
+### Intervention Metrics
+
+Intervention metrics track all automated interventions performed by the proactive event monitoring system and their outcomes. These metrics enable analysis and continuous improvement of intervention strategies.
+
+**Location:** `.devloop/intervention-metrics.json`
+
+**Metrics Structure:**
+
+```typescript
+interface InterventionMetrics {
+  totalInterventions: number;
+  successfulInterventions: number;
+  failedInterventions: number;
+  rolledBackInterventions: number;
+  successRate: number;
+  byIssueType: Record<string, {
+    count: number;
+    successful: number;
+    failed: number;
+    rolledBack: number;
+    avgFixTimeMs: number;
+    effectiveness: number;  // success / (success + failed + rolledBack)
+  }>;
+  byEventType: Record<string, {
+    interventions: number;
+    preventedIssues: number;
+    avgPreventionTimeMs: number;
+  }>;
+  patterns: {
+    mostEffectiveStrategies: Array<{ strategy: string; successRate: number }>;
+    leastEffectiveStrategies: Array<{ strategy: string; successRate: number }>;
+    commonFailureModes: Array<{ issueType: string; failureReason: string; count: number }>;
+  };
+  timing: {
+    avgDetectionTimeMs: number;    // Time from event to intervention
+    avgFixTimeMs: number;          // Time from intervention to fix applied
+    avgValidationTimeMs: number;   // Time to validate fix effectiveness
+    totalTimeMs: number;
+  };
+  thresholds: {
+    exceededCount: number;         // Number of times thresholds were exceeded
+    preventedCount: number;        // Number of issues prevented by interventions
+    falsePositives: number;        // Interventions that weren't needed
+  };
+}
+```
+
+**Key Metrics:**
+
+- **Total Interventions**: Total number of automated interventions attempted
+- **Success Rate**: Percentage of successful interventions (successful / total)
+- **Rollback Rate**: Percentage of interventions that were rolled back (rolledBack / total)
+- **False Positive Rate**: Percentage of interventions that weren't needed (falsePositives / total)
+- **Average Intervention Time**: Average time from event detection to fix application
+- **Effectiveness by Issue Type**: Success rate for each issue type (json-parsing, task-blocked, boundary-violation, etc.)
+- **Effectiveness by Event Type**: Success rate and prevented issues per event type
+- **Pattern Analysis**: Most/least effective strategies, common failure modes
+
+**Viewing Intervention Metrics:**
+
+```bash
+# View intervention metrics
+dev-loop metrics --interventions
+
+# View intervention metrics as JSON
+dev-loop metrics --interventions --json
+```
+
+**Accessing via MCP Tool:**
+
+```typescript
+// Get intervention metrics
+const { metrics, effectiveness } = await devloop_event_monitor_status();
+
+console.log(`Total Interventions: ${metrics.totalInterventions}`);
+console.log(`Success Rate: ${(metrics.successRate * 100).toFixed(1)}%`);
+console.log(`Successful: ${metrics.successfulInterventions}`);
+console.log(`Failed: ${metrics.failedInterventions}`);
+console.log(`Rolled Back: ${metrics.rolledBackInterventions}`);
+
+// Get effectiveness analysis
+const { overallSuccessRate, mostEffectiveStrategies, issueTypesNeedingImprovement } = effectiveness;
+
+console.log(`Overall Success Rate: ${(overallSuccessRate * 100).toFixed(1)}%`);
+
+console.log('\nMost Effective Strategies:');
+mostEffectiveStrategies.forEach(s => {
+  console.log(`  ${s.strategy}: ${(s.successRate * 100).toFixed(1)}%`);
+});
+
+console.log('\nIssue Types Needing Improvement:');
+issueTypesNeedingImprovement.forEach(issue => {
+  console.log(`  ${issue.issueType}: ${(issue.effectiveness * 100).toFixed(1)}% effective`);
+});
+
+// Get intervention records
+const { interventions, summary } = await devloop_event_monitor_interventions({
+  limit: 20
+});
+
+console.log(`\nRecent Interventions (${interventions.length}):`);
+interventions.forEach(intervention => {
+  const status = intervention.success ? '✓' : '✗';
+  const fix = intervention.fixApplied ? 'fix applied' : 'no fix';
+  console.log(`${status} ${intervention.issueType} (${intervention.strategy}) - ${fix}`);
+  if (intervention.error) {
+    console.log(`  Error: ${intervention.error}`);
+  }
+});
+```
+
+**Metrics Validation Targets:**
+
+Target metrics for effective proactive monitoring:
+
+- **Success Rate**: > 70% (successful interventions / total interventions)
+- **Rollback Rate**: < 10% (rollbacks / total interventions)
+- **False Positive Rate**: < 5% (false positives / total interventions)
+- **Average Detection Time**: < 30 seconds (time from event to intervention trigger)
+- **Average Fix Time**: < 2 minutes (time from intervention trigger to fix applied)
+- **Average Validation Time**: < 1 minute (time to validate fix effectiveness)
+- **Threshold Detection Accuracy**: > 90% (correctly identifying issues requiring intervention)
+- **Issue Prevention Rate**: > 60% (issues prevented / threshold exceeded)
+
+**Pattern Analysis:**
+
+The system automatically analyzes intervention patterns every 10 interventions:
+
+- **Most Effective Strategies**: Top 5 strategies by success rate
+- **Least Effective Strategies**: Bottom 5 strategies by success rate  
+- **Common Failure Modes**: Top 10 failure mode patterns (issue type + error reason)
+
+This analysis helps identify:
+- Strategies that work well and should be used more
+- Strategies that need improvement
+- Common failure patterns that need better handling
+
+**Use Cases:**
+
+- Monitor intervention effectiveness over time
+- Identify strategies that need improvement
+- Track false positive rate to adjust thresholds
+- Measure intervention impact on issue prevention
+- Analyze timing metrics to optimize intervention speed
+- Identify patterns in intervention failures
 
 ### IPC Metrics
 
@@ -220,6 +375,9 @@ dev-loop metrics --parallel
 # Show observation metrics
 dev-loop metrics --observations
 
+# Show intervention metrics
+dev-loop metrics --interventions
+
 # Output as JSON
 dev-loop metrics --json
 ```
@@ -285,6 +443,7 @@ Metrics are stored in:
 - `.devloop/parallel-metrics.json` - Parallel execution metrics
 - `.devloop/test-results/` - Test results tracking
 - `.devloop/error-analysis.json` - Error analysis data
+- `.devloop/intervention-metrics.json` - Intervention metrics (proactive monitoring)
 
 Reports are generated in:
 - `.devloop/reports/` - Generated reports

@@ -40,6 +40,11 @@ dev-loop/
 │   │   │   ├── set/      # PRD set management (7 files: discovery, validator, orchestrator, generator, etc.)
 │   │   │   ├── coordination/  # PRD coordination and context (2 files)
 │   │   │   └── validation/    # Cross-PRD validation (1 file)
+│   │   ├── monitoring/   # Proactive monitoring and intervention (5 files)
+│   │   │   ├── event-monitor.ts       # EventMonitorService - continuous event polling
+│   │   │   ├── issue-classifier.ts    # IssueClassifier - event classification
+│   │   │   ├── action-executor.ts     # ActionExecutor - fix execution
+│   │   │   └── action-strategies.ts   # Action strategies for each issue type
 │   │   ├── config/       # Configuration management
 │   │   │   └── merger.ts # Hierarchical config merger (schema consistency)
 │   │   └── utils/        # Shared utilities (logger, state-manager, dependency-graph, event-stream, etc.)
@@ -115,6 +120,51 @@ Pre-apply validation:
 - Syntax checking
 - Basic error detection
 - Change validation
+
+### EventMonitorService
+
+**Location:** `src/core/monitoring/event-monitor.ts`
+
+Proactive event monitoring service:
+- Continuous event polling
+- Threshold-based intervention triggering
+- Automated fix execution
+- Intervention effectiveness monitoring
+
+See "Monitoring & Intervention System" section above for details.
+
+### IssueClassifier
+
+**Location:** `src/core/monitoring/issue-classifier.ts`
+
+Event classification system:
+- Maps event types to issue categories
+- Determines confidence levels
+- Identifies patterns and failure reasons
+
+See "Monitoring & Intervention System" section above for details.
+
+### ActionExecutor
+
+**Location:** `src/core/monitoring/action-executor.ts`
+
+Automated intervention execution:
+- Executes fix strategies
+- Validates intervention effectiveness
+- Supports rollback on regression
+
+See "Monitoring & Intervention System" section above for details.
+
+### InterventionMetricsTracker
+
+**Location:** `src/core/metrics/intervention-metrics.ts`
+
+Intervention metrics tracking:
+- Tracks all interventions and outcomes
+- Measures success rate and effectiveness
+- Identifies improvement opportunities
+
+See "Monitoring & Intervention System" section above for details.
 
 ### PatternLearningSystem
 
@@ -295,6 +345,153 @@ MCP (Model Context Protocol) server for AI assistant integration:
   - `debug.ts` - Debugging tools
   - `control.ts` - Control tools
   - `contribution.ts` - Contribution mode tools
+  - `events.ts` - Event streaming tools
+  - `observations.ts` - Observation tools
+  - `metrics.ts` - Metrics tools
+  - `contribution-mode.ts` - Contribution mode status and validation tools
+  - `event-monitoring.ts` - Proactive event monitoring tools (start, stop, status, configure, interventions)
+  - `observation-enhanced.ts` - Enhanced observation tools (pattern detection, session analysis, context gap detection, dependency graph)
+  - `playwright-tdd.ts` - Playwright TDD workflow tools
+  - `codebase-query.ts` - Codebase query tools
+  - `cursor-ai.ts` - Cursor AI integration tools
+  - `cursor-chat.ts` - Cursor chat integration tools
+  - `background-agent.ts` - Background agent tools
+
+## Monitoring & Intervention System
+
+**Location:** `src/core/monitoring/`
+
+Proactive event monitoring and automated intervention system that continuously monitors events and applies corrective actions when thresholds are exceeded.
+
+### EventMonitorService
+
+**Location:** `src/core/monitoring/event-monitor.ts`
+
+Continuously monitors event stream and triggers automated corrective actions:
+- Polls events every N seconds (configurable, default: 5 seconds)
+- Checks event counts/rates against configured thresholds
+- Classifies issues and determines confidence levels
+- Triggers interventions automatically (if confidence is high) or requests approval
+- Monitors intervention effectiveness and rolls back if regressions occur
+- Rate limiting (max interventions per hour)
+- Lifecycle management (start/stop)
+
+**Key Methods:**
+- `start()` - Start monitoring service
+- `stop()` - Stop monitoring service
+- `getStatus()` - Get monitoring status and statistics
+- `updateConfig()` - Update configuration at runtime
+- `pollEvents()` - Poll events and check thresholds (private)
+
+### IssueClassifier
+
+**Location:** `src/core/monitoring/issue-classifier.ts`
+
+Classifies event types into actionable categories and determines confidence levels:
+- Maps event types to classification strategies
+- Extracts patterns from event history
+- Determines confidence levels (0-1) for automated action
+- Categorizes issues (json-parsing, task-execution, boundary-enforcement, validation, contribution-mode, ipc, agent, health)
+- Identifies most common failure reasons and patterns
+
+**Classification Strategies:**
+- JSON parsing issues - Analyzes failure reasons, retry patterns, AI fallback usage
+- Task execution issues - Detects blocked/failed tasks, extracts failure reasons, identifies retry patterns
+- Boundary enforcement issues - Detects violations vs excessive filtering, identifies module confusion
+- Validation issues - Extracts error categories, identifies recovery patterns
+- Contribution mode issues - Handles module confusion, session pollution, boundary violations, context loss
+- IPC connection issues - Detects connection failures, retry patterns, consistency
+- Agent errors - Lower confidence for complex agent errors
+- Health check issues - Low confidence, requires investigation
+
+### ActionExecutor
+
+**Location:** `src/core/monitoring/action-executor.ts`
+
+Executes corrective actions based on issue classifications:
+- Loads action strategies lazily (on first use)
+- Maps issue types to specific fix strategies
+- Executes strategies and validates fixes
+- Monitors fix effectiveness via subsequent events
+- Supports rollback if fixes cause regressions
+- Tracks intervention results for metrics
+
+**Key Methods:**
+- `execute()` - Execute intervention for an issue
+- `monitorEffectiveness()` - Monitor intervention effectiveness (async, non-blocking)
+- `loadActionStrategies()` - Load action strategies (lazy initialization)
+
+### Action Strategies
+
+**Location:** `src/core/monitoring/action-strategies.ts`
+
+Specific fix strategies for each issue type. Each strategy implements the `ActionStrategy` interface:
+
+- **JsonParsingStrategy** (`enhance-json-parser`) - Enhances JSON parser with better extraction logic, adds control character sanitization, newline escaping
+- **TaskBlockingStrategy** (`unblock-task`) - Unblocks tasks with enhanced context, resets retry count, clears errors
+- **BoundaryViolationStrategy** (`enhance-boundary-enforcement`) - Enhances boundary enforcement, adds early file filtering before validation
+- **ValidationFailureStrategy** (`enhance-validation-gates`) - Improves validation gates, adds recovery suggestions
+- **ContributionModeStrategy** (`fix-contribution-mode-issue`) - Delegates to specific fixes based on issue type (module confusion, session pollution, boundary violations, context loss)
+- **IPCConnectionStrategy** (`enhance-ipc-connection`) - Adds retry logic with exponential backoff
+
+**Strategy Pattern:**
+- Each strategy has `name`, `issueType`, and `execute()` method
+- Strategies can modify code files (with backup creation)
+- Strategies can update state files (retry counts, session data)
+- Strategies emit events for tracking and validation
+- Strategies return success/failure status and rollback requirements
+
+### InterventionMetricsTracker
+
+**Location:** `src/core/metrics/intervention-metrics.ts`
+
+Tracks all automated interventions and their outcomes:
+- Records intervention history with full details
+- Tracks success rate by issue type and event type
+- Identifies patterns in intervention effectiveness
+- Timing metrics (detection, fix, validation time)
+- Threshold tracking (exceeded count, prevented count, false positives)
+- Effectiveness analysis (most/least effective strategies, common failure modes)
+
+**Key Methods:**
+- `recordIntervention()` - Track a new intervention
+- `recordThresholdExceeded()` - Record threshold exceeded
+- `recordIssuePrevented()` - Record issue prevented
+- `recordFalsePositive()` - Record false positive intervention
+- `getMetrics()` - Get current metrics
+- `getRecords()` - Get intervention records (with filters)
+- `getIssueTypeMetrics()` - Get metrics for specific issue type
+- `getEffectivenessAnalysis()` - Get effectiveness analysis
+- `analyzePatterns()` - Analyze intervention patterns (runs periodically)
+
+### Integration Points
+
+The monitoring system integrates with:
+- **Event Stream** (`src/core/utils/event-stream.ts`) - Polls events, emits intervention events
+- **Config System** (`src/config/schema/core.ts`) - Reads monitoring configuration
+- **Metrics System** (`src/core/metrics/intervention-metrics.ts`) - Tracks intervention metrics
+- **Contribution Mode** (`src/cli/commands/contribution.ts`) - Starts/stops monitoring on contribution mode lifecycle
+- **MCP Tools** (`src/mcp/tools/event-monitoring.ts`) - Exposes monitoring control via MCP
+
+### Configuration
+
+Monitoring configuration is defined in `devloop.config.js`:
+
+```javascript
+module.exports = {
+  mcp: {
+    eventMonitoring: {
+      enabled: true,
+      pollingInterval: 5000,
+      thresholds: { /* event type → threshold config */ },
+      actions: { /* action settings */ },
+      metrics: { /* metrics tracking settings */ }
+    }
+  }
+};
+```
+
+See [Proactive Monitoring Guide](./PROACTIVE_MONITORING.md) for detailed configuration reference.
 
 ## Configuration
 

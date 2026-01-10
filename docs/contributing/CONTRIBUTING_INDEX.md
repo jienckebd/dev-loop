@@ -34,6 +34,10 @@ Quick reference for AI agents contributing to dev-loop code. This index is only 
 | Add parallel execution support | [`ARCHITECTURE.md`](ARCHITECTURE.md) → Parallel Execution System | Medium | When adding parallel execution |
 | Add session management | [`ARCHITECTURE.md`](ARCHITECTURE.md) → Session Management System | Medium | When adding session management |
 | Add timeout/retry logic | [`ARCHITECTURE.md`](ARCHITECTURE.md) → AI Provider Reliability | Medium | When adding timeout/retry handling |
+| Add event monitoring | [`PROACTIVE_MONITORING.md`](PROACTIVE_MONITORING.md), [`ARCHITECTURE.md`](ARCHITECTURE.md) → Monitoring & Intervention System | Medium | When adding proactive monitoring |
+| Configure intervention thresholds | [`PROACTIVE_MONITORING.md`](PROACTIVE_MONITORING.md) → Configuration Reference | Medium | When configuring thresholds |
+| Use observation tools | [`OBSERVATION_TOOLS.md`](OBSERVATION_TOOLS.md) | Medium | When using pattern detection or session analysis |
+| Analyze intervention metrics | [`METRICS.md`](../users/METRICS.md) → Intervention Metrics | Medium | When analyzing intervention effectiveness |
 
 ## Component → Documentation
 
@@ -47,6 +51,11 @@ Quick reference for AI agents contributing to dev-loop code. This index is only 
 | Framework plugins | [`ARCHITECTURE.md`](ARCHITECTURE.md) | Framework Plugins | Working with plugins |
 | MCP integration | [`ARCHITECTURE.md`](ARCHITECTURE.md) | MCP Integration | Adding MCP tools |
 | Configuration | [`ARCHITECTURE.md`](ARCHITECTURE.md) | Configuration | Modifying config system |
+| EventMonitorService | [`ARCHITECTURE.md`](ARCHITECTURE.md) | Monitoring & Intervention System | Working with proactive monitoring |
+| IssueClassifier | [`PROACTIVE_MONITORING.md`](PROACTIVE_MONITORING.md) | Issue Classification | Working with issue classification |
+| ActionExecutor | [`PROACTIVE_MONITORING.md`](PROACTIVE_MONITORING.md) | Action Execution | Working with automated fixes |
+| Observation Tools | [`OBSERVATION_TOOLS.md`](OBSERVATION_TOOLS.md) | Enhanced Observation Tools | Using pattern detection and session analysis |
+| InterventionMetricsTracker | [`ARCHITECTURE.md`](ARCHITECTURE.md) | Monitoring & Intervention System | Working with intervention metrics |
 
 ## Problem → Solution
 
@@ -57,6 +66,11 @@ Quick reference for AI agents contributing to dev-loop code. This index is only 
 | Need framework-specific code | [`DEVELOPMENT_WORKFLOW.md`](DEVELOPMENT_WORKFLOW.md) | Use framework plugin, not core |
 | Changes not reflected | [`DEVELOPMENT_WORKFLOW.md`](DEVELOPMENT_WORKFLOW.md) | Rebuild with `npm run build` |
 | How to commit changes | [`DEVELOPMENT_WORKFLOW.md`](DEVELOPMENT_WORKFLOW.md) | Commit from `node_modules/dev-loop/`, push to branch |
+| Events not triggering interventions | [`PROACTIVE_MONITORING.md`](PROACTIVE_MONITORING.md) → Troubleshooting | Check monitoring service status, threshold configuration, confidence requirements, rate limiting |
+| Interventions failing | [`PROACTIVE_MONITORING.md`](PROACTIVE_MONITORING.md) → Action Strategies | Review strategy implementation, check file permissions, verify fix effectiveness |
+| Need pattern detection | [`OBSERVATION_TOOLS.md`](OBSERVATION_TOOLS.md) → Pattern Detection | Use `devloop_pattern_detection` tool to identify recurring failure patterns |
+| High rollback rate | [`PROACTIVE_MONITORING.md`](PROACTIVE_MONITORING.md) → Troubleshooting | Review rollback reasons, increase confidence requirements, improve fix validation, narrow fix scope |
+| False positives in interventions | [`PROACTIVE_MONITORING.md`](PROACTIVE_MONITORING.md) → Troubleshooting | Increase threshold counts/rates, increase time windows, adjust confidence calculations |
 
 ## Workflow → Documentation
 
@@ -75,6 +89,9 @@ Quick reference for AI agents contributing to dev-loop code. This index is only 
 |----------|---------|-----------|
 | [`GETTING_STARTED.md`](GETTING_STARTED.md) | First contribution setup | Starting to contribute |
 | [`CONTRIBUTION_MODE.md`](CONTRIBUTION_MODE.md) | Two-agent architecture guide | Before starting contribution mode |
+| [`EVENT_STREAMING.md`](EVENT_STREAMING.md) | Event streaming and proactive monitoring guide | When using event monitoring or proactive monitoring |
+| [`PROACTIVE_MONITORING.md`](PROACTIVE_MONITORING.md) | Proactive monitoring and intervention guide | When configuring or debugging proactive monitoring |
+| [`OBSERVATION_TOOLS.md`](OBSERVATION_TOOLS.md) | Enhanced observation tools reference | When using pattern detection, session analysis, or context gap detection |
 | [`DEVELOPMENT_WORKFLOW.md`](DEVELOPMENT_WORKFLOW.md) | How to make changes | Making any code changes |
 | [`TESTING.md`](TESTING.md) | Writing and running tests | Adding features or fixing bugs |
 | [`PULL_REQUEST.md`](PULL_REQUEST.md) | Submitting contributions | Before creating PR |
@@ -84,6 +101,9 @@ Quick reference for AI agents contributing to dev-loop code. This index is only 
 | Document | Purpose | Load When |
 |----------|---------|-----------|
 | [`ARCHITECTURE.md`](ARCHITECTURE.md) | Codebase structure and components | Understanding codebase |
+| [`PROACTIVE_MONITORING.md`](PROACTIVE_MONITORING.md) | Proactive monitoring and intervention system reference | Working with proactive monitoring |
+| [`OBSERVATION_TOOLS.md`](OBSERVATION_TOOLS.md) | Enhanced observation tools reference | Using observation tools |
+| [`EVENT_STREAMING.md`](EVENT_STREAMING.md) | Event streaming guide | Working with events |
 
 ## Contribution Mode Detection
 

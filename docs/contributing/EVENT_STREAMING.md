@@ -109,6 +109,71 @@ flowchart LR
 }
 ```
 
+### Intervention Events
+
+Events emitted by the proactive event monitoring system when automated interventions are triggered.
+
+| Event | Severity | Description |
+|-------|----------|-------------|
+| `intervention:triggered` | info | Intervention started for an issue |
+| `intervention:successful` | info | Intervention completed successfully |
+| `intervention:failed` | error | Intervention failed to resolve issue |
+| `intervention:rolled_back` | warn | Intervention was rolled back due to regression |
+| `intervention:approval_required` | warn | Intervention requires manual approval |
+| `intervention:rate_limited` | warn | Intervention rate limit exceeded |
+| `intervention:possible_regression` | warn | Possible regression detected after intervention |
+| `intervention:fix_applied` | info | Fix was applied by intervention strategy |
+| `intervention:error` | error | Error occurred during intervention |
+| `intervention:threshold_exceeded` | warn | Event threshold exceeded, intervention may be triggered |
+| `intervention:issue_prevented` | info | Issue was prevented by successful intervention |
+
+**Payload Examples:**
+
+`intervention:triggered`:
+```typescript
+{
+  eventType: EventType;        // Original event type that triggered intervention
+  issueType: string;           // Classified issue type (e.g., "json-parsing-failure")
+  confidence: number;          // Classification confidence (0-1)
+  strategy: string;            // Action strategy name (e.g., "enhance-json-parser")
+}
+```
+
+`intervention:successful`:
+```typescript
+{
+  interventionId: string;      // Unique intervention identifier
+  issueType: string;
+  eventType: EventType;
+  action: string;              // Action strategy executed
+  fixApplied: boolean;         // Whether fix was applied
+  durationMs: number;          // Intervention duration
+}
+```
+
+`intervention:failed`:
+```typescript
+{
+  interventionId: string;
+  issueType: string;
+  eventType: EventType;
+  action: string;
+  fixApplied: boolean;
+  error?: string;              // Error message if available
+  durationMs: number;
+}
+```
+
+`intervention:rolled_back`:
+```typescript
+{
+  interventionId: string;
+  issueType: string;
+  eventType: EventType;
+  error?: string;              // Reason for rollback
+}
+```
+
 ## MCP Tools Reference
 
 ### devloop_events_poll
@@ -176,6 +241,150 @@ const { status } = await devloop_events_clear();
 ```
 
 **Returns:** `{ status: 'success', message: 'Event buffer cleared' }`
+
+### devloop_event_monitor_start
+
+Start the proactive event monitoring service. The service automatically polls events and triggers interventions when thresholds are exceeded.
+
+```typescript
+const { success, status, config } = await devloop_event_monitor_start();
+```
+
+**Returns:** 
+```typescript
+{
+  success: boolean;
+  status: 'started' | 'already_running';
+  message: string;
+  config: {
+    isRunning: boolean;
+    enabled: boolean;
+    lastPollTimestamp: string | null;
+    interventionCount: number;
+    interventionsThisHour: number;
+  }
+}
+```
+
+**Note:** The monitoring service starts automatically when contribution mode is activated (if enabled in config).
+
+### devloop_event_monitor_stop
+
+Stop the proactive event monitoring service.
+
+```typescript
+const { success, status } = await devloop_event_monitor_stop();
+```
+
+**Returns:** `{ success: boolean, status: 'stopped', message: string }`
+
+### devloop_event_monitor_status
+
+Get event monitoring service status and intervention statistics.
+
+```typescript
+const { status, metrics, effectiveness, recentInterventions, recentEvents } = 
+  await devloop_event_monitor_status();
+```
+
+**Returns:**
+```typescript
+{
+  status: {
+    isRunning: boolean;
+    enabled: boolean;
+    lastPollTimestamp: string | null;
+    interventionCount: number;
+    interventionsThisHour: number;
+  };
+  metrics: {
+    totalInterventions: number;
+    successRate: number;
+    successfulInterventions: number;
+    failedInterventions: number;
+    rolledBackInterventions: number;
+  };
+  effectiveness: {
+    overallSuccessRate: number;
+    mostEffectiveStrategies: Array<{ strategy: string; successRate: number }>;
+    leastEffectiveStrategies: Array<{ strategy: string; successRate: number }>;
+    issueTypesNeedingImprovement: Array<{ issueType: string; effectiveness: number }>;
+  };
+  recentInterventions: Array<InterventionRecord>;
+  recentEvents: Array<DevLoopEvent>;
+}
+```
+
+### devloop_event_monitor_configure
+
+Configure event monitoring thresholds and action settings at runtime.
+
+```typescript
+const { success, message, status } = await devloop_event_monitor_configure({
+  pollingInterval: 5000,  // Optional: milliseconds between polls
+  thresholds: {           // Optional: threshold configurations by event type
+    'json:parse_failed': {
+      count: 3,
+      windowMs: 600000,   // 10 minutes
+      autoAction: true,
+      confidence: 0.8
+    },
+    'task:blocked': {
+      count: 1,
+      autoAction: true,
+      confidence: 0.7
+    }
+  },
+  actions: {              // Optional: action settings
+    requireApproval: ['validation:failed'],  // Events requiring approval
+    autoExecute: ['json:parse_failed', 'task:blocked'],  // Events that auto-execute
+    maxInterventionsPerHour: 10  // Rate limiting
+  }
+});
+```
+
+**Returns:** `{ success: boolean, message: string, status: {...} }`
+
+### devloop_event_monitor_interventions
+
+Get list of recent interventions and their outcomes.
+
+```typescript
+const { interventions, summary } = await devloop_event_monitor_interventions({
+  limit: 50,              // Optional: max interventions to return (default: 50)
+  issueType: 'json-parsing-failure',  // Optional: filter by issue type
+  success: true           // Optional: filter by success status
+});
+```
+
+**Returns:**
+```typescript
+{
+  interventions: Array<{
+    interventionId: string;
+    timestamp: string;
+    eventType: EventType;
+    issueType: string;
+    strategy: string;
+    confidence: number;
+    success: boolean;
+    fixApplied: boolean;
+    rollbackRequired: boolean;
+    error?: string;
+    detectionTimeMs: number;
+    fixTimeMs: number;
+    validationTimeMs?: number;
+  }>;
+  summary: {
+    total: number;
+    successful: number;
+    failed: number;
+    rolledBack: number;
+    successRate: number;
+    byIssueType: Record<string, number>;
+  }
+}
+```
 
 ## Usage Examples
 
@@ -247,6 +456,64 @@ async function checkBlockedTasks() {
 }
 ```
 
+### Proactive Monitoring Setup
+
+```typescript
+// Start proactive monitoring service
+async function setupProactiveMonitoring() {
+  // Check if monitoring is enabled in config
+  const config = await loadConfig();
+  const monitoringEnabled = config.mcp?.eventMonitoring?.enabled;
+  
+  if (monitoringEnabled) {
+    // Start monitoring (auto-starts with contribution mode, but can start manually)
+    await devloop_event_monitor_start();
+    
+    console.log('Proactive event monitoring started');
+  }
+}
+
+// Monitor intervention effectiveness
+async function checkInterventionStatus() {
+  const { status, metrics, effectiveness } = await devloop_event_monitor_status();
+  
+  console.log(`Monitoring Status: ${status.isRunning ? 'Running' : 'Stopped'}`);
+  console.log(`Total Interventions: ${metrics.totalInterventions}`);
+  console.log(`Success Rate: ${(metrics.successRate * 100).toFixed(1)}%`);
+  
+  if (effectiveness.issueTypesNeedingImprovement.length > 0) {
+    console.log('\nIssue Types Needing Improvement:');
+    effectiveness.issueTypesNeedingImprovement.forEach(issue => {
+      console.log(`  - ${issue.issueType}: ${(issue.effectiveness * 100).toFixed(1)}% effective`);
+    });
+  }
+}
+
+// Review recent interventions
+async function reviewRecentInterventions() {
+  const { interventions, summary } = await devloop_event_monitor_interventions({
+    limit: 10,
+    success: undefined  // Get all, not just successful or failed
+  });
+  
+  console.log(`\nRecent Interventions (${interventions.length}):`);
+  interventions.forEach(intervention => {
+    const status = intervention.success ? '✓' : '✗';
+    const fix = intervention.fixApplied ? 'fix applied' : 'no fix';
+    console.log(`${status} ${intervention.issueType} (${intervention.strategy}) - ${fix}`);
+    if (intervention.error) {
+      console.log(`  Error: ${intervention.error}`);
+    }
+  });
+  
+  console.log(`\nSummary:`);
+  console.log(`  Total: ${summary.total}`);
+  console.log(`  Successful: ${summary.successful} (${(summary.successRate * 100).toFixed(1)}%)`);
+  console.log(`  Failed: ${summary.failed}`);
+  console.log(`  Rolled Back: ${summary.rolledBack}`);
+}
+```
+
 ## Event Lifecycle
 
 ```mermaid
@@ -288,6 +555,7 @@ When an event is emitted via `emitEvent()`, the bridge:
 | `file:*` | `FileFilteringMetrics` (predictiveFilters, boundaryViolations, filesAllowed) |
 | `validation:*` | `ValidationMetrics` (recoverySuggestionsGenerated, errorsByCategory) |
 | `ipc:*` | `IpcMetrics` (connectionsAttempted, healthChecksPerformed, retries) |
+| `intervention:*` | `InterventionMetrics` (success rate, effectiveness patterns, timing) |
 | `phase:*` / `prd:*` | Phase/PRD timing metrics (via explicit tracking) |
 
 ### Example: JSON Parsing Events
@@ -333,6 +601,158 @@ The bridge is automatically initialized when metrics are enabled in workflow con
 
 The bridge is started automatically and stops when the workflow completes.
 
+## Proactive Event Monitoring
+
+The proactive event monitoring system continuously monitors the event stream and automatically triggers corrective actions when thresholds are exceeded for specific event types. This enables automated issue resolution without manual intervention.
+
+### Overview
+
+The EventMonitorService polls the event stream at configurable intervals (default: 5 seconds) and checks event counts against configured thresholds. When a threshold is exceeded, the system:
+
+1. **Classifies the issue** - Determines issue type and confidence level
+2. **Selects action strategy** - Chooses appropriate fix strategy based on issue type
+3. **Executes intervention** - Applies fix automatically (if confidence is high) or requests approval
+4. **Monitors effectiveness** - Tracks intervention outcomes and rolls back if regressions occur
+
+```mermaid
+flowchart TD
+    Monitor[EventMonitorService] -->|Poll every 5s| Poll[Poll Events]
+    Poll --> Filter[Filter by Threshold]
+    Filter -->|Threshold Exceeded| Classify[IssueClassifier]
+    Classify --> Confidence{Confidence >= Threshold?}
+    Confidence -->|Yes| Strategy[Select Action Strategy]
+    Confidence -->|No| Log[Log for Manual Review]
+    Strategy --> Execute[ActionExecutor]
+    Execute --> Fix[Apply Fix]
+    Fix --> Validate[Monitor Effectiveness]
+    Validate -->|Success| Track[Track Success Metrics]
+    Validate -->|Regression| Rollback[Rollback Fix]
+    Track --> Monitor
+    Rollback --> Alert[Alert: Manual Intervention]
+    Log --> Monitor
+```
+
+### Configuration
+
+Enable proactive monitoring in `devloop.config.js`:
+
+```javascript
+module.exports = {
+  // ... other config
+  mcp: {
+    eventMonitoring: {
+      enabled: true,
+      pollingInterval: 5000,  // Milliseconds between polls
+      thresholds: {
+        'json:parse_failed': {
+          count: 3,            // Trigger after 3 failures
+          windowMs: 600000,    // Within 10 minutes
+          autoAction: true,    // Auto-execute fix
+          confidence: 0.8      // Require 80% confidence
+        },
+        'task:blocked': {
+          count: 1,            // Trigger on first blocked task
+          autoAction: true,
+          confidence: 0.7      // Require 70% confidence
+        },
+        'file:boundary_violation': {
+          count: 1,            // Critical: trigger immediately
+          autoAction: true,
+          confidence: 0.9      // High confidence required
+        },
+        'validation:failed': {
+          count: 5,            // Trigger after 5 failures
+          windowMs: 600000,    // Within 10 minutes
+          autoAction: false,   // Require approval
+          confidence: 0.7
+        }
+      },
+      actions: {
+        requireApproval: ['validation:failed'],  // Events requiring approval
+        autoExecute: ['json:parse_failed', 'task:blocked', 'file:boundary_violation'],
+        maxInterventionsPerHour: 10  // Rate limiting
+      },
+      metrics: {
+        trackInterventions: true,
+        trackSuccessRate: true,
+        trackRollbacks: true
+      }
+    }
+  }
+};
+```
+
+### Integration with Contribution Mode
+
+The event monitoring service automatically starts when contribution mode is activated (if enabled in config). This ensures proactive issue detection and resolution during contribution mode execution.
+
+The service:
+- Starts automatically when `dev-loop contribution start` is executed
+- Stops when contribution mode is stopped
+- Can be manually controlled via MCP tools or CLI (future)
+
+### Action Strategies
+
+The system includes pre-configured action strategies for common issue types:
+
+| Issue Type | Strategy | Action |
+|------------|----------|--------|
+| JSON parsing failures | `enhance-json-parser` | Enhances JSON parser with better extraction logic |
+| Task blocking | `unblock-task` | Unblocks task with enhanced context, resets retry count |
+| Boundary violations | `enhance-boundary-enforcement` | Enhances boundary enforcement logic, adds early filtering |
+| Validation failures | `enhance-validation-gates` | Improves validation gates, adds recovery suggestions |
+| Contribution mode issues | `fix-contribution-mode-issue` | Fixes based on specific issue type (module confusion, session pollution, etc.) |
+| IPC connection failures | `enhance-ipc-connection` | Adds retry logic with exponential backoff |
+
+See [Proactive Monitoring Guide](./PROACTIVE_MONITORING.md) for detailed strategy reference.
+
+### Threshold Types
+
+Thresholds can be configured using two methods:
+
+**Count-based**: Trigger after N events
+```javascript
+'json:parse_failed': {
+  count: 3,        // Trigger after 3 events
+  windowMs: 600000 // Within 10 minutes (optional)
+}
+```
+
+**Rate-based**: Trigger when event rate exceeds percentage
+```javascript
+'file:filtered': {
+  rate: 0.10,      // Trigger when >10% of operations are filtered
+  windowMs: 600000 // Within 10 minutes (required for rate)
+}
+```
+
+### Manual Control
+
+While the service runs automatically, you can control it manually:
+
+```typescript
+// Start monitoring
+await devloop_event_monitor_start();
+
+// Check status
+const status = await devloop_event_monitor_status();
+
+// Configure thresholds
+await devloop_event_monitor_configure({
+  thresholds: {
+    'json:parse_failed': { count: 5, autoAction: true, confidence: 0.8 }
+  }
+});
+
+// Get intervention history
+const { interventions, summary } = await devloop_event_monitor_interventions({
+  limit: 20
+});
+
+// Stop monitoring
+await devloop_event_monitor_stop();
+```
+
 ## Event Severity Levels
 
 | Severity | Use Case |
@@ -368,11 +788,20 @@ See [CONTRIBUTION_MODE.md](./CONTRIBUTION_MODE.md) for details on issue detectio
 
 ```mermaid
 flowchart TD
-    Start[Start Contribution Mode] --> Watch[dev-loop watch]
-    Watch --> Poll[Poll events periodically]
-    Poll --> Check{Issues found?}
-    Check -->|No| Poll
-    Check -->|Yes| Analyze[Analyze event data]
+    Start[Start Contribution Mode] --> Monitor[Event Monitor Starts]
+    Monitor --> Watch[dev-loop watch]
+    Watch --> Poll[Monitor Polls Events]
+    Poll --> Threshold{Threshold Exceeded?}
+    Threshold -->|No| Poll
+    Threshold -->|Yes| AutoIntervene{Auto-Intervention?}
+    AutoIntervene -->|Yes| Execute[Execute Fix Strategy]
+    AutoIntervene -->|No| Manual[Manual Review Required]
+    Execute --> Validate{Intervention Success?}
+    Validate -->|Success| Track[Track Success Metrics]
+    Validate -->|Failure| Rollback[Rollback Fix]
+    Track --> Poll
+    Rollback --> Alert[Alert: Manual Intervention]
+    Manual --> Analyze[Analyze Event Data]
     Analyze --> Action{Action needed?}
     Action -->|Enhance dev-loop| Edit[Edit dev-loop code]
     Action -->|Reset task| Reset[Reset blocked task]
@@ -380,7 +809,14 @@ flowchart TD
     Edit --> Build[Build dev-loop]
     Build --> Poll
     Reset --> Poll
+    Alert --> Poll
 ```
+
+**Key Changes:**
+- Event monitor starts automatically with contribution mode
+- Automated interventions execute fixes when thresholds exceeded
+- Manual review still available for complex issues or low-confidence interventions
+- Intervention outcomes are tracked for continuous improvement
 
 ## Troubleshooting
 
@@ -405,4 +841,6 @@ flowchart TD
 - [Contribution Mode](CONTRIBUTION_MODE.md) - Complete contribution mode guide
 - [Boundary Enforcement](BOUNDARY_ENFORCEMENT.md) - Boundary validation details
 - [Architecture](ARCHITECTURE.md) - System architecture
+- [Proactive Monitoring](./PROACTIVE_MONITORING.md) - Comprehensive proactive monitoring and intervention guide
+- [Observation Tools](./OBSERVATION_TOOLS.md) - Enhanced observation MCP tools reference
 

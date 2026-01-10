@@ -155,11 +155,29 @@ Control whether the inner agent requires approval:
 
 Dev-loop emits structured events for efficient contribution mode monitoring:
 
-- **Event Types**: `file:filtered`, `validation:failed`, `task:blocked`, `change:unauthorized`, `change:reverted`
+- **Event Types**: `file:filtered`, `validation:failed`, `task:blocked`, `change:unauthorized`, `change:reverted`, `intervention:triggered`, `intervention:successful`, `intervention:failed`, `intervention:rolled_back`
 - **MCP Tools**: Use `devloop_events_poll`, `devloop_events_latest`, `devloop_blocked_tasks`, `devloop_filtered_files`, `devloop_issues`
+- **Proactive Event Monitoring**: Automated event monitoring service that triggers interventions when thresholds are exceeded
+- **Enhanced Observation Tools**: Pattern detection, session analysis, context gap detection, dependency graph visualization
 - **Early File Filtering**: Files outside `targetModule` are filtered before validation, reducing error noise
 
-See [`docs/contributing/EVENT_STREAMING.md`](docs/contributing/EVENT_STREAMING.md) for complete guide.
+**Proactive Monitoring Tools:**
+- `devloop_event_monitor_start` - Start proactive event monitoring service
+- `devloop_event_monitor_stop` - Stop monitoring service
+- `devloop_event_monitor_status` - Get monitoring status and intervention statistics
+- `devloop_event_monitor_configure` - Configure intervention thresholds and actions
+- `devloop_event_monitor_interventions` - Get list of recent interventions and outcomes
+
+**Enhanced Observation Tools:**
+- `devloop_pattern_detection` - Detect recurring patterns in failures/blocked tasks
+- `devloop_codebase_health` - Analyze codebase health metrics (Phase 3 placeholder)
+- `devloop_session_analysis` - Analyze session pollution patterns
+- `devloop_context_gap_detection` - Identify missing context causing task failures
+- `devloop_dependency_graph` - Visualize task and code dependencies
+
+See [`docs/contributing/EVENT_STREAMING.md`](docs/contributing/EVENT_STREAMING.md) for complete event streaming guide.  
+See [`docs/contributing/PROACTIVE_MONITORING.md`](docs/contributing/PROACTIVE_MONITORING.md) for proactive monitoring and intervention guide.  
+See [`docs/contributing/OBSERVATION_TOOLS.md`](docs/contributing/OBSERVATION_TOOLS.md) for enhanced observation tools reference.
 
 #### When to Enhance Dev-Loop vs Create Task
 
@@ -449,6 +467,8 @@ Create `.cursor/mcp.json`:
 - Control: `devloop_pause`, `devloop_resume`, `devloop_reset`, `devloop_validate`
 - Contribution: `devloop_contribution_start`, `devloop_contribution_status`, `devloop_contribution_stop`, `devloop_contribution_validate`, `devloop_contribution_boundaries`
 - Events: `devloop_events_poll`, `devloop_events_latest`, `devloop_blocked_tasks`, `devloop_filtered_files`, `devloop_issues`
+- Event Monitoring: `devloop_event_monitor_start`, `devloop_event_monitor_stop`, `devloop_event_monitor_status`, `devloop_event_monitor_configure`, `devloop_event_monitor_interventions`
+- Observation: `devloop_pattern_detection`, `devloop_codebase_health`, `devloop_session_analysis`, `devloop_context_gap_detection`, `devloop_dependency_graph`
 
 ### Common Workflows
 
@@ -508,6 +528,10 @@ stateDiagram-v2
 | **ContextBuilder** | Unified context building for all AI providers ([Architecture](docs/contributing/ARCHITECTURE.md#context-discovery-system)) |
 | **TimeoutHandler** | Provider-agnostic timeout handling ([Architecture](docs/contributing/ARCHITECTURE.md#ai-provider-reliability)) |
 | **ReportGenerator** | Comprehensive execution reporting ([Architecture](docs/contributing/ARCHITECTURE.md#parallel-execution-system)) |
+| **EventMonitorService** | Proactive event monitoring and automated intervention system ([Architecture](docs/contributing/ARCHITECTURE.md#monitoring--intervention-system)) |
+| **IssueClassifier** | Event classification and confidence calculation ([Architecture](docs/contributing/ARCHITECTURE.md#monitoring--intervention-system)) |
+| **ActionExecutor** | Automated fix execution and effectiveness monitoring ([Architecture](docs/contributing/ARCHITECTURE.md#monitoring--intervention-system)) |
+| **InterventionMetricsTracker** | Intervention metrics tracking and effectiveness analysis ([Architecture](docs/contributing/ARCHITECTURE.md#monitoring--intervention-system)) |
 
 ### Provider Interfaces
 

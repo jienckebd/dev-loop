@@ -29,6 +29,7 @@ Contribution mode enables you to enhance dev-loop while it autonomously implemen
 flowchart TB
     subgraph outer["Outer Agent (You)"]
         Orchestrate[Orchestrate & Enhance]
+        Monitor[Proactive Event Monitor]
     end
     subgraph inner["Inner Agent (Dev-Loop)"]
         Implement[Implement & Test]
@@ -36,12 +37,18 @@ flowchart TB
 
     Orchestrate -->|"Start/monitor"| DL[Dev-Loop MCP/CLI]
     Orchestrate -->|"Create tasks"| TM[Task Master MCP]
+    Orchestrate -->|"Start"| Monitor
     DL -->|"Spawn"| Implement
     Implement -->|"Edit"| Code[Project Code]
+    Implement -->|"Emit events"| Events[Event Stream]
+    Events -->|"Poll events"| Monitor
+    Monitor -->|"Threshold exceeded"| Intervene[Automated Intervention]
+    Intervene -->|"Apply fix"| Implement
     Orchestrate -.->|"If stuck"| DevLoopSrc[node_modules/dev-loop/]
 
     TM --> Tasks[(tasks.json)]
     DL --> State[(.devloop/)]
+    Monitor --> Metrics[(Intervention Metrics)]
 ```
 
 ## Critical Boundaries
@@ -207,9 +214,122 @@ for (const issue of issues) {
 
 These metrics enable the outer agent to automatically detect and fix issues like those observed in the restructure-schema-validation session, improving system reliability and reducing manual intervention.
 
-// Stop contribution mode
-devloop_contribution_stop()
+### Proactive Monitoring & Automated Interventions
+
+Contribution mode includes a proactive event monitoring system that automatically detects issues and applies corrective actions when thresholds are exceeded. This enables automated issue resolution without manual intervention.
+
+#### EventMonitorService Integration
+
+The EventMonitorService continuously monitors the event stream and triggers automated interventions when configured thresholds are exceeded:
+
+1. **Event Polling**: Service polls events every N seconds (configurable, default: 5 seconds)
+2. **Threshold Checking**: Checks event counts/rates against configured thresholds
+3. **Issue Classification**: Classifies issues and determines confidence levels
+4. **Action Execution**: Executes fix strategies automatically (if confidence is high) or requests approval
+5. **Effectiveness Monitoring**: Monitors intervention outcomes and rolls back if regressions occur
+
+#### Automated Fix Strategies
+
+The system includes pre-configured fix strategies for common issue types:
+
+| Issue Type | Strategy | Action |
+|------------|----------|--------|
+| JSON parsing failures | `enhance-json-parser` | Enhances JSON parser with better extraction logic |
+| Task blocking | `unblock-task` | Unblocks tasks with enhanced context, resets retry count |
+| Boundary violations | `enhance-boundary-enforcement` | Enhances boundary enforcement logic, adds early filtering |
+| Validation failures | `enhance-validation-gates` | Improves validation gates, adds recovery suggestions |
+| Contribution mode issues | `fix-contribution-mode-issue` | Fixes based on specific issue type (module confusion, session pollution, etc.) |
+| IPC connection failures | `enhance-ipc-connection` | Adds retry logic with exponential backoff |
+
+See [Proactive Monitoring Guide](./PROACTIVE_MONITORING.md) for detailed strategy reference and configuration.
+
+#### Configuration
+
+Enable proactive monitoring in `devloop.config.js`:
+
+```javascript
+module.exports = {
+  // ... other config
+  mcp: {
+    eventMonitoring: {
+      enabled: true,
+      pollingInterval: 5000,  // Milliseconds between polls
+      thresholds: {
+        'json:parse_failed': {
+          count: 3,
+          windowMs: 600000,    // 10 minutes
+          autoAction: true,
+          confidence: 0.8
+        },
+        'task:blocked': {
+          count: 1,
+          autoAction: true,
+          confidence: 0.7
+        },
+        'file:boundary_violation': {
+          count: 1,            // Critical: trigger immediately
+          autoAction: true,
+          confidence: 0.9
+        }
+      },
+      actions: {
+        requireApproval: ['validation:failed'],
+        autoExecute: ['json:parse_failed', 'task:blocked', 'file:boundary_violation'],
+        maxInterventionsPerHour: 10
+      },
+      metrics: {
+        trackInterventions: true,
+        trackSuccessRate: true,
+        trackRollbacks: true
+      }
+    }
+  }
+};
 ```
+
+#### Intervention Effectiveness Tracking
+
+The system tracks intervention effectiveness to continuously improve:
+
+- **Success Rate**: Percentage of successful interventions
+- **Effectiveness by Issue Type**: Success rate per issue type
+- **Timing Metrics**: Detection time, fix time, validation time
+- **Pattern Analysis**: Most/least effective strategies, common failure modes
+
+Access intervention metrics via:
+
+```typescript
+// Get intervention metrics
+const { status, metrics, effectiveness } = await devloop_event_monitor_status();
+
+console.log(`Total Interventions: ${metrics.totalInterventions}`);
+console.log(`Success Rate: ${(metrics.successRate * 100).toFixed(1)}%`);
+
+// Review recent interventions
+const { interventions, summary } = await devloop_event_monitor_interventions({
+  limit: 20
+});
+```
+
+#### Lifecycle Management
+
+The monitoring service:
+- **Starts automatically** when contribution mode is activated (if enabled in config)
+- **Stops automatically** when contribution mode is stopped
+- **Can be controlled manually** via MCP tools: `devloop_event_monitor_start`, `devloop_event_monitor_stop`, `devloop_event_monitor_status`
+- **Updates configuration at runtime** via `devloop_event_monitor_configure`
+
+#### Integration with Issue Detection
+
+Proactive monitoring complements existing issue detection:
+
+- **Issue Detection Metrics**: Track long-term patterns (module confusion, session pollution, etc.)
+- **Proactive Monitoring**: Respond to immediate issues (JSON parsing failures, blocked tasks, etc.)
+- **Event Stream**: Both systems emit events that can be monitored via `devloop_events_poll`
+
+The proactive monitoring system uses the same event stream as issue detection, enabling unified monitoring and intervention strategies.
+
+See [Event Streaming Guide](./EVENT_STREAMING.md) for complete event monitoring guide.
 
 ## State Management
 
@@ -494,6 +614,8 @@ If state file is corrupted:
 ## Related Documentation
 
 - [Event Streaming](EVENT_STREAMING.md) - Event streaming guide for contribution mode
+- [Proactive Monitoring](./PROACTIVE_MONITORING.md) - Comprehensive proactive monitoring and intervention guide
+- [Observation Tools](./OBSERVATION_TOOLS.md) - Enhanced observation MCP tools reference
 - [Boundary Enforcement](BOUNDARY_ENFORCEMENT.md) - Boundary validation implementation
 - [Contribution State Schema](CONTRIBUTION_STATE_SCHEMA.md) - State file reference
 - [Development Workflow](DEVELOPMENT_WORKFLOW.md) - How to make changes

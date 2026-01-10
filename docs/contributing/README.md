@@ -20,6 +20,9 @@ Welcome! This guide helps you contribute to dev-loop's core codebase.
 
 - [Getting Started](GETTING_STARTED.md) - Setup and first contribution
 - [Contribution Mode](CONTRIBUTION_MODE.md) - Two-agent architecture guide
+- [Event Streaming](EVENT_STREAMING.md) - Event streaming and proactive monitoring guide
+- [Proactive Monitoring](PROACTIVE_MONITORING.md) - Proactive monitoring and intervention system guide
+- [Observation Tools](OBSERVATION_TOOLS.md) - Enhanced observation MCP tools reference
 - [Architecture](ARCHITECTURE.md) - Codebase structure and patterns
 - [Development Workflow](DEVELOPMENT_WORKFLOW.md) - How to make changes
 - [Testing](TESTING.md) - Writing and running tests
@@ -53,7 +56,9 @@ Dev-loop is an autonomous development orchestrator that transforms PRDs into val
 - **Framework-agnostic** - Keep dev-loop core framework-agnostic. Framework-specific behavior belongs in plugins or project config.
 - **Test-driven** - All features should include tests.
 - **Documentation** - Update relevant documentation when adding features.
-- **Metrics** - New features should integrate with the hierarchical metrics system (PRD Set → PRD → Phase → Task) for tracking and reporting.## Metrics and Reporting
+- **Metrics** - New features should integrate with the hierarchical metrics system (PRD Set → PRD → Phase → Task) for tracking and reporting.
+
+## Metrics and Reporting
 
 Dev-loop includes a comprehensive metrics and reporting system. When adding new features:
 
@@ -61,4 +66,29 @@ Dev-loop includes a comprehensive metrics and reporting system. When adding new 
 - Track feature usage via `FeatureTracker`
 - Track schema operations via `SchemaTracker`
 - Record errors via `ErrorAnalyzer`
-- Generate reports via `PrdReportGenerator`See [`../users/METRICS.md`](../users/METRICS.md) for user-facing documentation.
+- Generate reports via `PrdReportGenerator`
+- Track interventions via `InterventionMetricsTracker` (for proactive monitoring features)
+
+See [`../users/METRICS.md`](../users/METRICS.md) for user-facing documentation.
+
+## Proactive Monitoring & Intervention
+
+Dev-loop includes a proactive event monitoring system that automatically detects issues and applies corrective actions:
+
+- **Event Monitoring**: Continuous event polling and threshold-based intervention triggering
+- **Issue Classification**: Automatic issue classification and confidence calculation
+- **Automated Fixes**: Pre-configured fix strategies for common issue types
+- **Effectiveness Tracking**: Intervention metrics tracking and effectiveness analysis
+
+See [Proactive Monitoring Guide](PROACTIVE_MONITORING.md) for complete documentation.
+
+## Enhanced Observation Tools
+
+Enhanced observation MCP tools provide better observability of inner agent behavior:
+
+- **Pattern Detection**: Detect recurring patterns in failures and blocked tasks
+- **Session Analysis**: Analyze session pollution patterns
+- **Context Gap Detection**: Identify missing context causing task failures
+- **Dependency Graph**: Visualize task and code dependencies
+
+See [Observation Tools Guide](OBSERVATION_TOOLS.md) for complete reference.
