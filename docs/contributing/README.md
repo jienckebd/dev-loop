@@ -18,11 +18,25 @@ Welcome! This guide helps you contribute to dev-loop's core codebase.
 
 ## Quick Links
 
+### Getting Started
+
 - [Getting Started](GETTING_STARTED.md) - Setup and first contribution
+- [Quick Start](QUICK_START.md) - Quick-start scenarios for common contribution mode workflows
+
+### Core Concepts
+
 - [Contribution Mode](CONTRIBUTION_MODE.md) - Two-agent architecture guide
-- [Event Streaming](EVENT_STREAMING.md) - Event streaming and proactive monitoring guide
+- [Execution Modes](EXECUTION_MODES.md) - Watch mode vs PRD set execute, when to use each
+- [Outer Agent Monitoring](OUTER_AGENT_MONITORING.md) - Best practices for monitoring inner agent execution
+
+### Observability & Monitoring
+
+- [Event Streaming](EVENT_STREAMING.md) - Event streaming architecture and usage guide
 - [Proactive Monitoring](PROACTIVE_MONITORING.md) - Proactive monitoring and intervention system guide
 - [Observation Tools](OBSERVATION_TOOLS.md) - Enhanced observation MCP tools reference
+
+### Development
+
 - [Architecture](ARCHITECTURE.md) - Codebase structure and patterns
 - [Development Workflow](DEVELOPMENT_WORKFLOW.md) - How to make changes
 - [Testing](TESTING.md) - Writing and running tests
@@ -39,6 +53,27 @@ npx dev-loop contribution start --prd <path>
 This activates two-agent architecture where:
 - **Outer Agent**: Enhances dev-loop (`node_modules/dev-loop/`)
 - **Inner Agent**: Implements project code
+
+### Execution Modes
+
+Contribution mode supports two execution modes:
+
+- **Watch Mode (Single PRD)**: `npx dev-loop watch --until-complete` - Daemon mode for continuous iteration
+- **PRD Set Execute**: `npx dev-loop prd-set execute <path>` - One-shot execution for orchestrated PRD sets
+
+**See [Execution Modes Guide](EXECUTION_MODES.md) for when to use each mode.**
+
+### Event Monitoring
+
+The outer agent should monitor via event streaming, NOT log parsing:
+
+- **Proactive Monitoring Service**: Automated event polling and intervention triggering (recommended for unattended)
+- **Manual Polling**: Direct polling via `devloop_events_poll` MCP tool (recommended for active monitoring)
+- **Hybrid Approach**: Both automated monitoring and manual polling (recommended for production)
+
+**See [Outer Agent Monitoring Guide](OUTER_AGENT_MONITORING.md) for best practices.**
+
+**See [Quick Start Guide](QUICK_START.md) for common scenarios.**
 
 See [Contribution Mode Guide](CONTRIBUTION_MODE.md) for complete documentation.
 

@@ -20,12 +20,29 @@ export async function removePidFile(): Promise<void> {
   }
 }
 
+/**
+ * Stop dev-loop daemon (watch mode)
+ * 
+ * **Unified Daemon Mode**: With unified daemon mode, PRD sets create tasks in Task Master
+ * and exit immediately. Only watch mode daemon runs continuously to execute tasks.
+ * This command stops the watch mode daemon, which stops all task execution.
+ * 
+ * **Usage**:
+ * - PRD sets create tasks: `npx dev-loop prd-set execute <path>` (exits after task creation)
+ * - Watch mode executes tasks: `npx dev-loop watch --until-complete` (daemon, writes PID file)
+ * - Stop execution: `npx dev-loop stop` (stops watch mode daemon)
+ * 
+ * **Note**: PRD set execute doesn't write PID file (exits immediately after task creation).
+ * Only watch mode writes PID file, so this command stops watch mode daemon.
+ */
 export async function stopCommand(): Promise<void> {
   const pidPath = getPidFilePath();
 
   if (!await fs.pathExists(pidPath)) {
     console.log(chalk.yellow('No dev-loop daemon is running (PID file not found)'));
     console.log(chalk.gray(`You can also use: pkill -f "dev-loop watch"`));
+    console.log(chalk.gray(`Note: PRD set execute doesn't write PID file (creates tasks and exits).`));
+    console.log(chalk.gray(`Only watch mode daemon writes PID file and can be stopped with this command.`));
     process.exit(0);
   }
 
@@ -48,7 +65,9 @@ export async function stopCommand(): Promise<void> {
     }
 
     // Send SIGTERM for graceful shutdown
-    console.log(chalk.cyan(`Stopping dev-loop daemon (PID: ${pid})...`));
+    // This stops watch mode daemon, which stops all task execution
+    console.log(chalk.cyan(`Stopping dev-loop watch mode daemon (PID: ${pid})...`));
+    console.log(chalk.dim('  (This stops all task execution - watch mode executes tasks from Task Master)'));
     process.kill(pid, 'SIGTERM');
 
     // Wait a moment and verify it stopped
@@ -63,8 +82,9 @@ export async function stopCommand(): Promise<void> {
       // Process is gone, good
     }
 
-    await fs.remove(pidPath);
-    console.log(chalk.green('✓ Dev-loop daemon stopped'));
+    await removePidFile();
+    console.log(chalk.green('✓ Dev-loop watch mode daemon stopped'));
+    console.log(chalk.gray('  (Task execution stopped - tasks remain in Task Master)'));
 
   } catch (error) {
     console.error(chalk.red(`Failed to stop daemon: ${error instanceof Error ? error.message : String(error)}`));

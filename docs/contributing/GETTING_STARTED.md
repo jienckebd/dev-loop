@@ -120,9 +120,32 @@ npm test -- path/to/test.ts
 npm run build
 ```
 
+## Quick Start: Contribution Mode Scenarios
+
+For quick-start scenarios and common contribution mode workflows, see [QUICK_START.md](QUICK_START.md).
+
+**Common Scenarios**:
+
+1. **Single PRD (Watch Mode)**: Use `npx dev-loop watch --until-complete` for daemon mode execution
+   - See [Quick Start - Scenario 1](QUICK_START.md#scenario-1-monitoring-a-single-prd-watch-mode)
+
+2. **PRD Set (One-Shot Execution)**: Use `npx dev-loop prd-set execute <path>` for orchestrated execution
+   - See [Quick Start - Scenario 2](QUICK_START.md#scenario-2-monitoring-a-prd-set-one-shot-execution)
+
+3. **Automated Monitoring**: Configure proactive monitoring service for unattended execution
+   - See [Quick Start - Scenario 3](QUICK_START.md#scenario-3-automated-monitoring-only)
+
+**Understanding Execution Modes**: See [EXECUTION_MODES.md](EXECUTION_MODES.md) for complete guide on watch mode vs PRD set execute.
+
+**Monitoring Best Practices**: See [OUTER_AGENT_MONITORING.md](OUTER_AGENT_MONITORING.md) for monitoring approaches and best practices.
+
 ## Next Steps
 
 - Read [ARCHITECTURE.md](ARCHITECTURE.md) to understand the codebase
-- Review [DEVELOPMENT_WORKFLOW.md](DEVELOPMENT_WORKFLOW.md) for contribution mode details
+- Review [CONTRIBUTION_MODE.md](CONTRIBUTION_MODE.md) for contribution mode workflow
+- Check [EXECUTION_MODES.md](EXECUTION_MODES.md) for execution mode details
+- Study [OUTER_AGENT_MONITORING.md](OUTER_AGENT_MONITORING.md) for monitoring best practices
+- See [QUICK_START.md](QUICK_START.md) for quick-start scenarios
+- Review [DEVELOPMENT_WORKFLOW.md](DEVELOPMENT_WORKFLOW.md) for development workflow details
 - Check [TESTING.md](TESTING.md) for testing guidelines
 - See [PULL_REQUEST.md](PULL_REQUEST.md) for PR process

@@ -4114,6 +4114,94 @@ export class WorkflowEngine {
   /**
    * Run autonomous PRD execution - test-driven development loop
    */
+  /**
+   * Create tasks from PRD requirements in Task Master (for unified daemon mode)
+   * 
+   * This method parses PRD requirements and creates tasks in Task Master without executing them.
+   * Used by PRD set orchestrator to create tasks that will be picked up by watch mode daemon.
+   * 
+   * @param prdPath - Path to PRD file
+   * @param prdSetId - Optional PRD set ID for task metadata
+   * @returns Promise resolving to number of tasks created
+   */
+  async createTasksFromPrd(prdPath: string, prdSetId?: string): Promise<number> {
+    // Parse PRD config overlay and merge with base config
+    const configParser = new PrdConfigParser(this.debug);
+    const prdMetadata = await configParser.parsePrdMetadata(prdPath);
+
+    // Extract PRD ID for task metadata
+    const prdId = prdMetadata?.prd?.id || path.basename(prdPath, path.extname(prdPath));
+
+    // Parse PRD requirements
+    const prdParser = new PrdParser(this.aiProvider, this.debug);
+    const prdConfig = (this.config as any).prd || {};
+    const useStructuredParsing = prdConfig.useStructuredParsing !== false;
+    const parseResult = await prdParser.parseWithConfig(prdPath, useStructuredParsing);
+    let requirements = parseResult.requirements;
+
+    // Resolve dependencies if enabled
+    const resolveDependencies = prdConfig.resolveDependencies === true;
+    if (resolveDependencies && prdConfig.dependencies) {
+      requirements = this.resolveRequirementDependencies(requirements, prdConfig.dependencies);
+    }
+
+    // Create tasks from requirements
+    let taskCount = 0;
+    console.log('[WorkflowEngine] Creating tasks from PRD requirements...');
+    try {
+      for (const req of requirements) {
+        if (req.status === 'pending') {
+          // Map requirement priority (must/should/could) to task priority (critical/high/medium/low)
+          let taskPriority: 'critical' | 'high' | 'medium' | 'low' = 'medium';
+          if (req.priority === 'must') {
+            taskPriority = 'critical';
+          } else if (req.priority === 'should') {
+            taskPriority = 'high';
+          } else if (req.priority === 'could') {
+            taskPriority = 'low';
+          }
+
+          const taskDetails = {
+            requirementId: req.id,
+            acceptanceCriteria: req.acceptanceCriteria || [],
+            type: req.type || 'functional',
+            createdAt: new Date().toISOString(),
+          };
+          
+          // Add PRD context to task details
+          if (prdId) {
+            (taskDetails as any).prdId = prdId;
+          }
+          if (prdSetId) {
+            (taskDetails as any).prdSetId = prdSetId;
+          }
+
+          const task: Task = {
+            id: req.id,
+            title: req.description || `Complete: ${req.id}`,
+            description: req.description || `Implement requirement: ${req.id}`,
+            status: 'pending',
+            priority: taskPriority,
+            details: JSON.stringify(taskDetails),
+            // Add dependencies from requirement if present
+            ...(req.dependencies && req.dependencies.length > 0 ? { dependencies: req.dependencies } : {}),
+          };
+          await this.taskBridge.createTask(task);
+          taskCount++;
+          if (this.debug) {
+            console.log(`[WorkflowEngine] Created task: ${req.id}`);
+          }
+        }
+      }
+      console.log(`[WorkflowEngine] Created ${taskCount} task(s) from PRD requirements`);
+    } catch (error: any) {
+      console.warn(`[WorkflowEngine] Failed to create tasks: ${error.message}`);
+      throw error;
+    }
+
+    return taskCount;
+  }
+
   async runAutonomousPrd(prdPath: string): Promise<PrdExecutionResult> {
     // Parse PRD config overlay and merge with base config
     const configParser = new PrdConfigParser(this.debug);

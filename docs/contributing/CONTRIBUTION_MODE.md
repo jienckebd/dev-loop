@@ -619,68 +619,133 @@ Dev-loop validates boundaries programmatically:
 
 ## Workflow
 
-### Standard Workflow
+Contribution mode supports two execution modes depending on whether you're working with a single PRD or a PRD set. The workflow differs slightly for each.
+
+### For Single PRD (Watch Mode)
+
+Use `watch` mode for single PRDs that need continuous iteration until complete:
 
 1. **Start Contribution Mode:**
    ```bash
-   npx dev-loop contribution start --prd .taskmaster/docs/my_prd.md
+   npx dev-loop contribution start --prd .taskmaster/docs/my-prd.md
    ```
 
-2. **Let Inner Agent Work:**
+2. **Start Watch Mode (Daemon):**
    ```bash
    npx dev-loop watch --until-complete
    ```
+   
+   Watch mode runs in a continuous loop until the PRD is 100% complete. It exits automatically when all tasks are done and tests pass.
 
-3. **Monitor Progress:**
-   - **Monitor via event streaming**: Use `devloop_events_poll` or `devloop_event_monitor_start` to monitor `contribution:issue_detected` events
-   - Check task status via Task Master MCP: `task_master: list_tasks`
-   - Review test results: Check test execution status
-   - **DO NOT parse logs** - Use structured event streaming instead
+3. **Monitor Events (Choose One):**
+   
+   **Option A: Automated Monitoring (Recommended for Unattended)**
+   - Event monitoring service starts automatically when contribution mode is activated (if enabled in config)
+   - Configure thresholds in `devloop.config.js` for automated interventions
+   - Monitor intervention outcomes via `devloop_event_monitor_status`
+   
+   **Option B: Manual Polling (Recommended for Active Monitoring)**
+   ```typescript
+   let lastEventId = null;
+   while (true) {
+     const { events, lastEventId: newLastEventId } = await devloop_events_poll({
+       since: lastEventId,
+       types: ['contribution:issue_detected', 'task:blocked', 'validation:failed'],
+       severity: ['warn', 'error', 'critical'],
+       limit: 50
+     });
+     
+     for (const event of events) {
+       console.log(`[${event.severity}] ${event.type}: ${JSON.stringify(event.data)}`);
+       // Handle events based on type
+     }
+     
+     lastEventId = newLastEventId;
+     await sleep(5000); // Poll every 5 seconds
+   }
+   ```
+   
+   **Option C: Hybrid Approach (Recommended)**
+   - Start proactive monitoring service for automated fixes
+   - Also poll manually for custom logic or immediate feedback
+   - Both can run simultaneously
 
-## Watching During Execution
+4. **React to Issues:**
+   - Enhance dev-loop code if patterns emerge
+   - Fix tasks if blocked
+   - Review intervention outcomes
 
-When in contribution mode, the outer agent should monitor via event streaming:
+5. **Watch Mode Exits:**
+   - Automatically exits when PRD is 100% complete (all tasks done, tests passing)
+   - Or press `Ctrl+C` to stop early
 
-```bash
-# In one terminal: Start contribution mode
-npx dev-loop contribution start --prd <path>
+**See [Execution Modes Guide](EXECUTION_MODES.md) for details on watch mode vs PRD set execute.**
 
-# In another terminal: Start watch mode (inner agent executes)
-npx dev-loop watch --until-complete
-```
+**See [Outer Agent Monitoring Guide](OUTER_AGENT_MONITORING.md) for best practices on event monitoring.**
 
-**Outer Agent Monitoring (via MCP tools):**
+### For PRD Set (Unified Daemon Mode)
 
-```typescript
-// Start proactive event monitoring (recommended)
-await devloop_event_monitor_start();
+Use `prd-set execute` to create tasks from multiple related PRDs, then `watch` mode to execute them:
 
-// Or poll events manually
-let lastEventId = null;
-while (true) {
-  const { events } = await devloop_events_poll({
-    types: ['contribution:issue_detected'],
-    since: lastEventId
-  });
-  
-  for (const event of events) {
-    console.log(`Issue detected: ${event.data.issueType}`);
-    // Handle issue based on type
-  }
-  
-  lastEventId = events[events.length - 1]?.id;
-  await sleep(5000); // Poll every 5 seconds
-}
-```
+1. **Start Contribution Mode:**
+   ```bash
+   npx dev-loop contribution start --prd .taskmaster/planning/my-set/index.md.yml
+   ```
 
-This provides real-time feedback on:
-- Task execution progress
-- Contribution mode issue detection (14 issue types)
-- Pattern learning observations
-- Error patterns and fixes
-- Proactive interventions and their outcomes
+2. **Create Tasks from PRD Set:**
+   ```bash
+   npx dev-loop prd-set execute .taskmaster/planning/my-set --debug
+   ```
+   
+   PRD set execute creates tasks in Task Master and exits immediately (does not execute tasks).
 
-**NOTE: Do NOT monitor via log parsing.** Use structured event streaming via MCP tools for efficient, real-time monitoring.
+3. **Execute Tasks via Watch Mode (Daemon):**
+   ```bash
+   npx dev-loop watch --until-complete
+   ```
+   
+   Watch mode daemon monitors Task Master for tasks from any source (PRD or PRD set) and executes them.
+
+4. **Monitor Events (Same Options as Above):**
+   - Automated monitoring (if enabled in config)
+   - Manual polling via `devloop_events_poll`
+   - Hybrid approach (both)
+   
+   **Note**: Events are emitted by watch mode daemon during task execution. PRD set execute doesn't emit events (exits immediately after task creation).
+
+5. **React to Issues (Same as Above):**
+   - Enhance dev-loop code
+   - Fix tasks
+   - Review interventions
+
+6. **Stop Execution:**
+   ```bash
+   npx dev-loop stop
+   ```
+   
+   This stops watch mode daemon (which executes all tasks). PRD set execute doesn't write PID file (exits immediately after task creation).
+
+7. **Watch Mode Completes:**
+   - Exits automatically when PRD is 100% complete (all tasks done, tests passing)
+   - Or stop manually with `npx dev-loop stop` or `Ctrl+C`
+
+**See [Execution Modes Guide](EXECUTION_MODES.md) for unified daemon architecture details.**
+
+**See [Outer Agent Monitoring Guide](OUTER_AGENT_MONITORING.md) for monitoring best practices.**
+
+### Event Monitoring Best Practices
+
+**CRITICAL: The outer agent should monitor via event streaming, NOT log parsing.** All issue detection emits `contribution:issue_detected` events that can be polled via `devloop_events_poll` or monitored proactively via `devloop_event_monitor_start`. Log parsing is deprecated in favor of structured event streaming.
+
+**Monitoring Approaches:**
+
+1. **Automated Monitoring**: Proactive monitoring service automatically polls events and triggers interventions when thresholds are exceeded (if enabled in config)
+2. **Manual Polling**: Use `devloop_events_poll` MCP tool in a loop to poll events manually
+3. **Hybrid Approach**: Use both automated monitoring for common issues and manual polling for specific cases
+
+**See [Outer Agent Monitoring Guide](OUTER_AGENT_MONITORING.md) for complete monitoring guide.**
+
+**See [Quick Start Guide](QUICK_START.md) for common scenarios and examples.**
 
 ## Real-Time Observation
 

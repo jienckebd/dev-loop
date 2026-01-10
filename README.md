@@ -142,16 +142,63 @@ Control whether the inner agent requires approval:
 | `dev-loop contribution validate` | Validate contribution mode boundaries |
 | `dev-loop contribution boundaries` | List active boundaries |
 
+#### Execution Modes (Unified Daemon Architecture)
+
+Contribution mode uses a **unified daemon architecture** where watch mode monitors Task Master for tasks from any source (PRD or PRD set):
+
+| Aspect | Watch Mode (Unified Daemon) | PRD Set Execute |
+|--------|----------------------------|-----------------|
+| **Command** | `npx dev-loop watch --until-complete` | `npx dev-loop prd-set execute <path>` |
+| **Mode** | Daemon (continuous loop) | One-shot (creates tasks and exits) |
+| **Use Case** | Execute tasks from any source (PRD or PRD set) | Create tasks from PRD set |
+| **Task Source** | Task Master (tasks from any source) | Creates tasks in Task Master |
+| **Execution** | Executes tasks from Task Master | Does NOT execute (creates tasks only) |
+| **Completion** | Exits when PRD is 100% complete | Exits immediately after task creation |
+| **PID File** | Yes (`.devloop.pid`) - enables `dev-loop stop` | No (exits immediately) |
+| **Event Streaming** | Active during task execution | Not applicable (exits immediately) |
+| **Best For** | Universal execution daemon | Task creation from PRD sets |
+
+**Unified Architecture**: PRD sets create tasks in Task Master instead of executing directly. Watch mode (daemon) then monitors Task Master for tasks from any source and executes them. This unified approach ensures:
+- Single execution path via Task Master
+- `dev-loop stop` works universally (stops watch mode daemon)
+- All tasks visible in Task Master regardless of source
+- Better task coordination and visibility
+
+See [`docs/contributing/EXECUTION_MODES.md`](docs/contributing/EXECUTION_MODES.md) for complete unified daemon architecture guide.
+
 #### Workflow
 
-1. Start contribution mode (CLI or MCP)
-2. Create/update tasks via Task Master
-3. Monitor via `devloop_contribution_status` or `dev-loop contribution status`
-4. If inner agent stuck: enhance `node_modules/dev-loop/` code
-5. Build, commit, push dev-loop changes
-6. Validate improvements via metrics
+**For Single PRD (Watch Mode):**
+
+1. Start contribution mode: `npx dev-loop contribution start --prd <path>`
+2. Start watch mode: `npx dev-loop watch --until-complete`
+3. Monitor events (choose one):
+   - **Automated**: Proactive monitoring service starts automatically (if enabled in config)
+   - **Manual**: Poll `devloop_events_poll` in a loop
+   - **Hybrid**: Both automated monitoring and manual polling
+4. React to issues: Enhance dev-loop, fix tasks, etc.
+5. Watch mode exits when PRD is 100% complete
+
+**For PRD Set (Unified Daemon Mode):**
+
+1. Start contribution mode: `npx dev-loop contribution start --prd <path>`
+2. Create tasks from PRD set: `npx dev-loop prd-set execute <path>` (creates tasks, exits immediately)
+3. Execute tasks via watch mode: `npx dev-loop watch --until-complete` (daemon, executes tasks from Task Master)
+4. Monitor events (same options as above)
+   - **Note**: Events are emitted by watch mode daemon during task execution. PRD set execute doesn't emit events (exits immediately after task creation).
+5. React to issues (same as above)
+6. Stop execution: `npx dev-loop stop` (stops watch mode daemon, which executes all tasks)
+7. Watch mode completes when PRD is 100% complete (all tasks done, tests passing)
+
+**See [`docs/contributing/QUICK_START.md`](docs/contributing/QUICK_START.md) for quick-start scenarios.**
+
+**See [`docs/contributing/OUTER_AGENT_MONITORING.md`](docs/contributing/OUTER_AGENT_MONITORING.md) for monitoring best practices.**
 
 #### Event Streaming & Observability
+
+**CRITICAL: Monitor via event streaming, NOT log parsing.** All issue detection emits structured events that can be polled via `devloop_events_poll` or monitored proactively via `devloop_event_monitor_start`.
+
+Dev-loop emits structured events for efficient contribution mode monitoring:
 
 Dev-loop emits structured events for efficient contribution mode monitoring:
 
@@ -176,8 +223,16 @@ Dev-loop emits structured events for efficient contribution mode monitoring:
 - `devloop_context_gap_detection` - Identify missing context causing task failures
 - `devloop_dependency_graph` - Visualize task and code dependencies
 
+**Event Persistence Model**: Events are stored in-memory only (buffer, max 1000 events), cleared on restart. Events must be polled during active execution. See [`docs/contributing/EVENT_STREAMING.md`](docs/contributing/EVENT_STREAMING.md) for complete event streaming guide including persistence model and monitoring service vs manual polling.
+
+**Monitoring Approaches**: 
+- **Proactive Monitoring Service**: Automated event monitoring that polls events and triggers interventions when thresholds are exceeded (recommended for unattended monitoring)
+- **Manual Polling**: Direct polling via `devloop_events_poll` MCP tool (recommended for active monitoring with custom logic)
+- **Hybrid Approach**: Both automated monitoring and manual polling simultaneously (recommended for production use)
+
 See [`docs/contributing/EVENT_STREAMING.md`](docs/contributing/EVENT_STREAMING.md) for complete event streaming guide.  
 See [`docs/contributing/PROACTIVE_MONITORING.md`](docs/contributing/PROACTIVE_MONITORING.md) for proactive monitoring and intervention guide.  
+See [`docs/contributing/OUTER_AGENT_MONITORING.md`](docs/contributing/OUTER_AGENT_MONITORING.md) for outer agent monitoring best practices.  
 See [`docs/contributing/OBSERVATION_TOOLS.md`](docs/contributing/OBSERVATION_TOOLS.md) for enhanced observation tools reference.
 
 #### When to Enhance Dev-Loop vs Create Task

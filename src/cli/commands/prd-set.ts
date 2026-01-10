@@ -6,7 +6,31 @@ import { PrdSetOrchestrator } from "../../core/prd/set/orchestrator";
 import { loadConfig } from '../../config/loader';
 
 /**
- * Execute PRD set
+ * PRD set execute command - One-shot execution for PRD sets
+ * 
+ * **Execution Mode**: One-shot (runs to completion)
+ * **Use Case**: Multiple related PRDs orchestrated together
+ * **Command**: `npx dev-loop prd-set execute <path>`
+ * 
+ * **How it works**:
+ * - Executes once and runs until all PRDs in the set are complete
+ * - PRD sets have defined completion criteria (all PRDs finished)
+ * - Exits when execution completes (success or failure)
+ * - Event streaming is active during execution
+ * 
+ * **When to use**:
+ * - Working with multiple related PRDs
+ * - PRDs have dependencies that need orchestration
+ * - PRD set has defined completion criteria
+ * - Want to execute all PRDs in a single command
+ * 
+ * **Why not daemon mode**: PRD sets orchestrate multiple PRDs and naturally complete
+ * when all PRDs finish. Unlike single PRDs that may require continuous iteration,
+ * PRD sets have defined completion criteria and don't need daemon mode.
+ * 
+ * **Not for**: Single PRDs (use `watch --until-complete` instead)
+ * 
+ * **See**: `docs/contributing/EXECUTION_MODES.md` for complete guide
  */
 export async function prdSetExecuteCommand(options: {
   path: string;
@@ -46,46 +70,64 @@ export async function prdSetExecuteCommand(options: {
     }
     spinner.succeed('PRD set validation passed');
 
-    console.log(chalk.cyan(`\nStarting autonomous PRD set execution: ${discoveredSet.setId}`));
+    console.log(chalk.cyan(`\nCreating tasks from PRD set: ${discoveredSet.setId}`));
     console.log(chalk.dim(`  PRDs in set: ${discoveredSet.prdSet.prds.length}`));
     console.log(chalk.dim(`  Parent PRD: ${discoveredSet.manifest.parentPrd.id}`));
-    console.log(chalk.dim(`  Child PRDs: ${discoveredSet.manifest.childPrds.length}\n`));
+    console.log(chalk.dim(`  Child PRDs: ${discoveredSet.manifest.childPrds.length}`));
+    console.log(chalk.dim(`  Mode: Unified daemon (tasks created in Task Master, watch mode executes them)\n`));
 
     spinner.start('Initializing PRD set orchestrator');
     const orchestrator = new PrdSetOrchestrator(config, debug);
     spinner.succeed('Orchestrator initialized');
 
+    spinner.start('Creating tasks from PRD set');
     const result = await orchestrator.executePrdSet(discoveredSet, {
       parallel: options.parallel ?? true,
       maxConcurrent: options.maxConcurrent ?? 2,
     });
+    spinner.succeed(`Tasks created for ${result.completedPrds.length} PRD(s)`);
 
     console.log('\n');
 
     if (result.status === 'complete') {
       console.log(chalk.green('╔════════════════════════════════════════════════════════════╗'));
-      console.log(chalk.green('║         ✓ PRD SET COMPLETE - All PRDs executed              ║'));
+      console.log(chalk.green('║      ✓ PRD SET TASKS CREATED - All PRD tasks in Task Master  ║'));
       console.log(chalk.green('╚════════════════════════════════════════════════════════════╝'));
       console.log('');
-      console.log(chalk.cyan('Final Status:'));
-      console.log(`  Completed PRDs: ${result.completedPrds.length}/${discoveredSet.prdSet.prds.length}`);
+      console.log(chalk.cyan('Task Creation Status:'));
+      console.log(`  PRDs with tasks created: ${result.completedPrds.length}/${discoveredSet.prdSet.prds.length}`);
       console.log(`  Failed PRDs: ${result.failedPrds.length}`);
       console.log(`  Set ID: ${discoveredSet.setId}`);
+      console.log('');
+      console.log(chalk.yellow('Next Steps:'));
+      console.log(`  1. Run: ${chalk.cyan('npx dev-loop watch --until-complete')}`);
+      console.log(`  2. Watch mode daemon will execute tasks from Task Master`);
+      console.log(`  3. Stop execution: ${chalk.cyan('npx dev-loop stop')}`);
       console.log('');
     } else if (result.status === 'blocked') {
       console.log(chalk.red('╔════════════════════════════════════════════════════════════╗'));
-      console.log(chalk.red('║      ⚠ PRD SET BLOCKED - Human intervention needed          ║'));
+      console.log(chalk.red('║   ⚠ PRD SET TASK CREATION BLOCKED - Human intervention needed  ║'));
       console.log(chalk.red('╚════════════════════════════════════════════════════════════╝'));
       console.log('');
-      console.log(chalk.yellow('Execution appears stuck or dependencies not met.'));
-      console.log(`  Completed PRDs: ${result.completedPrds.length}/${discoveredSet.prdSet.prds.length}`);
+      console.log(chalk.yellow('Task creation blocked due to unresolved dependencies.'));
+      console.log(`  PRDs with tasks created: ${result.completedPrds.length}/${discoveredSet.prdSet.prds.length}`);
       console.log(`  Failed PRDs: ${result.failedPrds.length}`);
       console.log(`  Set ID: ${discoveredSet.setId}`);
+      if (result.errors.length > 0) {
+        console.log('');
+        console.log(chalk.red('Errors:'));
+        result.errors.forEach(err => console.log(chalk.red(`  - ${err}`)));
+      }
       console.log('');
       process.exit(1);
     } else {
-      console.log(chalk.yellow(`PRD set execution ${result.status}`));
-      console.log(`  Completed PRDs: ${result.completedPrds.length}/${discoveredSet.prdSet.prds.length}`);
+      console.log(chalk.yellow(`PRD set task creation ${result.status}`));
+      console.log(`  PRDs with tasks created: ${result.completedPrds.length}/${discoveredSet.prdSet.prds.length}`);
+      if (result.errors.length > 0) {
+        console.log('');
+        console.log(chalk.red('Errors:'));
+        result.errors.forEach(err => console.log(chalk.red(`  - ${err}`)));
+      }
     }
   } catch (error) {
     spinner.fail('Failed to execute PRD set');

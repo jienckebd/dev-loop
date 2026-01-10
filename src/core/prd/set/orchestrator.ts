@@ -161,10 +161,12 @@ export class PrdSetOrchestrator {
     };
     this.prdSetMetrics.startPrdSetExecution(discoveredSet.setId, prdSetMetadata);
 
-    // Execute PRDs level by level
+    // Create tasks for PRDs level by level
+    // For unified daemon mode: PRD sets create tasks in Task Master instead of executing directly
+    // Tasks will be picked up by watch mode daemon
     for (const level of executionLevels) {
       if (this.debug) {
-        logger.debug(`[PrdSetOrchestrator] Executing level ${level.level}: ${level.prds.join(', ')}`);
+        logger.debug(`[PrdSetOrchestrator] Creating tasks for level ${level.level}: ${level.prds.join(', ')}`);
       }
 
       // Generate progress report
@@ -231,58 +233,47 @@ export class PrdSetOrchestrator {
           continue;
         }
 
-        // Create execution function (NOT called yet - stored as reference)
-        const executePrd: PrdExecutor = async () => {
-          // Update state to running when actually starting
+        // Create task creation function (NOT called yet - stored as reference)
+        // For unified daemon mode: PRD sets create tasks in Task Master instead of executing directly
+        // Tasks will be picked up by watch mode daemon
+        const createPrdTasks: PrdExecutor = async () => {
+          // Update state when starting task creation
           await this.coordinator.updatePrdState(prdId, { status: 'running' });
 
           try {
             if (this.debug) {
-              logger.debug(`[PrdSetOrchestrator] Executing PRD: ${prdId}`);
+              logger.debug(`[PrdSetOrchestrator] Creating tasks for PRD: ${prdId}`);
             }
 
-            // CRITICAL FIX: Pass parent PRD's execution config to workflow engine
-            // Child PRDs don't have their own execution section, so inherit from parent
-            const parentExecution = discoveredSet.manifest.parentPrd.metadata.execution;
-            if (parentExecution) {
-              (this.workflowEngine as any).parentPrdExecutionConfig = parentExecution;
-              if (this.debug) {
-                logger.debug(`[PrdSetOrchestrator] Inherited parent execution config: targetModule=${parentExecution.targetModule}`);
-              }
+            // Create tasks from PRD requirements in Task Master
+            // Tasks will be picked up by watch mode daemon
+            const taskCount = await this.workflowEngine.createTasksFromPrd(prd.path, discoveredSet.setId);
+
+            if (this.debug) {
+              logger.debug(`[PrdSetOrchestrator] Created ${taskCount} tasks for PRD: ${prdId}`);
             }
 
-            const prdResult = await this.workflowEngine.runAutonomousPrd(prd.path);
+            // Mark PRD as running (tasks created, ready for execution)
+            // Actual execution will be handled by watch mode daemon
+            // Note: Status remains 'running' until watch mode executes tasks and marks as 'complete'
+            await this.coordinator.updatePrdState(prdId, {
+              status: 'running',
+              startTime: new Date(),
+            });
 
-            // Record PRD completion in metrics
-            const workflowPrdMetrics = (this.workflowEngine as any).prdMetrics;
-            if (workflowPrdMetrics) {
-              const prdMetricsData = workflowPrdMetrics.getPrdMetrics(prdResult.prdId);
-              if (prdMetricsData) {
-                this.prdSetMetrics.recordPrdCompletion(prdId, prdMetricsData);
-              }
-            }
-
-            if (prdResult.status === 'complete') {
-              await this.coordinator.updatePrdState(prdId, {
-                status: 'complete',
-                endTime: new Date(),
-              });
-              return { prdId, result: prdResult };
-            } else {
-              const error = new Error(`PRD ${prdId} execution ${prdResult.status}`);
-              await this.errorHandler.handlePrdError(
+            // Return success result (tasks created, not executed)
+            // Note: result.status uses 'complete' to indicate task creation complete (not execution complete)
+            return {
+              prdId,
+              result: {
                 prdId,
-                error,
-                {
-                  maxRetries: 0, // Don't retry here, handled by workflow engine
-                },
-                async () => {
-                  // Retry function (not used with maxRetries: 0)
-                  return await this.workflowEngine.runAutonomousPrd(prd.path);
-                }
-              );
-              throw error;
-            }
+                status: 'complete', // Task creation complete (not execution complete)
+                tasksCreated: taskCount,
+                testsGenerated: 0,
+                testsPassing: 0,
+                testsFailing: 0,
+              } as any,
+            };
           } catch (error: any) {
             await this.errorHandler.propagateError(prdId, error, result);
             throw error;
@@ -290,22 +281,24 @@ export class PrdSetOrchestrator {
         };
 
         // Store executor function reference (not called yet)
-        executorFunctions.push({ prdId, executor: executePrd });
+        executorFunctions.push({ prdId, executor: createPrdTasks });
       }
 
-      // Execute PRDs with proper concurrency control
+      // Create tasks for PRDs with proper concurrency control
+      // For unified daemon mode: PRD sets create tasks in Task Master instead of executing directly
+      // Tasks will be picked up by watch mode daemon
       if (executorFunctions.length > 0) {
         const concurrentLimit = parallel ? Math.min(maxConcurrent, executorFunctions.length) : 1;
 
         if (this.debug) {
-          logger.debug(`[PrdSetOrchestrator] Executing ${executorFunctions.length} PRDs with concurrency limit ${concurrentLimit}`);
+          logger.debug(`[PrdSetOrchestrator] Creating tasks for ${executorFunctions.length} PRDs with concurrency limit ${concurrentLimit}`);
         }
 
         // Process in batches, starting each batch only after the previous completes
         for (let i = 0; i < executorFunctions.length; i += concurrentLimit) {
           const batch = executorFunctions.slice(i, i + concurrentLimit);
 
-          // Start batch execution (now we actually call the executor functions)
+          // Start batch task creation (now we actually call the executor functions)
           const batchPromises = batch.map(item => item.executor());
 
           const batchResults = await Promise.allSettled(batchPromises);
@@ -318,7 +311,7 @@ export class PrdSetOrchestrator {
               result.completedPrds.push(settled.value.prdId);
             } else {
               result.failedPrds.push(prdId);
-              result.errors.push(`PRD ${prdId} execution failed: ${settled.reason?.message || 'Unknown error'}`);
+              result.errors.push(`PRD ${prdId} task creation failed: ${settled.reason?.message || 'Unknown error'}`);
             }
           }
         }
@@ -331,10 +324,12 @@ export class PrdSetOrchestrator {
       }
     }
 
-    // Determine final status
+    // Determine final status (task creation complete, not execution complete)
+    // Actual execution will be handled by watch mode daemon
     if (result.failedPrds.length > 0) {
       result.status = result.completedPrds.length > 0 ? 'blocked' : 'failed';
     } else if (result.completedPrds.length === discoveredSet.prdSet.prds.length) {
+      // All PRDs have tasks created successfully
       result.status = 'complete';
     } else {
       result.status = 'blocked';

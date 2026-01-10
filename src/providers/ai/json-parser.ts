@@ -96,20 +96,25 @@ export function extractCodeChanges(
     
     // Try to parse extracted result as JSON if it's a string
     if (typeof extractedResult === 'string') {
+      // First try direct JSON parse
       try {
         const parsed = JSON.parse(extractedResult);
         if (parsed && parsed.files && Array.isArray(parsed.files)) {
           return parsed as CodeChanges;
         }
       } catch {
-        // Not valid JSON, continue to text extraction
+        // Not valid JSON, try enhanced text extraction (handles narrative text with embedded JSON)
+        const codeChanges = parseCodeChangesFromText(extractedResult, observationTracker, context);
+        if (codeChanges) {
+          return codeChanges;
+        }
       }
     } else if (extractedResult && extractedResult.files && Array.isArray(extractedResult.files)) {
       // Extracted result is already a CodeChanges object
       return extractedResult as CodeChanges;
     }
     
-    // If extracted result is still a string, try text extraction
+    // If extracted result is still a string, try enhanced text extraction
     const resultText = typeof extractedResult === 'string' ? extractedResult : JSON.stringify(extractedResult);
     return parseCodeChangesFromText(resultText, observationTracker, context);
   }
@@ -175,10 +180,46 @@ export function parseCodeChangesFromText(
     text = jsonBlockMatch[1].trim();
   }
 
-  // Try to find JSON object in text
-  const jsonMatch = text.match(/\{[\s\S]*\}/);
-  if (jsonMatch) {
-    text = jsonMatch[0];
+  // Enhanced JSON extraction: Try multiple strategies to find valid JSON
+  // Strategy 1: Look for JSON after common phrases like "Returning the response" or "JSON format:"
+  const jsonAfterPhraseMatch = text.match(/(?:returning|json format|response|result)[:\s]*\n?\s*(\{[\s\S]*\})/i);
+  if (jsonAfterPhraseMatch) {
+    text = jsonAfterPhraseMatch[1];
+  } else {
+    // Strategy 2: Find the largest valid JSON object (balanced braces)
+    const jsonObjects: string[] = [];
+    let depth = 0;
+    let start = -1;
+    
+    for (let i = 0; i < text.length; i++) {
+      if (text[i] === '{') {
+        if (depth === 0) {
+          start = i;
+        }
+        depth++;
+      } else if (text[i] === '}') {
+        depth--;
+        if (depth === 0 && start !== -1) {
+          const candidate = text.substring(start, i + 1);
+          // Validate it's likely JSON by checking for common fields
+          if (candidate.includes('files') || candidate.includes('summary') || candidate.includes('path')) {
+            jsonObjects.push(candidate);
+          }
+          start = -1;
+        }
+      }
+    }
+    
+    // Use the largest valid JSON object found
+    if (jsonObjects.length > 0) {
+      text = jsonObjects.reduce((a, b) => a.length > b.length ? a : b);
+    } else {
+      // Strategy 3: Fallback to simple regex (original behavior)
+      const jsonMatch = text.match(/\{[\s\S]*\}/);
+      if (jsonMatch) {
+        text = jsonMatch[0];
+      }
+    }
   }
 
   try {

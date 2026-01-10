@@ -771,6 +771,189 @@ Events are buffered in memory with these characteristics:
 - **Persistence**: Not persisted (cleared on restart)
 - **Thread-safe**: Safe for concurrent access
 
+## Event Persistence Model
+
+### In-Memory Buffer
+
+**Important**: Events are stored in an in-memory buffer only. They are **not persisted** to disk and are **cleared on restart**.
+
+**Characteristics**:
+- **Storage**: Events are stored in memory in a circular buffer
+- **Capacity**: Maximum 1000 events (oldest events are removed when capacity is exceeded)
+- **Lifecycle**: Events exist only during active execution
+- **Cleared on Restart**: Events are lost when dev-loop process restarts
+- **No Persistence**: Events are not written to disk or database
+
+**Implications**:
+- **Poll During Execution**: Events must be polled while execution is running
+- **No Historical Events**: After restart, historical events are not available
+- **Event Loss on Restart**: If execution is restarted, previous events are lost
+- **Real-Time Only**: Events provide real-time monitoring, not historical analysis
+
+### Event Lifecycle
+
+```mermaid
+sequenceDiagram
+    participant WE as WorkflowEngine
+    participant ES as EventStream
+    participant Buffer as In-Memory Buffer
+    participant MCP as MCP Tools
+    participant Agent as Outer Agent
+
+    WE->>ES: emit('file:filtered', data)
+    ES->>Buffer: push(event)
+    Note over Buffer: Max 1000 events<br/>Oldest removed when exceeded
+    
+    Agent->>MCP: devloop_events_poll(since)
+    MCP->>Buffer: getEvents(since)
+    Buffer->>MCP: filtered events
+    MCP->>Agent: { events: [...] }
+    
+    Note over Buffer: Events cleared on restart
+```
+
+### Event Source
+
+**Critical**: Events are emitted by the execution process itself, not a separate daemon. The event stream is active whenever dev-loop is executing (watch mode or prd-set execute), regardless of execution mode.
+
+- **Watch Mode**: Events are emitted during continuous loop execution
+- **PRD Set Execute**: Events are emitted during one-shot execution
+- **No Separate Daemon**: Event streaming does not require a separate daemon process
+- **Same Process**: Events are emitted from the same process that runs execution
+
+## Event Monitoring Service vs Manual Polling
+
+Dev-loop provides two approaches to monitoring events: proactive monitoring service and manual polling. Both can be used together or independently.
+
+### Proactive Monitoring Service
+
+**What it is**: A separate service that automatically polls events and triggers interventions when thresholds are exceeded.
+
+**How it works**:
+1. Service polls events every N seconds (configurable, default: 5 seconds)
+2. Checks event counts against configured thresholds
+3. Triggers automated interventions when thresholds exceeded
+4. Tracks intervention effectiveness
+
+**When to use**:
+- Automated issue resolution
+- Unattended monitoring
+- Threshold-based interventions
+- When you want automated fixes without manual intervention
+
+**Configuration**:
+```javascript
+// devloop.config.js
+mcp: {
+  eventMonitoring: {
+    enabled: true,
+    pollingInterval: 5000,
+    thresholds: {
+      'json:parse_failed': { count: 3, autoAction: true, confidence: 0.8 },
+      'task:blocked': { count: 1, autoAction: true, confidence: 0.7 }
+    }
+  }
+}
+```
+
+**Starting the service**:
+- Automatically starts when contribution mode is activated (if enabled in config)
+- Or start manually: `await devloop_event_monitor_start()`
+
+**See [Proactive Monitoring Guide](PROACTIVE_MONITORING.md) for complete details.**
+
+### Manual Polling
+
+**What it is**: Direct polling of events via `devloop_events_poll` MCP tool.
+
+**How it works**:
+1. Outer agent calls `devloop_events_poll` in a loop
+2. Filters events by type, severity, task ID, PRD ID, etc.
+3. Processes events with custom logic
+4. Takes action based on events
+
+**When to use**:
+- Custom logic for specific events
+- Immediate feedback for debugging
+- Fine-grained control over event processing
+- When you want manual intervention based on events
+
+**Example**:
+```typescript
+let lastEventId = null;
+
+while (executionActive) {
+  const { events, lastEventId: newLastEventId } = await devloop_events_poll({
+    since: lastEventId,
+    types: ['contribution:issue_detected', 'task:blocked'],
+    severity: ['warn', 'error', 'critical'],
+    limit: 50
+  });
+  
+  for (const event of events) {
+    // Custom handling logic
+    handleEvent(event);
+  }
+  
+  lastEventId = newLastEventId;
+  await sleep(5000); // Poll every 5 seconds
+}
+```
+
+### Hybrid Approach (Recommended)
+
+**What it is**: Using both proactive monitoring service and manual polling simultaneously.
+
+**How it works**:
+- Proactive monitoring service handles common issues automatically
+- Manual polling handles specific cases with custom logic
+- Both can run simultaneously without conflicts
+
+**When to use**:
+- Best of both worlds
+- Automated fixes for common issues
+- Custom handling for specific scenarios
+- Full visibility into both automated and manual actions
+
+**Example**:
+```typescript
+// Start automated monitoring
+await devloop_event_monitor_start();
+
+// Also poll manually for custom logic
+let lastEventId = null;
+setInterval(async () => {
+  const { events, lastEventId: newLastEventId } = await devloop_events_poll({
+    since: lastEventId,
+    types: ['test:stalled', 'progress:stalled'],  // Specific events for custom handling
+    limit: 20
+  });
+  
+  // Custom handling
+  events.forEach(event => {
+    if (event.type === 'test:stalled') {
+      handleTestStalled(event); // Custom logic
+    }
+  });
+  
+  // Proactive monitoring service handles other events automatically
+  
+  lastEventId = newLastEventId;
+}, 5000);
+```
+
+### Comparison
+
+| Aspect | Proactive Monitoring Service | Manual Polling | Hybrid |
+|--------|----------------------------|----------------|--------|
+| **Automation** | Fully automated | Manual | Both |
+| **Custom Logic** | Limited (threshold-based) | Full control | Best of both |
+| **Best For** | Unattended monitoring | Active monitoring | Production use |
+| **Setup** | Requires config | Direct MCP calls | Both |
+| **Intervention** | Automatic | Manual | Both |
+
+**See [Outer Agent Monitoring Guide](OUTER_AGENT_MONITORING.md) for detailed best practices.**
+
 ## Integration with Contribution Mode
 
 Event streaming is especially useful in contribution mode:

@@ -12,6 +12,29 @@ import { getParallelMetricsTracker } from "../../core/metrics/parallel";
 import { ProgressTracker } from "../../core/tracking/progress-tracker";
 import { PrdConfigParser } from "../../core/prd/parser/config-parser";
 
+/**
+ * Watch command - Daemon mode for single PRD execution
+ * 
+ * **Execution Mode**: Daemon (continuous loop until complete)
+ * **Use Case**: Single PRD execution with iterative improvement until PRD is 100% complete
+ * **Command**: `npx dev-loop watch --until-complete`
+ * 
+ * **How it works**:
+ * - Runs in a continuous loop, executing workflow iterations
+ * - Exits automatically when PRD is 100% complete (all tasks done, tests passing)
+ * - Can be stopped with `Ctrl+C` or `npx dev-loop stop`
+ * - Event streaming is active during execution
+ * 
+ * **When to use**: 
+ * - Working with a single PRD
+ * - Need continuous iteration until PRD is complete
+ * - Tests may fail and need multiple fix attempts
+ * - Code generation quality may improve over iterations
+ * 
+ * **Not for**: PRD sets (use `prd-set execute` instead)
+ * 
+ * **See**: `docs/contributing/EXECUTION_MODES.md` for complete guide
+ */
 export async function watchCommand(options: {
   config?: string;
   debug?: boolean;
