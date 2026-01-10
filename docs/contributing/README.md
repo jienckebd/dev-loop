@@ -71,9 +71,7 @@ Dev-loop includes a comprehensive metrics and reporting system. When adding new 
 
 See [`../users/METRICS.md`](../users/METRICS.md) for user-facing documentation.
 
-## Proactive Monitoring & Intervention
-
-Dev-loop includes a proactive event monitoring system that automatically detects issues and applies corrective actions:
+## Proactive Monitoring & InterventionDev-loop includes a proactive event monitoring system that automatically detects issues and applies corrective actions:
 
 - **Event Monitoring**: Continuous event polling and threshold-based intervention triggering
 - **Issue Classification**: Automatic issue classification and confidence calculation
