@@ -779,4 +779,3 @@ export function createDefaultInterventionMetrics(): InterventionMetrics {
     },
   };
 }
-

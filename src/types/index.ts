@@ -230,9 +230,7 @@ export interface ChatRequest {
     taskId?: string;
     taskTitle?: string;
   };
-}
-
-/**
+}/**
  * Chat instruction file for Cursor agent to process
  */
 export interface ChatInstruction {

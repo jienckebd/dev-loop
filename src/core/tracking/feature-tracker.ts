@@ -39,20 +39,28 @@ export class FeatureTracker {
   }
 
   private loadData(): FeatureTrackerData {
+    const defaultData: FeatureTrackerData = {
+      version: '1.0',
+      features: {},
+      usageHistory: [],
+    };
+    
     try {
       if (fs.existsSync(this.metricsPath)) {
         const content = fs.readFileSync(this.metricsPath, 'utf-8');
-        return JSON.parse(content);
+        const parsed = JSON.parse(content);
+        // Validate required fields exist, use defaults if missing
+        return {
+          version: parsed.version || defaultData.version,
+          features: parsed.features || defaultData.features,
+          usageHistory: parsed.usageHistory || defaultData.usageHistory,
+        };
       }
     } catch (error) {
       logger.warn(`[FeatureTracker] Failed to load data: ${error instanceof Error ? error.message : String(error)}`);
     }
 
-    return {
-      version: '1.0',
-      features: {},
-      usageHistory: [],
-    };
+    return defaultData;
   }
 
   private saveData(): void {
