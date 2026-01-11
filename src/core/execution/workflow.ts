@@ -1149,7 +1149,18 @@ export class WorkflowEngine {
         console.log(`[DEBUG] Existing code size: ${existingCode?.length || 0} chars`);
         console.log('[DEBUG] ===== TASK EXECUTION DETAILS =====\n');
       }
-      const changes = await this.aiProvider.generateCode(template, context);
+      let changes: CodeChanges;
+      try {
+        changes = await this.aiProvider.generateCode(template, context);
+      } catch (error: any) {
+        // Check if this is a token budget exceeded error - rethrow to halt execution
+        if (error && (error.message?.includes('Token budget exceeded') || error.message?.includes('token budget EXCEEDED'))) {
+          logger.error(`[WorkflowEngine] Token budget exceeded during code generation - halting execution`);
+          throw error; // Re-throw to propagate to watch mode
+        }
+        // For other errors, rethrow as well
+        throw error;
+      }
       const aiCallDuration = Date.now() - aiCallStart;
 
       // Track provider response for instability detection
