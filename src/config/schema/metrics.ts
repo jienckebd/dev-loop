@@ -13,7 +13,7 @@ import type { ConfigOverlay } from './overlays';
  * - Schema Operations (schema-metrics.json)
  * - Contribution Mode (contribution-mode.json)
  * - Retry Counts (retry-counts.json)
- * - Evolution State (evolution-state.json)
+ * - Contribution State (migrated from evolution-state.json)
  *
  * Based on interfaces from src/core/metrics/types.ts
  */
@@ -641,7 +641,8 @@ export const retryCountsFileSchema = z.object({
   })),
 }).passthrough();
 
-// Evolution State Schema
+// Evolution State Schema (deprecated - migrated to contribution tracking in execution-state.json)
+// Kept for backward compatibility with legacy evolution-state.json files
 export const evolutionStateFileSchema = z.object({
   version: z.union([z.number(), z.string()]),
   currentPhase: z.string().optional(),

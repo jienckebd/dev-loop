@@ -48,7 +48,7 @@ export class UnifiedStateManager {
         },
         prdSets: {},
         prds: {},
-        evolution: {
+        contribution: {
           fileCreation: {},
           investigationTasks: {},
         },
@@ -252,7 +252,7 @@ export class UnifiedStateManager {
       },
       prdSets: {},
       prds: {},
-      evolution: {
+      contribution: {
         fileCreation: {},
         investigationTasks: {},
       },

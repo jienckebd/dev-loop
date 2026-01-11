@@ -236,8 +236,8 @@ export class WorkflowEngine {
       this.errorAnalyzer = new ErrorAnalyzer();
     }
 
-    // Initialize observation tracking if enabled (for evolution mode)
-    if ((config as any).evolution?.enabled !== false) {
+    // Initialize observation tracking if enabled (for contribution mode)
+    if ((config as any).contribution?.enabled !== false) {
       try {
         const { ObservationTracker } = require('../tracking/observation-tracker');
         const { ImprovementSuggester } = require('./improvement-suggester');

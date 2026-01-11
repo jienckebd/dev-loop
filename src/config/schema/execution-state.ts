@@ -6,7 +6,7 @@ import { z } from 'zod';
  * Unified schema for all execution-related state, consolidating:
  * - Current workflow state (from state.json)
  * - PRD set states (from prd-set-state.json)
- * - Evolution tracking (from evolution-state.json)
+ * - Contribution tracking (from evolution-state.json, migrated to contribution)
  * - Contribution mode (from contribution-mode.json)
  * - Session management (from cursor-sessions.json)
  * - Retry counts (from retry-counts.json)
@@ -92,7 +92,7 @@ export const prdSetStateSchema = z.object({
   currentPhase: z.number().optional(),
 });
 
-export const evolutionSchema = z.object({
+export const contributionSchema = z.object({
   fileCreation: z.record(z.string(), fileCreationTrackingSchema).default({}),
   investigationTasks: z.record(z.string(), investigationTrackingSchema).default({}),
 });
@@ -131,8 +131,11 @@ export const executionStateFileSchema = z.object({
   active: activeContextSchema,
   prdSets: z.record(z.string(), prdSetStateSchema).default({}),
   prds: z.record(z.string(), prdStateSchema).default({}),
-  evolution: evolutionSchema.default({}),
-  contributionMode: contributionModeSchema.default({}),
+  contribution: contributionSchema.default({
+    fileCreation: {},
+    investigationTasks: {},
+  }),
+  contributionMode: contributionModeSchema,
   sessions: z.record(z.string(), sessionStateSchema).default({}),
 });
 
@@ -141,6 +144,6 @@ export type ActiveContext = z.infer<typeof activeContextSchema>;
 export type PRDSetState = z.infer<typeof prdSetStateSchema>;
 export type PRDState = z.infer<typeof prdStateSchema>;
 export type PhaseState = z.infer<typeof phaseStateSchema>;
-export type EvolutionState = z.infer<typeof evolutionSchema>;
+export type ContributionState = z.infer<typeof contributionSchema>;
 export type ContributionModeState = z.infer<typeof contributionModeSchema>;
 export type SessionState = z.infer<typeof sessionStateSchema>;

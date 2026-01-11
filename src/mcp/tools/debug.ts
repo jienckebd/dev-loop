@@ -211,18 +211,18 @@ export function registerDebugTools(mcp: FastMCPType, getConfig: ConfigLoader): v
     },
   });
 
-  // devloop_evolve - Get improvement suggestions
+  // devloop_contribute - Get improvement suggestions
   mcp.addTool({
-    name: 'devloop_evolve',
-    description: 'View evolution insights (observations and improvement suggestions)',
+    name: 'devloop_contribute',
+    description: 'View contribution insights (observations and improvement suggestions)',
     parameters: z.object({
       config: z.string().optional().describe('Path to config file (optional)'),
       projectType: z.string().optional().describe('Filter observations by project type'),
     }),
     execute: async (args: { config?: string; projectType?: string }, context: any) => {
       return JSON.stringify({
-        note: 'Evolution insights available via CLI: npx dev-loop evolve',
-        message: 'Use the evolve command for detailed insights',
+        note: 'Contribution insights available via CLI: npx dev-loop contribution-metrics',
+        message: 'Use the contribution-metrics command for detailed insights',
       });
     },
   });

@@ -42,7 +42,7 @@ Quick reference for AI agents to discover relevant documentation based on tasks,
 | PRD-Specific Config | [`PRD_FEATURES.md`](PRD_FEATURES.md) | Section 6 | config, prd-specific, framework | PRD configuration |
 | Requirement Management | [`PRD_FEATURES.md`](PRD_FEATURES.md) | Section 7 | requirement, dependency, phase, tracking | Managing tasks |
 | Intervention Modes | [`PRD_FEATURES.md`](PRD_FEATURES.md) | Section 8 | intervention, approval, autonomous | Setting execution mode |
-| Evolution Mode | [`PRD_FEATURES.md`](PRD_FEATURES.md) | Section 9 | evolution, prd, dependency, coordination | Multi-PRD execution |
+| Contribution Mode | [`PRD_FEATURES.md`](PRD_FEATURES.md) | Section 9 | contribution, prd, dependency, coordination | Multi-PRD execution |
 | Hooks and Lifecycle | [`PRD_FEATURES.md`](PRD_FEATURES.md) | Section 10 | hooks, lifecycle, preTest, postApply | Lifecycle commands |
 | Validation and Smoke Tests | [`PRD_FEATURES.md`](PRD_FEATURES.md) | Section 11 | validation, smoke, test, http | Runtime validation |
 | Metrics and Learning | [`PRD_FEATURES.md`](PRD_FEATURES.md) | Section 12 | metrics, learning, pattern | Pattern learning |

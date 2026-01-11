@@ -28,7 +28,7 @@ The execution state consolidates:
 - **Active Context**: Currently active PRD set, PRD, phase, task
 - **PRD Set States**: Execution status for each PRD set
 - **PRD States**: Execution status for each PRD
-- **Evolution Tracking**: File creation and investigation task tracking
+- **Contribution Tracking**: File creation and investigation task tracking
 - **Contribution Mode**: Contribution mode activation state
 - **Sessions**: Cursor session management
 
@@ -140,7 +140,7 @@ The following files were consolidated:
 **Execution State** (consolidated into `execution-state.json`):
 - `state.json` → `execution-state.json.active`
 - `prd-set-state.json` → `execution-state.json.prdSets`
-- `evolution-state.json` → `execution-state.json.evolution`
+- `evolution-state.json` → `execution-state.json.contribution`
 - `contribution-mode.json` → `execution-state.json.contributionMode`
 - `cursor-sessions.json` → `execution-state.json.sessions`
 - `retry-counts.json` → `execution-state.json.prds[prdId].retryCounts`
@@ -266,8 +266,8 @@ await stateManager.setActiveContext({
 ```typescript
 await stateManager.updateExecutionState((draft) => {
   const prdId = draft.active.prdId;
-  if (prdId && !draft.evolution.fileCreation[prdId]) {
-    draft.evolution.fileCreation[prdId] = {
+  if (prdId && !draft.contribution.fileCreation[prdId]) {
+    draft.contribution.fileCreation[prdId] = {
       requested: [],
       created: [],
       missing: [],
@@ -275,8 +275,8 @@ await stateManager.updateExecutionState((draft) => {
     };
   }
   if (prdId) {
-    draft.evolution.fileCreation[prdId].requested.push('path/to/file.php');
-    draft.evolution.fileCreation[prdId].created.push('path/to/file.php');
+    draft.contribution.fileCreation[prdId].requested.push('path/to/file.php');
+    draft.contribution.fileCreation[prdId].created.push('path/to/file.php');
   }
 });
 ```

@@ -57,7 +57,7 @@ Archives preserve the original file structure:
 ## Files Archived
 
 ### Dev-Loop State Files
-- `.devloop/execution-state.json` - Unified execution state (replaces state.json, prd-set-state.json, cursor-sessions.json, retry-counts.json, contribution-mode.json, evolution-state.json)
+- `.devloop/execution-state.json` - Unified execution state (replaces state.json, prd-set-state.json, cursor-sessions.json, retry-counts.json, contribution-mode.json, evolution-state.json - note: evolution-state.json was migrated to contribution tracking)
 - `.devloop/metrics.json` - Unified hierarchical metrics (replaces prd-set-metrics.json, prd-metrics.json, phase-metrics.json, feature-metrics.json, schema-metrics.json)
 - `.devloop/prd-context/*.json` - PRD context files
 

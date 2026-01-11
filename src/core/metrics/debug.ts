@@ -34,7 +34,7 @@ export interface RunMetrics {
     matched?: number;
     applied?: number;
   };
-  // Enhanced metrics for evolution mode
+  // Enhanced metrics for contribution mode
   projectMetadata?: {
     projectType?: string; // e.g., "drupal", "react", "node"
     framework?: string; // from config
@@ -49,8 +49,8 @@ export interface RunMetrics {
     tokensPerSuccess?: number; // tokens used per successful task
     iterationsToSuccess?: number; // how many attempts before success
   };
-  // Evolution mode metrics for file creation tracking
-  evolution?: {
+  // Contribution mode metrics for file creation tracking
+  contribution?: {
     fileCreation?: {
       filesRequested: string[];      // Files explicitly required by task
       filesCreated: string[];        // Files AI actually created
@@ -213,7 +213,7 @@ export class DebugMetrics {
   }
 
   /**
-   * Record file creation attempt for evolution mode analysis
+   * Record file creation attempt for contribution mode analysis
    */
   recordFileCreation(
     filesRequested: string[],
@@ -221,10 +221,10 @@ export class DebugMetrics {
     missingFiles: string[],
     wrongLocationFiles: string[] = []
   ): void {
-    if (!this.currentRun.evolution) {
-      this.currentRun.evolution = {};
+    if (!this.currentRun.contribution) {
+      this.currentRun.contribution = {};
     }
-    this.currentRun.evolution.fileCreation = {
+    this.currentRun.contribution.fileCreation = {
       filesRequested,
       filesCreated,
       missingFiles,
@@ -233,13 +233,13 @@ export class DebugMetrics {
   }
 
   /**
-   * Record investigation task handling for evolution mode analysis
+   * Record investigation task handling for contribution mode analysis
    */
   recordInvestigationHandling(requested: boolean, skipped: boolean, created: number): void {
-    if (!this.currentRun.evolution) {
-      this.currentRun.evolution = {};
+    if (!this.currentRun.contribution) {
+      this.currentRun.contribution = {};
     }
-    this.currentRun.evolution.investigationTasks = {
+    this.currentRun.contribution.investigationTasks = {
       requested,
       skipped,
       created,
@@ -247,29 +247,29 @@ export class DebugMetrics {
   }
 
   /**
-   * Record blocking reason for evolution mode analysis
+   * Record blocking reason for contribution mode analysis
    */
   recordBlockingReason(reason: string): void {
-    if (!this.currentRun.evolution) {
-      this.currentRun.evolution = {};
+    if (!this.currentRun.contribution) {
+      this.currentRun.contribution = {};
     }
-    this.currentRun.evolution.blockingReason = reason;
+    this.currentRun.contribution.blockingReason = reason;
   }
 
   /**
-   * Record AI summary for evolution mode analysis
+   * Record AI summary for contribution mode analysis
    */
   recordAiSummary(summary: string): void {
-    if (!this.currentRun.evolution) {
-      this.currentRun.evolution = {};
+    if (!this.currentRun.contribution) {
+      this.currentRun.contribution = {};
     }
-    this.currentRun.evolution.aiSummary = summary?.substring(0, 500); // Truncate to prevent bloat
+    this.currentRun.contribution.aiSummary = summary?.substring(0, 500); // Truncate to prevent bloat
   }
 
   /**
-   * Get evolution mode analytics for diagnosis
+   * Get contribution mode analytics for diagnosis
    */
-  getEvolutionAnalytics(): {
+  getContributionAnalytics(): {
     totalFileCreationAttempts: number;
     successfulFileCreations: number;
     fileCreationSuccessRate: number;
@@ -278,7 +278,7 @@ export class DebugMetrics {
     investigationTasksSkipped: number;
     commonBlockingReasons: Record<string, number>;
   } {
-    const runs = this.metrics.runs.filter(r => r.evolution);
+    const runs = this.metrics.runs.filter(r => r.contribution);
 
     let totalAttempts = 0;
     let successfulCreations = 0;
@@ -288,22 +288,22 @@ export class DebugMetrics {
     const blockingReasons: Record<string, number> = {};
 
     for (const run of runs) {
-      if (run.evolution?.fileCreation) {
+      if (run.contribution?.fileCreation) {
         totalAttempts++;
-        const fc = run.evolution.fileCreation;
+        const fc = run.contribution.fileCreation;
         if (fc.missingFiles.length === 0 && fc.wrongLocationFiles.length === 0) {
           successfulCreations++;
         }
         missingPatterns.push(...fc.missingFiles);
       }
-      if (run.evolution?.investigationTasks) {
-        if (run.evolution.investigationTasks.skipped) {
+      if (run.contribution?.investigationTasks) {
+        if (run.contribution.investigationTasks.skipped) {
           invSkipped++;
         }
-        invCreated += run.evolution.investigationTasks.created;
+        invCreated += run.contribution.investigationTasks.created;
       }
-      if (run.evolution?.blockingReason) {
-        const reason = run.evolution.blockingReason;
+      if (run.contribution?.blockingReason) {
+        const reason = run.contribution.blockingReason;
         blockingReasons[reason] = (blockingReasons[reason] || 0) + 1;
       }
     }

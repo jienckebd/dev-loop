@@ -93,14 +93,21 @@ Wrapper around task-master-ai MCP for task management:
 - Update task status
 - Get task details
 
-### StateManager
+### UnifiedStateManager
 
-**Location:** `src/core/utils/state-manager.ts`
+**Location:** `src/core/state/StateManager.ts`
 
-Manages workflow state persistence:
-- Saves state to `.devloop/` directory
+Manages unified execution state and metrics with immutable updates:
+- **Immer Integration**: Immutable state updates using producers
+- **Zod Validation**: Schema validation on read/write
+- **Atomic Writes**: Temp file + rename pattern for safety
+- **File Locking**: Prevents race conditions in concurrent access
+- **Unified State**: All execution state in `.devloop/execution-state.json`
+- **Unified Metrics**: All metrics in `.devloop/metrics.json` with hierarchical structure
 - Handles state recovery on restart
-- Tracks execution history
+- Tracks execution history across PRD sets, PRDs, phases, and tasks
+
+See [`docs/ai/STATE_MANAGEMENT.md`](../ai/STATE_MANAGEMENT.md) for complete documentation.
 
 ### CodeContextProvider
 
@@ -172,7 +179,7 @@ See "Monitoring & Intervention System" section above for details.
 
 Learns from successful and failed task executions:
 - Extracts patterns
-- Stores in `.devloop/patterns.json`
+- Stores in `.devloop/patterns.json` (managed via UnifiedStateManager)
 - Injects guidance into AI prompts
 
 ### ParallelMetrics
@@ -184,7 +191,7 @@ Tracks concurrent agent execution and coordination:
 - Tracks concurrency levels (max, average)
 - Calculates parallel efficiency (vs sequential execution)
 - Measures agent overlap time and coordination statistics
-- Stores metrics in `.devloop/parallel-metrics.json`
+- Stores metrics in `.devloop/metrics.json.parallel` (unified metrics file)
 
 ### ProgressTracker
 

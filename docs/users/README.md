@@ -111,21 +111,14 @@ module.exports = {
         enabled: true,
         maxSessionAge: 3600000,
         maxHistoryItems: 50,
-        sessionsPath: '.devloop/cursor-sessions.json',
+        sessionsPath: '.devloop/execution-state.json', // Sessions now in unified execution-state.json
       },
     },
   },
   debug: false,
   metrics: {
     enabled: true,
-    path: '.devloop/metrics.json',
-    prdSetMetricsPath: '.devloop/prd-set-metrics.json',
-    prdMetricsPath: '.devloop/prd-metrics.json',
-    phaseMetricsPath: '.devloop/phase-metrics.json',
-    featureMetricsPath: '.devloop/feature-metrics.json',
-    schemaMetricsPath: '.devloop/schema-metrics.json',
-    observationMetricsPath: '.devloop/observation-metrics.json',
-    patternMetricsPath: '.devloop/pattern-metrics.json',
+    path: '.devloop/metrics.json', // Unified hierarchical metrics (prdSets, prds, phases, features, schema, parallel, insights)
     testResultsPath: '.devloop/test-results',
     reportsPath: '.devloop/reports',
     costTracking: {

@@ -117,7 +117,7 @@ export const runMetricsSchema = z.object({
     tokensPerSuccess: z.number().optional(),
     iterationsToSuccess: z.number().optional(),
   }).optional(),
-  evolution: z.object({
+  contribution: z.object({
     fileCreation: z.object({
       filesRequested: z.array(z.string()).optional(),
       filesCreated: z.array(z.string()).optional(),

@@ -118,7 +118,7 @@ Session metrics track provider-agnostic session usage:
 
 Intervention metrics track all automated interventions performed by the proactive event monitoring system and their outcomes. These metrics enable analysis and continuous improvement of intervention strategies.
 
-**Location:** `.devloop/intervention-metrics.json`
+**Location:** `.devloop/metrics.json` (unified metrics file)
 
 **Metrics Structure:**
 
@@ -425,46 +425,38 @@ Supported providers:
 
 ## File Locations
 
-Metrics are stored in:
-- `.devloop/metrics.json` - Task-level metrics
-- `.devloop/prd-set-metrics.json` - PRD set metrics
-- `.devloop/prd-metrics.json` - PRD metrics
-- `.devloop/phase-metrics.json` - Phase-level metrics
-- `.devloop/feature-metrics.json` - Feature usage metrics
-- `.devloop/schema-metrics.json` - Schema operation metrics
-- `.devloop/observation-metrics.json` - Observation metrics
-- `.devloop/pattern-metrics.json` - Pattern matching metrics
-- `.devloop/test-results.json` - Test execution results
-- `.devloop/phase-metrics.json` - Phase metrics
-- `.devloop/feature-metrics.json` - Feature usage metrics
-- `.devloop/schema-metrics.json` - Schema operation metrics
-- `.devloop/observation-metrics.json` - Observation metrics
-- `.devloop/pattern-metrics.json` - Pattern metrics
-- `.devloop/parallel-metrics.json` - Parallel execution metrics
+Metrics are stored in a unified hierarchical structure:
+
+- `.devloop/metrics.json` - **Unified hierarchical metrics file** containing:
+  - `runs` - Task-level metrics (run executions)
+  - `prdSets` - PRD set-level metrics
+  - `prds` - PRD-level metrics
+  - `phases` - Phase-level metrics (nested by PRD)
+  - `features` - Feature usage metrics
+  - `parallel` - Parallel execution metrics
+  - `schema` - Schema operation metrics
+  - `insights` - Enhanced performance insights (efficiency, trends, bottlenecks, quality, resources)
+  - `summary` - Aggregated summary metrics
+
+Additional files:
+- `.devloop/test-results.json/test-results.json` - Test execution results
 - `.devloop/test-results/` - Test results tracking
-- `.devloop/error-analysis.json` - Error analysis data
-- `.devloop/intervention-metrics.json` - Intervention metrics (proactive monitoring)
+- `.devloop/reports/` - Generated reports
+
+See [`docs/ai/STATE_MANAGEMENT.md`](../ai/STATE_MANAGEMENT.md) for complete documentation on the unified state management system.
 
 Reports are generated in:
 - `.devloop/reports/` - Generated reports
 
 ## Configuration
 
-Configure metrics paths in `devloop.config.js`:
+Configure metrics in `devloop.config.js`:
 
 ```javascript
 module.exports = {
   metrics: {
     enabled: true,
-    path: '.devloop/metrics.json',
-    prdSetMetricsPath: '.devloop/prd-set-metrics.json',
-    prdMetricsPath: '.devloop/prd-metrics.json',
-    phaseMetricsPath: '.devloop/phase-metrics.json',
-    featureMetricsPath: '.devloop/feature-metrics.json',
-    schemaMetricsPath: '.devloop/schema-metrics.json',
-    observationMetricsPath: '.devloop/observation-metrics.json',
-    patternMetricsPath: '.devloop/pattern-metrics.json',
-    parallelMetricsPath: '.devloop/parallel-metrics.json',
+    path: '.devloop/metrics.json', // Unified hierarchical metrics file
     testResultsPath: '.devloop/test-results',
     reportsPath: '.devloop/reports',
     costTracking: {

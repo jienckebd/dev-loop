@@ -35,7 +35,7 @@ This guide shows how PRDs can leverage **ALL** dev-loop capabilities to maximize
 6. [PRD-Specific Configuration](#6-prd-specific-configuration)
 7. [Requirement Management](#7-requirement-management)
 8. [Intervention Modes](#8-intervention-modes)
-9. [Evolution Mode Features](#9-evolution-mode-features)
+9. [Contribution Mode Features](#9-contribution-mode-features)
 10. [Hooks and Lifecycle](#10-hooks-and-lifecycle)
 11. [Validation and Smoke Tests](#11-validation-and-smoke-tests)
 12. [Metrics and Learning](#12-metrics-and-learning)
@@ -706,7 +706,7 @@ Currently, intervention mode is set globally in `devloop.config.js`, but PRDs ca
 
 ---
 
-## 9. Evolution Mode Features
+## 9. Contribution Mode Features
 
 **Purpose**: Coordinate multiple PRDs executing in parallel with dependencies.
 

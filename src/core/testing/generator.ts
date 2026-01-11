@@ -20,7 +20,7 @@ export class TestGenerator {
   }
 
   /**
-   * Generate or evolve tests from requirements
+   * Generate or refine tests from requirements
    * Supports parallel generation with batching to respect API rate limits
    */
   async generateTests(

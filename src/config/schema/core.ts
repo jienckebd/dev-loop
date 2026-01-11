@@ -386,7 +386,7 @@ const configSchemaBase = z.object({
     // Context management
     contextPath: z.string().default('.devloop/prd-context'),
     maxHistoryIterations: z.number().default(50),
-    // Test evolution
+    // Test refinement interval
     testEvolutionInterval: z.number().default(5),
     // Learning
     learnFromSuccess: z.boolean().default(true),

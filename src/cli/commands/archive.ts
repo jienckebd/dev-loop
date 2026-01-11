@@ -262,7 +262,7 @@ export async function archiveCommand(options: ArchiveOptions): Promise<void> {
         },
         prdSets: {},
         prds: {},
-        evolution: {
+        contribution: {
           fileCreation: {},
           investigationTasks: {},
         },
