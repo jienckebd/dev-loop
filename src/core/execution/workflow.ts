@@ -1206,6 +1206,7 @@ export class WorkflowEngine {
           if (totalInput > 0 || totalOutput > 0) {
             this.debugMetrics.recordTokens(totalInput, totalOutput);
             // Phase 7: Track token budget per PRD execution
+            // Note: trackTokenBudget throws error if budget exceeded - let it propagate
             const prdId = (this as any).currentPrdId || 'default';
             this.trackTokenBudget(totalInput + totalOutput, prdId);
           }
@@ -1218,6 +1219,7 @@ export class WorkflowEngine {
           if (tokens.input || tokens.output) {
             this.debugMetrics!.recordTokens(tokens.input || 0, tokens.output || 0);
             // Phase 7: Track token budget per PRD execution
+            // Note: trackTokenBudget throws error if budget exceeded - let it propagate
             const prdId = (this as any).currentPrdId || 'default';
             this.trackTokenBudget((tokens.input || 0) + (tokens.output || 0), prdId);
           }
@@ -1344,6 +1346,46 @@ export class WorkflowEngine {
               noTasks: false,
               taskId: task.id,
               error: `Required files not created: ${missingFiles.join(', ')}`,
+            };
+          } else {
+            // All required files exist - task is complete
+            console.log(`[WorkflowEngine] AI returned empty files but all required files exist - marking task as done`);
+            await this.taskBridge.updateTaskStatus(task.id, 'done');
+            
+            const totalDuration = Date.now() - startTime;
+            if (this.debugMetrics) {
+              this.debugMetrics.recordTiming('total', totalDuration);
+              this.debugMetrics.completeRun('success');
+            }
+            
+            await this.updateState({ status: 'idle' });
+            return {
+              completed: true,
+              noTasks: false,
+              taskId: task.id,
+            };
+          }
+        } else {
+          // No required files specified - if summary indicates success, mark as done
+          const summary = (changes.summary || '').toLowerCase();
+          if (summary.includes('already exists') || 
+              summary.includes('already complete') ||
+              summary.includes('meets all requirements') ||
+              summary.includes('no changes needed')) {
+            console.log(`[WorkflowEngine] AI indicated task already complete with no required files - marking as done`);
+            await this.taskBridge.updateTaskStatus(task.id, 'done');
+            
+            const totalDuration = Date.now() - startTime;
+            if (this.debugMetrics) {
+              this.debugMetrics.recordTiming('total', totalDuration);
+              this.debugMetrics.completeRun('success');
+            }
+            
+            await this.updateState({ status: 'idle' });
+            return {
+              completed: true,
+              noTasks: false,
+              taskId: task.id,
             };
           }
         }
