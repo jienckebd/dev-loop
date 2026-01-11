@@ -619,7 +619,7 @@ export class PrdReportGenerator {
     options: Partial<ReportOptions> = {}
   ): Promise<string> {
     // Load PRD metrics
-    const { PrdMetrics } = require('./prd-metrics');
+    const { PrdMetrics } = await import('../metrics/prd');
     const prdMetrics = new PrdMetrics();
     const metrics = prdMetrics.getPrdMetrics(prdId);
 
@@ -675,9 +675,9 @@ export class PrdReportGenerator {
     options: Partial<ReportOptions> = {}
   ): Promise<string> {
     // Load phase metrics
-    const { PhaseMetrics } = require('./phase-metrics');
+    const { PhaseMetrics } = await import('../metrics/phase');
     const phaseMetrics = new PhaseMetrics();
-    const metrics = phaseMetrics.getPhaseMetrics(prdId, phaseId);
+    const metrics = phaseMetrics.getPhaseMetrics(phaseId, prdId);
 
     if (!metrics) {
       throw new Error(`Phase metrics not found: ${prdId}:${phaseId}`);

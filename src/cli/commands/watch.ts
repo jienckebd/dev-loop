@@ -209,7 +209,7 @@ export async function watchCommand(options: {
     }
 
     const prdTracker = options.untilComplete ? new PrdTracker(config) : null;
-    const maxIterations = options.maxIterations || 1000;
+    const maxIterations = options.maxIterations || (config as any).autonomous?.maxIterations || 100;
 
     if (options.untilComplete) {
       console.log(chalk.cyan('Starting daemon mode (--until-complete: will exit when PRD is 100% complete)...'));
@@ -359,10 +359,27 @@ export async function watchCommand(options: {
       } catch (error) {
         consecutiveNoTasks = 0;
         statusSpinner.fail(`Iteration ${iteration}: Failed`);
-        console.error(chalk.red(`  Error: ${error instanceof Error ? error.message : String(error)}`));
+        const errorMessage = error instanceof Error ? error.message : String(error);
+        console.error(chalk.red(`  Error: ${errorMessage}`));
         if (error instanceof Error && error.stack) {
           console.error(chalk.gray(`  Stack: ${error.stack}`));
         }
+        
+        // CRITICAL: Check for token budget exceeded - halt execution immediately
+        if (errorMessage.includes('Token budget exceeded') || errorMessage.includes('token budget EXCEEDED')) {
+          console.error(chalk.red('\n⚠️  Token budget exceeded - halting execution to prevent excessive token usage'));
+          console.error(chalk.yellow('Review execution and optimize before continuing.\n'));
+          await removePidFile();
+          process.exit(1);
+        }
+        
+        // Check for max iterations exceeded
+        if (errorMessage.includes('Max iterations') || errorMessage.includes('max iterations')) {
+          console.error(chalk.yellow('\n⚠️  Maximum iterations reached - halting execution\n'));
+          await removePidFile();
+          process.exit(1);
+        }
+        
         await new Promise((resolve) => setTimeout(resolve, 5000)); // Wait 5 seconds before retry
       }
     }
