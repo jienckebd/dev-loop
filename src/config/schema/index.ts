@@ -17,6 +17,7 @@ export * from './phase';
 export * from './validation';
 export * from './runtime';
 export * from './metrics';
+export * from './execution-state';
 export * from './metadata';
 export * from './generator';
 

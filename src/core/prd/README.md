@@ -55,6 +55,6 @@ const result = await orchestrator.executePrdSet(prdSet);
 
 ## Related Files
 
-- `src/core/config/merger.ts` - Handles hierarchical config merging for PRD sets
+- `src/config/merger.ts` - Handles hierarchical config merging for PRD sets
 - `src/core/metrics/prd-set.ts` - PRD set-level metrics
 

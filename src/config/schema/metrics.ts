@@ -652,3 +652,80 @@ export const evolutionStateFileSchema = z.object({
   })),
   lastUpdated: z.string(),
 }).passthrough();
+
+// Enhanced Insights Schemas for Performance Analysis
+
+export const executionEfficiencySchema = z.object({
+  tokensPerSuccess: z.number().optional(),
+  avgIterationsToSuccess: z.number().optional(),
+  successRateByTaskType: z.record(z.string(), z.number()).default({}),
+  failurePatterns: z.array(z.object({
+    pattern: z.string(),
+    count: z.number(),
+    avgRetries: z.number(),
+  })).default([]),
+}).partial();
+
+export const performanceTrendsSchema = z.object({
+  tokenUsageTrend: z.array(z.object({
+    date: z.string(),
+    tokens: z.number(),
+  })).default([]),
+  executionTimeTrend: z.array(z.object({
+    date: z.string(),
+    avgMs: z.number(),
+  })).default([]),
+  successRateTrend: z.array(z.object({
+    date: z.string(),
+    rate: z.number(),
+  })).default([]),
+}).partial();
+
+export const bottleneckAnalysisSchema = z.object({
+  slowestOperations: z.array(z.object({
+    operation: z.string(),
+    avgMs: z.number(),
+    count: z.number(),
+  })).default([]),
+  mostRetriedTasks: z.array(z.object({
+    taskId: z.string(),
+    retries: z.number(),
+    avgTimeMs: z.number(),
+  })).default([]),
+  contextSizeImpact: z.object({
+    large: z.object({
+      avgSuccessRate: z.number(),
+    }).partial(),
+    small: z.object({
+      avgSuccessRate: z.number(),
+    }).partial(),
+  }).partial(),
+}).partial();
+
+export const qualityMetricsSchema = z.object({
+  testCoverageProgress: z.array(z.object({
+    date: z.string(),
+    coverage: z.number(),
+  })).default([]),
+  validationPassRate: z.number().optional(),
+  firstTimeSuccessRate: z.number().optional(),
+}).partial();
+
+export const resourceUtilizationSchema = z.object({
+  avgContextWindowUsage: z.number().optional(),
+  avgFilesPerTask: z.number().optional(),
+  tokenDistribution: z.object({
+    min: z.number(),
+    max: z.number(),
+    median: z.number(),
+    p95: z.number(),
+  }).partial(),
+}).partial();
+
+export const insightsSchema = z.object({
+  efficiency: executionEfficiencySchema,
+  trends: performanceTrendsSchema,
+  bottlenecks: bottleneckAnalysisSchema,
+  quality: qualityMetricsSchema,
+  resources: resourceUtilizationSchema,
+}).partial();

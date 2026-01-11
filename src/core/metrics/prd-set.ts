@@ -45,7 +45,7 @@ export class PrdSetMetrics {
   private metricsPath: string;
   private metrics: Map<string, PrdSetMetricsData> = new Map();
 
-  constructor(metricsPath: string = '.devloop/prd-set-metrics.json') {
+  constructor(metricsPath: string = '.devloop/metrics.json') {
     this.metricsPath = path.resolve(process.cwd(), metricsPath);
     this.loadMetrics();
   }

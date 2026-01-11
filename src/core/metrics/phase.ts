@@ -14,7 +14,7 @@ export class PhaseMetrics {
   private metricsPath: string;
   private metrics: Map<string, PhaseMetricsData> = new Map(); // Key: `${prdId}-${phaseId}`
 
-  constructor(metricsPath: string = '.devloop/phase-metrics.json') {
+  constructor(metricsPath: string = '.devloop/metrics.json') {
     this.metricsPath = path.resolve(process.cwd(), metricsPath);
     this.loadMetrics();
   }

@@ -47,9 +47,11 @@ export class PrdCoordinator {
   private statePath: string;
   private debug: boolean;
 
-  constructor(statePath: string = '.devloop/prd-state.json', debug: boolean = false) {
+  constructor(statePath: string = '.devloop/execution-state.json', debug: boolean = false) {
     this.statePath = statePath;
     this.debug = debug;
+    // Note: This class still uses its own state format for coordination
+    // TODO: Refactor to use UnifiedStateManager for full integration
   }
 
   /**

@@ -6,7 +6,7 @@ import { PrdTracker } from "../../core/tracking/prd-tracker";
 import { loadConfig } from '../../config/loader';
 
 const CONTRIBUTION_MODE_FILE = path.join(process.cwd(), '.devloop', 'contribution-mode.json');
-const OLD_EVOLUTION_MODE_FILE = path.join(process.cwd(), '.devloop', 'evolution-mode.json');
+const OLD_EVOLUTION_MODE_FILE = path.join(process.cwd(), '.devloop', 'evolution-state.json');
 
 /**
  * Contribution Mode State (Simplified)
@@ -26,7 +26,7 @@ async function loadContributionModeState(): Promise<ContributionModeState | null
     return await fs.readJson(CONTRIBUTION_MODE_FILE);
   }
   
-  // Migration: Check for old evolution-mode.json and migrate
+  // Migration: Check for old evolution-state.json and migrate
   if (await fs.pathExists(OLD_EVOLUTION_MODE_FILE)) {
     const oldState = await fs.readJson(OLD_EVOLUTION_MODE_FILE);
     const migratedState: ContributionModeState = {
@@ -39,7 +39,7 @@ async function loadContributionModeState(): Promise<ContributionModeState | null
     await fs.writeJson(CONTRIBUTION_MODE_FILE, migratedState, { spaces: 2 });
     // Remove old file
     await fs.remove(OLD_EVOLUTION_MODE_FILE);
-    console.log(chalk.yellow('Migrated evolution-mode.json to contribution-mode.json'));
+    console.log(chalk.yellow('Migrated evolution-state.json to contribution-mode.json'));
     return migratedState;
   }
   

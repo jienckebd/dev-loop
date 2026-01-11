@@ -5,4 +5,4 @@
  * from './config-merger' in the parser directory.
  */
 
-export { mergeConfigHierarchy } from '../../config/merger';
+export { mergeConfigHierarchy } from '../../../config/merger';

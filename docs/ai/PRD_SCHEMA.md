@@ -1644,7 +1644,7 @@ The schema structure is modular (8 files in `src/config/schema/`) for maintainab
 
 Config overlays are validated against the ConfigOverlay schema. Unknown keys are allowed (via passthrough) but generate warnings for potential typos.
 
-**Implementation:** `src/core/config/merger.ts` handles the hierarchical merging logic.
+**Implementation:** `src/config/merger.ts` handles the hierarchical merging logic.
 
 ```bash
 # Validate PRD config overlay
@@ -1660,7 +1660,7 @@ dev-loop validate-config --level phase --prd <prd-path> --phase <phase-id>
 
 ## Integration with devloop.config.js
 
-PRD frontmatter `config` sections are **merged** into `devloop.config.js` at runtime using the hierarchical config merger (`src/core/config/merger.ts`):
+PRD frontmatter `config` sections are **merged** into `devloop.config.js` at runtime using the hierarchical config merger (`src/config/merger.ts`):
 
 1. Base config from `devloop.config.js` (strict schema validation via `src/config/schema/core.ts`)
 2. Framework config (extracted from base, strict schema via `src/config/schema/framework.ts`)
@@ -1670,7 +1670,7 @@ PRD frontmatter `config` sections are **merged** into `devloop.config.js` at run
 
 Each level merges into the previous, with later levels overriding earlier values. See above for array merge behavior.
 
-**Merging Logic:** The `createConfigContext()` and `applyPrdSetConfig()` functions in `src/core/config/merger.ts` handle the actual merging, with special handling for arrays that should be concatenated vs replaced.
+**Merging Logic:** The `createConfigContext()` and `applyPrdSetConfig()` functions in `src/config/merger.ts` handle the actual merging, with special handling for arrays that should be concatenated vs replaced.
 
 See [`PRD_FEATURES.md`](PRD_FEATURES.md) for details on leveraging config sections.
 

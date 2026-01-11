@@ -35,6 +35,7 @@ All PRD documentation is in this directory (`docs/ai/`):
 - [`PRD_FEATURES.md`](PRD_FEATURES.md) - Comprehensive guide showing how PRDs can leverage ALL 17 dev-loop features with examples and best practices
 - [`PRD_TEMPLATE.md`](PRD_TEMPLATE.md) - Copy-paste template with all optional sections and inline documentation
 - [`METADATA.md`](METADATA.md) - Metadata system documentation explaining frontmatter structure
+- [`STATE_MANAGEMENT.md`](STATE_MANAGEMENT.md) - Unified state management system documentation (execution-state.json, metrics.json)
 
 ## Creating Valid PRDs
 

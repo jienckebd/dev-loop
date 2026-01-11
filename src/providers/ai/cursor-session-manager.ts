@@ -51,12 +51,14 @@ export class CursorSessionManager extends BaseSessionManager implements SessionM
       maxHistoryItems: config.maxHistoryItems || 50,
     });
     this.config = {
-      sessionsPath: config.sessionsPath || '.devloop/cursor-sessions.json',
+      sessionsPath: config.sessionsPath || '.devloop/execution-state.json', // Sessions now in execution-state.json
       maxSessionAge: config.maxSessionAge || 3600000, // 1 hour default
       maxHistoryItems: config.maxHistoryItems || 50,
       enabled: config.enabled !== false, // Default to true
     };
     this.sessionsPath = path.resolve(process.cwd(), this.config.sessionsPath);
+    // Note: Sessions are now stored in execution-state.json.sessions
+    // TODO: Update to use UnifiedStateManager for session management
     this.loadSessions();
   }
 

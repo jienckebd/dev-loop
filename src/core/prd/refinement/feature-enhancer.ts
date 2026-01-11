@@ -12,7 +12,7 @@ import * as path from 'path';
 import { ParsedPlanningDoc } from '../parser/planning-doc-parser';
 import { CodebaseAnalysisResult } from '../../analysis/codebase-analyzer';
 import { FeatureType } from '../../analysis/feature-type-detector';
-import { PromptSelector } from '../../prompts/prompt-selector';
+import { PromptSelector } from '../../../prompts/code-generation/prompt-selector';
 import { AIProvider, AIProviderConfig } from '../../../providers/ai/interface';
 import { FrameworkPlugin } from '../../../frameworks';
 import { CodebaseInsight } from './codebase-insight-extractor';

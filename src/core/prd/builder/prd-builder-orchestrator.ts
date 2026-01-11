@@ -399,7 +399,7 @@ export class PRDBuilderOrchestrator {
 
     // Initialize TestResultsLoader
     const testResultsPath = path.resolve(projectRoot, learningFilesConfig?.testResults || '.devloop/test-results.json/test-results.json');
-    const prdSetStatePath = path.resolve(projectRoot, learningFilesConfig?.prdSetState || '.devloop/prd-set-state.json');
+    const prdSetStatePath = path.resolve(projectRoot, learningFilesConfig?.prdSetState || '.devloop/execution-state.json');
     this.testResultsLoader = new TestResultsLoader({
       filePath: testResultsPath,
       prdSetStatePath,

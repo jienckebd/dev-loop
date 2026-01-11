@@ -41,20 +41,10 @@ Archives preserve the original file structure:
   └── {{ prd_name }}/
       └── {{ timestamp }}/
           ├── devloop/
-          │   ├── state.json
-          │   ├── metrics.json
-          │   ├── observations.json
-          │   ├── patterns.json
-          │   ├── retry-counts.json
-          │   ├── contribution-mode.json
-          │   ├── evolution-state.json
-          │   ├── prd-set-metrics.json
-          │   ├── prd-metrics.json
-          │   ├── phase-metrics.json
-          │   ├── feature-metrics.json
-          │   ├── schema-metrics.json
-          │   ├── observation-metrics.json
-          │   ├── pattern-metrics.json
+          │   ├── execution-state.json (unified execution state)
+          │   ├── metrics.json (unified hierarchical metrics)
+          │   ├── observations.json (learning file - preserved)
+          │   ├── patterns.json (learning file - preserved)
           │   └── prd-context/
           │       └── *.json
           └── taskmaster/
@@ -67,15 +57,9 @@ Archives preserve the original file structure:
 ## Files Archived
 
 ### Dev-Loop State Files
-- `.devloop/state.json`
-- `.devloop/metrics.json`
-- `.devloop/observations.json`
-- `.devloop/patterns.json`
-- `.devloop/retry-counts.json`
-- `.devloop/contribution-mode.json`
-- `.devloop/evolution-state.json`
-- `.devloop/prd-context/*.json`
-- All metrics files (prd-set, prd, phase, feature, schema, observation, pattern)
+- `.devloop/execution-state.json` - Unified execution state (replaces state.json, prd-set-state.json, cursor-sessions.json, retry-counts.json, contribution-mode.json, evolution-state.json)
+- `.devloop/metrics.json` - Unified hierarchical metrics (replaces prd-set-metrics.json, prd-metrics.json, phase-metrics.json, feature-metrics.json, schema-metrics.json)
+- `.devloop/prd-context/*.json` - PRD context files
 
 ### Task Master State Files
 - `.taskmaster/state.json`
@@ -90,7 +74,7 @@ Learning files are preserved during archiving to maintain historical data for PR
 - `.devloop/patterns.json` - Code patterns learned from past executions
 - `.devloop/observations.json` - System observations and insights
 - `.devloop/test-results.json/test-results.json` - Test execution history
-- `.devloop/prd-set-state.json` - PRD set execution state
+- `.devloop/execution-state.json` - Unified execution state (contains PRD set states)
 
 **Why Preserve:**
 

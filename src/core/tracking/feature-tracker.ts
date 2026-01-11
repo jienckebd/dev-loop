@@ -33,7 +33,7 @@ export class FeatureTracker {
   private data: FeatureTrackerData;
   private currentPrdId?: string;
 
-  constructor(metricsPath: string = '.devloop/feature-metrics.json') {
+  constructor(metricsPath: string = '.devloop/metrics.json') {
     this.metricsPath = path.resolve(process.cwd(), metricsPath);
     this.data = this.loadData();
   }

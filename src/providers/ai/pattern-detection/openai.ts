@@ -5,8 +5,8 @@ import {
   ProviderUsage,
   AnalysisContext,
   AnalysisResult,
-} from '../provider-interface';
-import { logger } from "../../core/utils/logger";
+} from '../../../ai/provider-interface';
+import { logger } from "../../../core/utils/logger";
 
 export interface OpenAIConfig {
   apiKey: string;

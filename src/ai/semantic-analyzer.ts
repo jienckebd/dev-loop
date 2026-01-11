@@ -1,7 +1,7 @@
 import { AIProviderManager } from './provider-manager';
 import { PatternClusterer, AbstractionCandidate } from './pattern-clusterer';
 import { FrameworkPlugin, AbstractionRecommendation } from '../frameworks/interface';
-import { FRAMEWORK_PROMPTS } from './prompts';
+import { FRAMEWORK_PROMPTS } from '../prompts/pattern-analysis';
 import { FeedbackStore } from './feedback-store';
 import { AnalysisContext } from './provider-interface';
 import { logger } from "../core/utils/logger";

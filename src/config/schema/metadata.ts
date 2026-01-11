@@ -4,9 +4,9 @@ import { z } from 'zod';
  * Metadata Schemas
  *
  * Schemas for metadata JSON files:
- * - PRD Set State (prd-set-state.json)
+ * - PRD Set State (now in execution-state.json.prdSets)
  * - Chat Requests (chat-requests.json)
- * - Cursor Sessions (cursor-sessions.json)
+ * - Cursor Sessions (now in execution-state.json.sessions)
  * - Checkpoints (prd-building-checkpoints/*.json)
  * - Conversations (conversations/*.json)
  * - PRD Context V2 (prd-context-v2/*.json)
@@ -43,7 +43,8 @@ export const chatRequestSchema = z.object({
 }).passthrough();
 
 /**
- * Cursor Session Schema (for .devloop/cursor-sessions.json)
+ * Cursor Session Schema (for .devloop/execution-state.json.sessions)
+ * Note: Sessions are now stored in execution-state.json under the sessions key
  */
 export const sessionSchema = z.object({
   sessionId: z.string(),

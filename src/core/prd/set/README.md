@@ -65,6 +65,6 @@ const result = await orchestrator.executePrdSet(prdSet, { parallel: true, maxCon
 ## Related Files
 
 - `src/core/prd/parser/manifest-parser.ts` - Parses `index.md.yml` files
-- `src/core/config/merger.ts` - Handles hierarchical config merging
+- `src/config/merger.ts` - Handles hierarchical config merging
 - `src/core/metrics/prd-set.ts` - PRD set-level metrics tracking
 

@@ -194,7 +194,7 @@ export function registerObservationEnhancedTools(server: any): void {
     }),
     async (params: { timeRange?: number }) => {
       try {
-        const sessionsPath = path.join(process.cwd(), '.devloop/cursor-sessions.json');
+        const sessionsPath = path.join(process.cwd(), '.devloop/execution-state.json'); // Sessions now in execution-state.json
         
         if (!fs.existsSync(sessionsPath)) {
           return {

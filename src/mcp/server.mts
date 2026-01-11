@@ -372,15 +372,20 @@ addLoggedTool({
       const retryCounts = taskBridge.getAllRetryCounts();
       const skipInvestigation = (config as any).autonomous?.skipInvestigation;
 
-      // Read retry counts from disk for accuracy
-      const retryCountPath = path.join(process.cwd(), '.devloop/retry-counts.json');
+      // Read retry counts from execution state for accuracy
       let persistedRetryCounts: Record<string, number> = {};
       try {
-        if (fs.existsSync(retryCountPath)) {
-          persistedRetryCounts = JSON.parse(fs.readFileSync(retryCountPath, 'utf-8'));
+        // Dynamic import since this is ESM
+        const { UnifiedStateManager } = await import('../core/state/StateManager');
+        const stateManager = new UnifiedStateManager(process.cwd());
+        await stateManager.initialize();
+        const state = await stateManager.getExecutionState();
+        // Get retry counts from current PRD if active
+        if (state.active.prdId && state.prds[state.active.prdId]) {
+          persistedRetryCounts = state.prds[state.active.prdId].retryCounts || {};
         }
       } catch {
-        // Ignore
+        // Ignore - use in-memory retry counts from taskBridge as fallback
       }
 
       return JSON.stringify({

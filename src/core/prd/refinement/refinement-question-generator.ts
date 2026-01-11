@@ -13,7 +13,7 @@ import { Question, QuestionType, Answer } from '../../conversation/types';
 import { logger } from '../../utils/logger';
 import { TextGenerationAdapter, TextGenerationOptions } from './text-generation-adapter';
 import { AIProvider, AIProviderConfig } from '../../../providers/ai/interface';
-import { PromptSelector } from '../../prompts/prompt-selector';
+import { PromptSelector } from '../../../prompts/code-generation/prompt-selector';
 import { FrameworkPlugin } from '../../../frameworks';
 import { Config } from '../../../config/schema/core';
 import { PatternEntry, ObservationEntry } from '../learning/types';

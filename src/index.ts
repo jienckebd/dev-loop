@@ -26,7 +26,7 @@ import { checkAgentVisibilityCommand } from './cli/commands/check-agent-visibili
 import { listPendingChatsCommand } from './cli/commands/list-pending-chats';
 import { openChatInstructionsCommand } from './cli/commands/open-chat-instructions';
 import { contributionCommand } from './cli/commands/contribution';
-import { evolveCommand } from './cli/commands/evolve';
+import { contributionMetricsCommand } from './cli/commands/contribute';
 import { prdCommand } from './cli/commands/prd';
 import { validatePrdCommand } from './cli/commands/validate-prd';
 import { registerBuildPrdSetCommand } from './cli/commands/build-prd-set';
@@ -330,13 +330,13 @@ contributionCmd
   });
 
 program
-  .command('evolve')
+  .command('contribution-metrics')
   .description('View improvement insights (observations and improvement suggestions)')
   .option('-c, --config <path>', 'Path to config file', 'devloop.config.js')
   .option('--project-type <type>', 'Filter observations by project type')
   .option('--json', 'Output as JSON')
   .action(async (options) => {
-    await evolveCommand({
+    await contributionMetricsCommand({
       config: options.config,
       projectType: options.projectType,
       json: options.json,

@@ -187,18 +187,21 @@ export class WorkflowEngine {
       this.debugMetrics = new DebugMetrics(metricsPath);
     }
 
-    // Initialize hierarchical metrics
+    // Initialize hierarchical metrics (all consolidated into metrics.json)
     const metricsConfig = (config as any).metrics || {};
     if (metricsConfig.enabled !== false) {
-      const prdMetricsPath = metricsConfig.prdMetricsPath || '.devloop/prd-metrics.json';
-      const phaseMetricsPath = metricsConfig.phaseMetricsPath || '.devloop/phase-metrics.json';
-      const featureMetricsPath = metricsConfig.featureMetricsPath || '.devloop/feature-metrics.json';
-      const schemaMetricsPath = metricsConfig.schemaMetricsPath || '.devloop/schema-metrics.json';
-      const observationMetricsPath = metricsConfig.observationMetricsPath || '.devloop/observation-metrics.json';
-      const patternMetricsPath = metricsConfig.patternMetricsPath || '.devloop/pattern-metrics.json';
+      const unifiedMetricsPath = '.devloop/metrics.json';
+      const prdMetricsPath = metricsConfig.prdMetricsPath || unifiedMetricsPath;
+      const phaseMetricsPath = metricsConfig.phaseMetricsPath || unifiedMetricsPath;
+      const featureMetricsPath = metricsConfig.featureMetricsPath || unifiedMetricsPath;
+      const schemaMetricsPath = metricsConfig.schemaMetricsPath || unifiedMetricsPath;
+      const observationMetricsPath = metricsConfig.observationMetricsPath || unifiedMetricsPath;
+      const patternMetricsPath = metricsConfig.patternMetricsPath || unifiedMetricsPath;
       const testResultsPath = metricsConfig.testResultsPath || '.devloop/test-results.json';
 
       // CostCalculator is static, no instance needed
+      // Note: These classes still use direct file I/O but now point to unified metrics.json
+      // TODO: Refactor to use UnifiedStateManager.recordMetrics() for full consolidation
       this.prdMetrics = new PrdMetrics(prdMetricsPath);
       this.phaseMetrics = new PhaseMetrics(phaseMetricsPath);
       this.featureTracker = new FeatureTracker(featureMetricsPath);

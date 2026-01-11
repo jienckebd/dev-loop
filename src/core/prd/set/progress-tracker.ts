@@ -37,7 +37,7 @@ export class PrdSetProgressTracker {
 
   constructor(
     coordinator: PrdCoordinator,
-    metricsPath: string = '.devloop/prd-set-metrics.json',
+    metricsPath: string = '.devloop/metrics.json',
     debug: boolean = false
   ) {
     this.coordinator = coordinator;

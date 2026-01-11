@@ -5,7 +5,7 @@ import { DebugMetrics } from "../../core/metrics/debug";
 import { ObservationTracker, Observation } from "../../core/tracking/observation-tracker";
 import { ImprovementSuggester, ImprovementSuggestion } from "../../core/execution/improvement-suggester";
 
-export async function evolveCommand(options: {
+export async function contributionMetricsCommand(options: {
   config?: string;
   projectType?: string;
   json?: boolean;
@@ -95,11 +95,13 @@ function printInsights(
     }, {} as Record<string, Observation[]>);
 
     for (const [type, obsList] of Object.entries(byType)) {
-      console.log(chalk.gray(`  ${type.toUpperCase().replace(/-/g, ' ')}:`));
+      console.log(chalk.gray(`  ${(type || 'unknown').toUpperCase().replace(/-/g, ' ')}:`));
       for (const obs of obsList.slice(0, 5)) {
-        const severityColor = obs.severity === 'high' ? chalk.red : obs.severity === 'medium' ? chalk.yellow : chalk.gray;
-        console.log(`    ${severityColor(obs.severity.toUpperCase())} ${obs.description}`);
-        console.log(`      Occurrences: ${obs.occurrences} | Projects: ${obs.affectedProjects.join(', ') || 'N/A'}`);
+        const severity = obs.severity || 'low';
+        const severityColor = severity === 'high' ? chalk.red : severity === 'medium' ? chalk.yellow : chalk.gray;
+        console.log(`    ${severityColor(severity.toUpperCase())} ${obs.description || 'No description'}`);
+        const projects = obs.affectedProjects && Array.isArray(obs.affectedProjects) ? obs.affectedProjects.join(', ') : 'N/A';
+        console.log(`      Occurrences: ${obs.occurrences || 0} | Projects: ${projects}`);
         if (obs.evidence && obs.evidence.length > 0) {
           console.log(`      Evidence: ${obs.evidence[0]}`);
         }

@@ -8,7 +8,7 @@
 import { ParsedPlanningDoc, ParsedPhase, ParsedTask } from '../parser/planning-doc-parser';
 import { CodebaseAnalysisResult } from '../../analysis/codebase-analyzer';
 import { FeatureType } from '../../analysis/feature-type-detector';
-import { PromptSelector } from '../../prompts/prompt-selector';
+import { PromptSelector } from '../../../prompts/code-generation/prompt-selector';
 import { TestGenerator } from '../../testing/generator';
 import { AIProvider, AIProviderConfig } from '../../../providers/ai/interface';
 import { TextGenerationAdapter } from './text-generation-adapter';

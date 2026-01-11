@@ -10,7 +10,7 @@ import { ValidationScriptExecutor } from '../../validation/script-executor';
 import { PrdSetProgressTracker } from './progress-tracker';
 import { PrdSetErrorHandler } from './error-handler';
 import { PrdSetMetrics } from '../../metrics/prd-set';
-import { createConfigContext, applyPrdSetConfig, ConfigContext } from '../../config/merger';
+import { createConfigContext, applyPrdSetConfig, ConfigContext } from '../../../config/merger';
 import { logger } from '../../utils/logger';
 import * as fs from 'fs-extra';
 import * as path from 'path';
@@ -59,15 +59,15 @@ export class PrdSetOrchestrator {
     this.baseConfig = config;
     this.configContext = createConfigContext(config);
     this.workflowEngine = new WorkflowEngine(config);
-    this.coordinator = new PrdCoordinator('.devloop/prd-set-state.json', debug);
+    this.coordinator = new PrdCoordinator('.devloop/execution-state.json', debug);
     this.graphBuilder = new DependencyGraphBuilder(debug);
     this.prerequisiteValidator = new PrerequisiteValidator(
       new ValidationScriptExecutor(debug),
       debug
     );
-    this.progressTracker = new PrdSetProgressTracker(this.coordinator, '.devloop/prd-set-metrics.json', debug);
+    this.progressTracker = new PrdSetProgressTracker(this.coordinator, '.devloop/metrics.json', debug);
     this.errorHandler = new PrdSetErrorHandler(this.coordinator, debug);
-    this.prdSetMetrics = new PrdSetMetrics('.devloop/prd-set-metrics.json');
+    this.prdSetMetrics = new PrdSetMetrics('.devloop/metrics.json');
     this.debug = debug;
 
     // Register cleanup handlers for graceful shutdown

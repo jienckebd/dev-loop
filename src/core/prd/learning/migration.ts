@@ -43,7 +43,7 @@ export async function migrateLearningFiles(
     patternsPath = path.join(projectRoot, '.devloop/patterns.json'),
     observationsPath = path.join(projectRoot, '.devloop/observations.json'),
     testResultsPath = path.join(projectRoot, '.devloop/test-results.json/test-results.json'),
-    prdSetStatePath = path.join(projectRoot, '.devloop/prd-set-state.json'),
+    prdSetStatePath = path.join(projectRoot, '.devloop/execution-state.json'),
     backup = true,
     dryRun = false,
     debug = false,

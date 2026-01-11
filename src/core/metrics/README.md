@@ -40,5 +40,5 @@ prdSetMetrics.recordPrdExecution(setId, prdId, prdMetricsData);
 ## Related Files
 
 - `src/core/tracking/` - Progress and observation tracking
-- `src/core/config/merger.ts` - Handles config overlay merging for metrics
+- `src/config/merger.ts` - Handles config overlay merging for metrics
 

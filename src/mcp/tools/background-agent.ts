@@ -29,7 +29,7 @@ export function registerBackgroundAgentTools(mcp: FastMCPType, getConfig: Config
         const agentsConfig = cursorConfig.agents || {};
         const sessionConfig = agentsConfig.sessionManagement || {};
 
-        const sessionsPath = sessionConfig.sessionsPath || '.devloop/cursor-sessions.json';
+        const sessionsPath = sessionConfig.sessionsPath || '.devloop/execution-state.json'; // Sessions now in execution-state.json
         const resolvedPath = path.resolve(process.cwd(), sessionsPath);
 
         // Initialize session manager

@@ -14,9 +14,9 @@ import { EmbeddingCacheManager } from '../../ai/embedding-cache';
 import { PatternClusterer } from '../../ai/pattern-clusterer';
 import { SemanticAnalyzer } from '../../ai/semantic-analyzer';
 import { FeedbackStore } from '../../ai/feedback-store';
-import { AnthropicPatternProvider } from '../../ai/providers/anthropic';
-import { OpenAIPatternProvider } from '../../ai/providers/openai';
-import { OllamaPatternProvider } from '../../ai/providers/ollama';
+import { AnthropicPatternProvider } from '../../providers/ai/pattern-detection/anthropic';
+import { OpenAIPatternProvider } from '../../providers/ai/pattern-detection/openai';
+import { OllamaPatternProvider } from '../../providers/ai/pattern-detection/ollama';
 
 export async function recommendCommand(options: {
   source?: 'errors' | 'codebase' | 'both';

@@ -181,6 +181,21 @@ export class CursorProvider implements AIProvider {
             return { files: [], summary: 'Analysis completed with no code changes extracted' };
           }
           
+          // Before retrying, check if target files already exist (for code generation tasks)
+          // This handles cases where JSON parsing fails but files were actually created
+          if (!codeChanges && !isAnalysisTask) {
+            logger.info(`[CursorProvider] JSON parsing failed, checking if target files already exist before retrying`);
+            const targetFiles = await this.verifyTargetFilesExist(context);
+            if (targetFiles.allExist && targetFiles.missing.length === 0) {
+              logger.info(`[CursorProvider] Target files already exist despite JSON parsing failure. Marking task as complete.`);
+              return { files: [], summary: 'Files already exist (verified after JSON parsing failure)' };
+            } else if (targetFiles.allExist && targetFiles.missing.length > 0) {
+              logger.warn(`[CursorProvider] Some target files exist but others are missing: ${targetFiles.missing.join(', ')}. Will retry.`);
+            } else {
+              logger.info(`[CursorProvider] Target files do not exist. Will retry JSON parsing.`);
+            }
+          }
+          
           // Retry logic: only retry if codeChanges is null (and not analysis task) OR if it's a code generation task with empty files
           if (!codeChanges || (!isAnalysisTask && codeChanges && codeChanges.files.length === 0)) {
             logger.warn(`[CursorProvider] ${codeChanges ? 'Code generation task returned empty files' : 'Background agent succeeded but no CodeChanges extracted'}, will retry`);
@@ -217,6 +232,31 @@ export class CursorProvider implements AIProvider {
                   if (!retryIsAnalysisTask && retryChanges.files.length > 0) {
                     logger.info(`[CursorProvider] Retry ${retryAttempt} succeeded: ${retryChanges.files.length} files`);
                     return retryChanges;
+                  }
+                  
+                  // For code generation tasks with empty files, check if files already exist
+                  if (!retryIsAnalysisTask && retryChanges.files.length === 0) {
+                    const summary = (retryChanges.summary || '').toLowerCase();
+                    const indicatesAlreadyExists = summary.includes('already exists') || 
+                                                  summary.includes('already complete') ||
+                                                  summary.includes('meets all requirements') ||
+                                                  summary.includes('no changes needed') ||
+                                                  summary.includes('no changes required');
+                    if (indicatesAlreadyExists) {
+                      const targetFiles = await this.verifyTargetFilesExist(context, retryChanges.summary);
+                      if (targetFiles.allExist) {
+                        logger.info(`[CursorProvider] Retry ${retryAttempt}: files already exist (verified)`);
+                        return retryChanges;
+                      }
+                    }
+                  }
+                } else {
+                  // Retry parsing failed - check if files exist before continuing to next retry
+                  logger.info(`[CursorProvider] Retry ${retryAttempt} JSON parsing failed, checking if files exist`);
+                  const targetFiles = await this.verifyTargetFilesExist(context);
+                  if (targetFiles.allExist && targetFiles.missing.length === 0) {
+                    logger.info(`[CursorProvider] Retry ${retryAttempt}: files exist despite parsing failure. Marking task as complete.`);
+                    return { files: [], summary: 'Files already exist (verified after retry parsing failure)' };
                   }
                 }
               }
@@ -265,6 +305,19 @@ export class CursorProvider implements AIProvider {
               }
             }
 
+            // Before halting, check if target files already exist (final check)
+            // This handles cases where all JSON parsing attempts failed but files were actually created
+            if (!isAnalysisTask) {
+              logger.info(`[CursorProvider] All JSON parsing attempts failed. Performing final check: do target files exist?`);
+              const targetFiles = await this.verifyTargetFilesExist(context);
+              if (targetFiles.allExist && targetFiles.missing.length === 0) {
+                logger.info(`[CursorProvider] Target files exist despite all JSON parsing failures. Marking task as complete.`);
+                return { files: [], summary: 'Files already exist (verified after all JSON parsing attempts failed)' };
+              } else {
+                logger.warn(`[CursorProvider] Target files do not exist or are incomplete. Missing: ${targetFiles.missing.join(', ')}. Halting.`);
+              }
+            }
+            
             // HALT: JSON parsing failed after all retries and AI fallback (only for code generation tasks)
             // Analysis tasks with empty files should not reach here
             if (!isAnalysisTask) {
@@ -336,13 +389,13 @@ export class CursorProvider implements AIProvider {
     lines.push('Instructions:');
     lines.push(prompt);
     lines.push('');
-    lines.push('## CRITICAL: Response Format Requirements (STRICT)');
+    lines.push('## Response Format');
     lines.push('');
-    lines.push('**YOU MUST RETURN PURE JSON. NO MARKDOWN CODE BLOCKS, NO NARRATIVE TEXT.**');
+    lines.push('Format your response as JSON in a markdown code block. You may include brief explanations before or after the code block.');
     lines.push('');
-    lines.push('## JSON SCHEMA (MUST FOLLOW EXACTLY):');
+    lines.push('## JSON SCHEMA:');
     lines.push('');
-    lines.push('Your response MUST conform to this JSON Schema:');
+    lines.push('Your JSON response MUST conform to this schema:');
     lines.push('');
     lines.push('```json');
     lines.push(CODE_CHANGES_JSON_SCHEMA_STRING);
@@ -354,24 +407,7 @@ export class CursorProvider implements AIProvider {
     lines.push(CODE_CHANGES_EXAMPLE_JSON);
     lines.push('```');
     lines.push('');
-    lines.push('## CRITICAL RULES:');
-    lines.push('');
-    lines.push('### FORBIDDEN:');
-    lines.push('- ❌ Markdown code blocks (```json ... ```) - causes parsing failures');
-    lines.push('- ❌ Escaped JSON strings or nested JSON');
-    lines.push('- ❌ Narrative text before or after JSON');
-    lines.push('- ❌ Explanations, questions, or comments');
-    lines.push('- ❌ Multiple JSON objects - return exactly ONE');
-    lines.push('- ❌ Additional properties not in schema');
-    lines.push('');
-    lines.push('### REQUIRED:');
-    lines.push('- ✅ Pure JSON object starting with { character');
-    lines.push('- ✅ Valid structure matching the JSON Schema above');
-    lines.push('- ✅ "files" array (can be empty) and "summary" string');
-    lines.push('- ✅ Each file has "path", "operation", and appropriate fields per operation type');
-    lines.push('- ✅ End with } character and nothing else');
-    lines.push('');
-    lines.push('### OPERATION TYPES:');
+    lines.push('## OPERATION TYPES:');
     lines.push('- **create/update**: Requires "content" field with full file content');
     lines.push('- **patch**: Requires "patches" array with "search"/"replace" objects');
     lines.push('- **delete**: Only requires "path" and "operation"');
@@ -382,25 +418,24 @@ export class CursorProvider implements AIProvider {
   }
 
   /**
-   * Build a strict JSON-only prompt for retry attempts
-   * Uses minimal context and extremely strict format enforcement
+   * Build a strict JSON prompt for retry attempts
+   * Uses minimal context and clear format instructions
    */
   private buildStrictJsonPrompt(context: TaskContext): string {
     const lines: string[] = [];
 
-    lines.push('# STRICT JSON-ONLY MODE');
+    lines.push('# RETRY: JSON Format Required');
     lines.push('');
     lines.push('**YOUR PREVIOUS RESPONSE FAILED BECAUSE JSON PARSING FAILED.**');
-    lines.push('');
-    lines.push('DO NOT USE MARKDOWN CODE BLOCKS. DO NOT WRAP IN ```json. PURE JSON ONLY.');
     lines.push('');
     lines.push(`Task: ${context.task.title}`);
     lines.push(`Description: ${context.task.description}`);
     lines.push('');
-    lines.push('# OUTPUT FORMAT (EXACT)');
+    lines.push('# OUTPUT FORMAT');
     lines.push('');
-    lines.push('Your response must be EXACTLY this pure JSON object - NO markdown, NO wrapping:');
+    lines.push('Format your response as JSON in a markdown code block:');
     lines.push('');
+    lines.push('```json');
     lines.push('{');
     lines.push('  "files": [');
     lines.push('    {');
@@ -411,15 +446,14 @@ export class CursorProvider implements AIProvider {
     lines.push('  ],');
     lines.push('  "summary": "description"');
     lines.push('}');
+    lines.push('```');
     lines.push('');
-    lines.push('## RULES (VIOLATION = FAILURE):');
-    lines.push('1. First character of your response MUST be: {');
-    lines.push('2. Last character MUST be: }');
-    lines.push('3. NO markdown code blocks (```json causes escaping issues)');
-    lines.push('4. NO text before or after the JSON object');
-    lines.push('5. Valid JSON that can be parsed with JSON.parse()');
+    lines.push('## REQUIREMENTS:');
+    lines.push('1. JSON must be in a markdown code block (```json ... ```)');
+    lines.push('2. Valid JSON structure matching the schema');
+    lines.push('3. "files" array (can be empty) and "summary" string');
     lines.push('');
-    lines.push('GENERATE THE CODE NOW. START WITH { CHARACTER IMMEDIATELY.');
+    lines.push('GENERATE THE CODE NOW.');
 
     return lines.join('\n');
   }
@@ -480,7 +514,7 @@ export class CursorProvider implements AIProvider {
 
   /**
    * Extract CodeChanges using JSON Schema validation (primary method)
-   * This provides robust, provider-agnostic parsing
+   * This provides robust, provider-agnostic parsing with multi-strategy extraction
    */
   private extractCodeChangesWithSchemaValidation(response: any, taskContext: TaskContext): CodeChanges | null {
     try {
@@ -512,11 +546,11 @@ export class CursorProvider implements AIProvider {
         return null;
       }
 
-      // Use schema validator to extract and validate
+      // Use enhanced multi-strategy schema validator to extract and validate
       const validationResult = JsonSchemaValidator.extractAndValidate(textToValidate);
       
       if (validationResult.valid && validationResult.normalized) {
-        logger.info(`[CursorProvider] Successfully extracted CodeChanges using JSON Schema validation`);
+        logger.info(`[CursorProvider] Successfully extracted CodeChanges using enhanced JSON Schema validation`);
         return validationResult.normalized;
       } else {
         logger.warn(`[CursorProvider] Schema validation failed: ${validationResult.errors.join(', ')}`);
@@ -765,36 +799,33 @@ Provide a JSON response with:
   ): Promise<{ allExist: boolean; missing: string[] }> {
     const taskDetails = (context.task as any).details || '';
     const taskText = `${context.task.title} ${context.task.description} ${taskDetails}`;
-    
-    // Extract file paths from task text (similar to workflow engine logic)
-    const filePathPattern = /(?:Target Files?|file exists at|File exists at|path|Path)[:\s]*`?([^\s`\n]+\.(?:php|yml|yaml|ts|js|json|md|twig|css|scss))`?/gi;
-    const matches = [...taskText.matchAll(filePathPattern)];
     const targetFiles: string[] = [];
     
-    for (const match of matches) {
-      if (match[1]) {
-        let filePath = match[1].replace(/`/g, '').trim();
-        // Normalize paths
-        if (!filePath.startsWith('docroot/') && !filePath.startsWith('config/') && !filePath.startsWith('./')) {
-          // Assume it's relative to docroot/modules/share/ if it starts with src/ or similar
-          if (filePath.startsWith('src/') || filePath.startsWith('config/')) {
-            // Try to infer module name from context
-            const moduleMatch = taskText.match(/bd_[\w]+/);
-            if (moduleMatch) {
-              filePath = `docroot/modules/share/${moduleMatch[0]}/${filePath}`;
-            }
+    // Priority 1: Extract from "Target Files" section (has full paths)
+    // Match "Target Files:" or "**Target Files**:" followed by content until next section
+    const targetFilesSectionMatch = taskText.match(/(?:\*\*)?Target Files?\*?[:\s]*\n([\s\S]*?)(?:\n\n|\n\*\*[A-Z]|$)/i);
+    if (targetFilesSectionMatch) {
+      const targetFilesSection = targetFilesSectionMatch[1];
+      // Match file paths in backticks (handles both - and * list markers)
+      const filePathPattern = /[-\*]\s*`([^`]+)`/g;
+      const fileMatches = [...targetFilesSection.matchAll(filePathPattern)];
+      for (const match of fileMatches) {
+        if (match[1]) {
+          let filePath = match[1].trim();
+          // Remove trailing "(updated)" or similar notes
+          filePath = filePath.replace(/\s*\([^)]+\)\s*$/, '').trim();
+          // Only add if it's a full path (starts with docroot/ or config/)
+          if (filePath && (filePath.startsWith('docroot/') || filePath.startsWith('config/')) && !targetFiles.includes(filePath)) {
+            targetFiles.push(filePath);
           }
-        }
-        if (filePath && !targetFiles.includes(filePath)) {
-          targetFiles.push(filePath);
         }
       }
     }
     
-    // Also try extracting from acceptance criteria
-    const acceptancePattern = /(?:File exists at|file exists at|exists at)[:\s]*`([^`]+)`/gi;
-    const acceptanceMatches = [...taskText.matchAll(acceptancePattern)];
-    for (const match of acceptanceMatches) {
+    // Priority 2: Extract from acceptance criteria with full paths
+    const fullPathPattern = /(?:file exists at|File exists at|exists at)[:\s]*`(docroot\/[^`]+\.(?:php|yml|yaml|ts|js|json|md|twig|css|scss))`/gi;
+    const fullPathMatches = [...taskText.matchAll(fullPathPattern)];
+    for (const match of fullPathMatches) {
       if (match[1]) {
         const filePath = match[1].trim();
         if (filePath && !targetFiles.includes(filePath)) {
@@ -803,24 +834,63 @@ Provide a JSON response with:
       }
     }
     
+    // Priority 3: Extract relative paths and normalize them (ONLY if no full paths found)
+    // Skip this entirely if we already have full paths from "Target Files" section
+    if (targetFiles.length === 0) {
+      const relativePathPattern = /(?:file exists at|File exists at|exists at)[:\s]*`([^\s`\n]+\.(?:php|yml|yaml|ts|js|json|md|twig|css|scss))`/gi;
+      const relativeMatches = [...taskText.matchAll(relativePathPattern)];
+      for (const match of relativeMatches) {
+        if (match[1]) {
+          let filePath = match[1].trim();
+          // Skip if it's already a full path (shouldn't happen here, but safety check)
+          if (filePath.startsWith('docroot/') || filePath.startsWith('config/')) {
+            continue;
+          }
+          // Normalize relative paths
+          if (filePath.startsWith('src/') || filePath.startsWith('config/')) {
+            // Try to infer module name from context
+            const moduleMatch = taskText.match(/bd_[\w]+/);
+            if (moduleMatch) {
+              filePath = `docroot/modules/share/${moduleMatch[0]}/${filePath}`;
+              if (filePath && !targetFiles.includes(filePath)) {
+                targetFiles.push(filePath);
+              }
+            }
+            // If no module match, skip this path (can't verify without full path)
+          }
+        }
+      }
+    }
+    
     if (targetFiles.length === 0) {
       // No target files found - can't verify, assume retry needed
+      logger.warn(`[CursorProvider] verifyTargetFilesExist: No target files extracted from task description`);
       return { allExist: false, missing: ['unknown'] };
     }
+    
+    logger.debug(`[CursorProvider] verifyTargetFilesExist: Checking ${targetFiles.length} file(s): ${targetFiles.join(', ')}`);
     
     // Check if files exist
     const missing: string[] = [];
     for (const filePath of targetFiles) {
       const fullPath = path.resolve(process.cwd(), filePath);
-      if (!await fs.pathExists(fullPath)) {
+      const exists = await fs.pathExists(fullPath);
+      if (!exists) {
         missing.push(filePath);
+        logger.debug(`[CursorProvider] verifyTargetFilesExist: File missing: ${filePath} (checked: ${fullPath})`);
+      } else {
+        logger.debug(`[CursorProvider] verifyTargetFilesExist: File exists: ${filePath}`);
       }
     }
     
-    return {
+    const result = {
       allExist: missing.length === 0,
       missing,
     };
+    
+    logger.info(`[CursorProvider] verifyTargetFilesExist: ${result.allExist ? 'All files exist' : `Missing ${missing.length} file(s): ${missing.join(', ')}`}`);
+    
+    return result;
   }
 
   /**

@@ -271,7 +271,7 @@ Orchestrates PRD set execution with parallel processing:
 
 ### Hierarchical Config Merger
 
-**Location:** `src/core/config/merger.ts`
+**Location:** `src/config/merger.ts`
 
 Merges configuration overlays in hierarchical order:
 - Project Config → Framework Config → PRD Set Config → PRD Config → Phase Config
@@ -510,7 +510,7 @@ See [Proactive Monitoring Guide](./PROACTIVE_MONITORING.md) for detailed configu
 - **loader.ts** - Config file loading
 - **defaults.ts** - Default configuration
 
-**Hierarchical Configuration System**: Config overlays are merged at multiple levels (Project → Framework → PRD Set → PRD → Phase) using `src/core/config/merger.ts`. See [Schema Modular Refactoring](../handoff-schema-modular-refactoring.md) for details.
+**Hierarchical Configuration System**: Config overlays are merged at multiple levels (Project → Framework → PRD Set → PRD → Phase) using `src/config/merger.ts`. See [Schema Modular Refactoring](../handoff-schema-modular-refactoring.md) for details.
 
 ## Contribution Mode
 
@@ -691,7 +691,7 @@ Orchestrates PRD set execution:
 
 ### Hierarchical Configuration Merging
 
-**Location:** `src/core/config/merger.ts`
+**Location:** `src/config/merger.ts`
 
 Merges configuration overlays in the following order:
 1. Project Config (base)

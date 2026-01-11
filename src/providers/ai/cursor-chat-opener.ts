@@ -801,7 +801,9 @@ export class CursorChatOpener {
           }
 
           // Parse response based on output format
-          let parsedResponse: any = null;
+          // CLI with --output-format json always returns: {type:"result", result:"<text>", ...}
+          // Per Cursor CLI docs: https://cursor.com/docs/cli/reference/output-format
+          let parsedResponse: string = '';
           if (outputFormat === 'json') {
             try {
               const trimmed = stdout.trim();
@@ -817,38 +819,19 @@ export class CursorChatOpener {
                   const parsed = JSON.parse(lastJson);
 
                   // Handle Cursor agent --print response format
-                  // Format: {"type":"result","result":"...","session_id":"...","request_id":"..."}
+                  // Per Cursor CLI docs: Format is {type:"result", result:"<text>", ...}
+                  // The result field contains the complete assistant response text
                   if (parsed.type === 'result' && parsed.result) {
-                    // Try to recursively parse the result field to handle nested JSON escaping
-                    let resultContent = parsed.result;
-
-                    // Strategy: If result is a stringified JSON object, parse it recursively
-                    if (typeof resultContent === 'string') {
-                      try {
-                        const innerParsed = JSON.parse(resultContent);
-                        // If it's another result object, recurse one more level
-                        if (innerParsed.type === 'result' && innerParsed.result) {
-                          resultContent = typeof innerParsed.result === 'string'
-                            ? innerParsed.result
-                            : innerParsed.result;
-                          logger.debug(`[CursorChatOpener] Recursively unwrapped nested result object`);
-                        } else if (innerParsed.files && innerParsed.summary) {
-                          // It's a CodeChanges object directly
-                          resultContent = innerParsed;
-                          logger.debug(`[CursorChatOpener] Extracted CodeChanges from nested JSON`);
-                        } else {
-                          // It's some other parsed content
-                          resultContent = innerParsed;
-                        }
-                      } catch {
-                        // Not JSON, continue with original string - will be parsed downstream
-                      }
-                    }
-
-                    // The actual response is in the 'result' field (potentially unwrapped)
-                    parsedResponse = { text: resultContent, raw: parsed };
+                    // Extract result field - this is the assistant's response text
+                    // Parser will handle extracting JSON from markdown code blocks
+                    parsedResponse = typeof parsed.result === 'string' 
+                      ? parsed.result 
+                      : JSON.stringify(parsed.result);
+                    logger.debug(`[CursorChatOpener] Extracted result field from CLI response`);
                   } else {
-                    parsedResponse = parsed;
+                    // Fallback: use entire parsed object as string
+                    parsedResponse = JSON.stringify(parsed);
+                    logger.debug(`[CursorChatOpener] No result field found, using entire response`);
                   }
 
                   logger.debug(`[CursorChatOpener] Successfully parsed JSON object (${jsonObjects.length} found, using last)`);
@@ -858,50 +841,19 @@ export class CursorChatOpener {
                 }
               }
 
-              // Strategy 2: If no complete JSON found, try extracting from markdown code blocks
+              // If no JSON found in stdout, use stdout as text (parser will handle extraction)
               if (!parsedResponse) {
-                const codeBlockJson = this.extractJsonFromCodeBlocks(trimmed);
-                if (codeBlockJson) {
-                  try {
-                    const parsed = JSON.parse(codeBlockJson);
-                    parsedResponse = parsed;
-                    logger.debug(`[CursorChatOpener] Extracted JSON from code block`);
-                  } catch (parseError) {
-                    logger.warn(`[CursorChatOpener] Failed to parse JSON from code block: ${parseError}`);
-                  }
-                }
-              }
-
-              // Strategy 3: If still no JSON, try to find JSON-like structures in text
-              if (!parsedResponse) {
-                // Look for JSON-like patterns (objects with "files" and "summary" keys)
-                const jsonLikeMatch = trimmed.match(/\{[^{}]*"files"[^{}]*"summary"[^{}]*\}/s);
-                if (jsonLikeMatch) {
-                  try {
-                    const parsed = JSON.parse(jsonLikeMatch[0]);
-                    if (parsed.files && parsed.summary) {
-                      parsedResponse = parsed;
-                      logger.debug(`[CursorChatOpener] Extracted JSON-like structure from text`);
-                    }
-                  } catch (parseError) {
-                    // Ignore - not valid JSON
-                  }
-                }
-              }
-
-              // Strategy 4: Fall back to text if no JSON found
-              if (!parsedResponse) {
-                logger.warn(`[CursorChatOpener] No valid JSON found in response, using as text`);
-                parsedResponse = { text: trimmed };
+                parsedResponse = trimmed;
+                logger.debug(`[CursorChatOpener] No JSON objects found, using stdout as text`);
               }
             } catch (parseError) {
-              logger.warn(`[CursorChatOpener] Failed to parse JSON response: ${parseError}`);
-              // Fall back to text response - might contain JSON code blocks
-              parsedResponse = { text: stdout.trim() };
+              logger.warn(`[CursorChatOpener] Failed to process JSON response: ${parseError}`);
+              // Fall back to text response - parser will handle extraction
+              parsedResponse = stdout.trim();
             }
           } else {
             // Text or stream-json format
-            parsedResponse = { text: stdout.trim() };
+            parsedResponse = stdout.trim();
           }
 
           // Track session history

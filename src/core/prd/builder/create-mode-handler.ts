@@ -13,7 +13,7 @@ import { PrdDraftGenerator, PrdDraftGenerationResult } from '../creation/prd-dra
 import { AIRefinementOrchestrator } from '../refinement/ai-refinement-orchestrator';
 import { CodebaseAnalyzer, CodebaseAnalysisResult } from '../../analysis/codebase-analyzer';
 import { FeatureTypeDetector } from '../../analysis/feature-type-detector';
-import { PromptSelector } from '../../prompts/prompt-selector';
+import { PromptSelector } from '../../../prompts/code-generation/prompt-selector';
 import { ConversationManager } from '../../conversation/conversation-manager';
 import { PRDBuildingProgressTracker } from '../../tracking/prd-building-progress-tracker';
 import { InteractivePromptSystem } from './interactive-prompt-system';

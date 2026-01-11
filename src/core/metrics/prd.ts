@@ -46,7 +46,7 @@ export class PrdMetrics {
   private costCalculator?: CostCalculator;
   private debug: boolean;
 
-  constructor(metricsPath: string = '.devloop/prd-metrics.json', costCalculator?: CostCalculator, debug: boolean = false) {
+  constructor(metricsPath: string = '.devloop/metrics.json', costCalculator?: CostCalculator, debug: boolean = false) {
     this.metricsPath = path.resolve(process.cwd(), metricsPath);
     this.costCalculator = costCalculator;
     this.debug = debug;

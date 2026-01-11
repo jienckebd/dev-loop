@@ -8,10 +8,10 @@
  * Special handling for arrays that should be concatenated vs replaced.
  */
 
-import { Config } from '../../config/schema/core';
-import { ConfigOverlay } from '../../config/schema/overlays';
-import { validateConfig } from '../../config/schema/validation';
-import { logger } from '../utils/logger';
+import { Config } from './schema/core';
+import { ConfigOverlay } from './schema/overlays';
+import { validateConfig } from './schema/validation';
+import { logger } from '../core/utils/logger';
 
 /**
  * Arrays that should be concatenated (not replaced) when merging

@@ -94,25 +94,15 @@ export async function archiveCommand(options: ArchiveOptions): Promise<void> {
     const filesToArchive: Array<{ source: string; dest: string }> = [];
 
     // Dev-loop state files (EXCLUDE learning files - they stay in place)
-    // Learning files (patterns.json, observations.json, test-results.json, prd-set-state.json, config/*.json)
+    // Learning files (patterns.json, observations.json, test-results.json, config/*.json)
     // are NOT archived - they remain in place with filtering to prevent stale data interference
     const excludeLearningFiles = (config as any).archive?.excludeLearningFiles !== false; // Default: true
     
     const devloopFiles = [
-      '.devloop/state.json',
-      '.devloop/metrics.json',
+      '.devloop/execution-state.json', // Unified execution state (replaces state.json, prd-set-state.json, cursor-sessions.json, retry-counts.json, contribution-mode.json)
+      '.devloop/metrics.json', // Unified hierarchical metrics (replaces prd-set-metrics.json, prd-metrics.json, phase-metrics.json, feature-metrics.json, schema-metrics.json)
       // NOTE: observations.json, patterns.json are NOT archived (learning files stay in place)
-      '.devloop/retry-counts.json',
-      '.devloop/contribution-mode.json',
-      '.devloop/prd-set-metrics.json',
-      '.devloop/prd-metrics.json',
-      '.devloop/phase-metrics.json',
-      '.devloop/feature-metrics.json',
-      '.devloop/schema-metrics.json',
-      '.devloop/observation-metrics.json',
-      '.devloop/pattern-metrics.json',
-      '.devloop/cursor-sessions.json', // Cursor background agent session state
-      // NOTE: test-results.json/test-results.json, prd-set-state.json, config/*.json are NOT archived
+      // NOTE: test-results.json/test-results.json, config/*.json are NOT archived
     ];
 
     for (const file of devloopFiles) {
@@ -253,38 +243,58 @@ export async function archiveCommand(options: ArchiveOptions): Promise<void> {
     }
 
     // Reset dev-loop state files (EXCLUDE learning files - they stay in place)
-    // Learning files (patterns.json, observations.json, test-results.json, prd-set-state.json, config/*.json)
+    // Learning files (patterns.json, observations.json, test-results.json, config/*.json)
     // are NOT reset - they remain in place with filtering to prevent stale data interference
     const devloopFilesToReset = [
-      '.devloop/state.json',
-      '.devloop/metrics.json',
+      '.devloop/execution-state.json', // Unified execution state
+      '.devloop/metrics.json', // Unified hierarchical metrics
       // NOTE: observations.json, patterns.json are NOT reset (learning files stay in place)
-      // NOTE: test-results.json/test-results.json, prd-set-state.json, config/*.json are NOT reset
-      '.devloop/retry-counts.json',
-      '.devloop/contribution-mode.json',
-      '.devloop/prd-set-metrics.json',
-      '.devloop/prd-metrics.json',
-      '.devloop/phase-metrics.json',
-      '.devloop/feature-metrics.json',
-      '.devloop/schema-metrics.json',
-      '.devloop/observation-metrics.json',
-      '.devloop/pattern-metrics.json',
-      '.devloop/cursor-sessions.json', // Reset cursor sessions
+      // NOTE: test-results.json/test-results.json, config/*.json are NOT reset
     ];
 
     // File-specific reset values (only for files that were archived)
     const resetValues: Record<string, any> = {
-      '.devloop/state.json': {},
-      '.devloop/metrics.json': { version: '1.0', runs: [], summary: { totalRuns: 0, successRate: 0, avgAiCallMs: 0, avgTestRunMs: 0, totalTokensInput: 0, totalTokensOutput: 0 } },
-      // NOTE: observations.json, patterns.json are NOT reset (learning files stay in place)
-      '.devloop/retry-counts.json': {},
-      '.devloop/contribution-mode.json': {},
-      '.devloop/prd-set-metrics.json': {},
-      '.devloop/prd-metrics.json': {},
-      '.devloop/phase-metrics.json': {},
-      '.devloop/feature-metrics.json': {},
-      '.devloop/pattern-metrics.json': {},
-      '.devloop/cursor-sessions.json': { version: '1.0', updatedAt: new Date().toISOString(), sessions: [] },
+      '.devloop/execution-state.json': {
+        version: '1.0',
+        updatedAt: new Date().toISOString(),
+        active: {
+          workflowState: 'idle',
+        },
+        prdSets: {},
+        prds: {},
+        evolution: {
+          fileCreation: {},
+          investigationTasks: {},
+        },
+        contributionMode: {
+          active: false,
+        },
+        sessions: {},
+      },
+      '.devloop/metrics.json': {
+        version: '1.0',
+        updatedAt: new Date().toISOString(),
+        runs: [],
+        prdSets: {},
+        prds: {},
+        phases: {},
+        features: {},
+        parallel: {
+          executions: [],
+        },
+        schema: {
+          operations: [],
+          metrics: {},
+        },
+        insights: {
+          efficiency: {},
+          trends: {},
+          bottlenecks: {},
+          quality: {},
+          resources: {},
+        },
+        summary: {},
+      },
     };
 
     for (const file of devloopFilesToReset) {
@@ -318,7 +328,7 @@ export async function archiveCommand(options: ArchiveOptions): Promise<void> {
       console.log(chalk.gray('  • .devloop/patterns.json (kept - auto-filtered on load)'));
       console.log(chalk.gray('  • .devloop/observations.json (kept - auto-filtered on load)'));
       console.log(chalk.gray('  • .devloop/test-results.json/test-results.json (kept - auto-filtered on load)'));
-      console.log(chalk.gray('  • .devloop/prd-set-state.json (kept - auto-filtered on load)'));
+      console.log(chalk.gray('  • .devloop/execution-state.json (kept - contains PRD set states and learning data)'));
       console.log(chalk.gray('  • .devloop/config/*.json (kept - framework patterns)'));
       console.log(chalk.gray('  • .devloop/prd-building-checkpoints/*.json (kept - may be pruned manually)'));
       console.log(chalk.gray('\n  These files have versioning/timestamps to prevent stale data from interfering.'));
@@ -462,25 +472,18 @@ async function pruneLearningFiles(
     }
   }
 
-  // Prune prd-set-state.json (remove old completed/cancelled states)
-  const prdSetStatePath = path.resolve(projectRoot, '.devloop/prd-set-state.json');
-  if (await fs.pathExists(prdSetStatePath)) {
+  // Prune execution-state.json (remove old completed/cancelled PRD states)
+  const executionStatePath = path.resolve(projectRoot, '.devloop/execution-state.json');
+  if (await fs.pathExists(executionStatePath)) {
     try {
-      const validator = new SchemaValidator({
-        autoFix: true,
-        autoMigrate: false,
-        backup: true,
-        debug: false,
-      });
-      await validator.validatePrdSetStateFile(prdSetStatePath);
-      // Validation auto-fixes schema issues, but we also need to prune old states
-      const data = await fs.readJson(prdSetStatePath);
+      const data = await fs.readJson(executionStatePath);
       const now = new Date();
       const prdStateRetentionDays = options.pruneDays || pruningConfig.prdStateRetentionDays || 90;
-      const retentionMs = prdStateRetentionDays * 24 * 60 * 60 * 1000;
 
       let prunedCount = 0;
-      for (const [prdId, state] of Object.entries(data.prdStates || {})) {
+      
+      // Prune old PRD set states
+      for (const [setId, state] of Object.entries(data.prdSets || {})) {
         const stateEntry = state as any;
         if (stateEntry.updatedAt) {
           const updatedAt = new Date(stateEntry.updatedAt);
@@ -488,29 +491,50 @@ async function pruneLearningFiles(
           
           // Remove old cancelled states (older than 30 days)
           if (stateEntry.status === 'cancelled' && daysSinceUpdate > 30) {
-            delete data.prdStates[prdId];
+            delete data.prdSets[setId];
             prunedCount++;
             continue;
           }
           
           // Remove old completed states (older than retentionDays)
-          if (stateEntry.status === 'done' && daysSinceUpdate > prdStateRetentionDays) {
-            delete data.prdStates[prdId];
+          if ((stateEntry.status === 'completed' || stateEntry.status === 'done') && daysSinceUpdate > prdStateRetentionDays) {
+            delete data.prdSets[setId];
+            prunedCount++;
+          }
+        }
+      }
+      
+      // Prune old PRD states
+      for (const [prdId, state] of Object.entries(data.prds || {})) {
+        const stateEntry = state as any;
+        if (stateEntry.updatedAt) {
+          const updatedAt = new Date(stateEntry.updatedAt);
+          const daysSinceUpdate = (now.getTime() - updatedAt.getTime()) / (1000 * 60 * 60 * 24);
+          
+          // Remove old cancelled states (older than 30 days)
+          if (stateEntry.status === 'cancelled' && daysSinceUpdate > 30) {
+            delete data.prds[prdId];
             prunedCount++;
             continue;
+          }
+          
+          // Remove old completed states (older than retentionDays)
+          if ((stateEntry.status === 'completed' || stateEntry.status === 'done') && daysSinceUpdate > prdStateRetentionDays) {
+            delete data.prds[prdId];
+            prunedCount++;
           }
         }
       }
 
       if (prunedCount > 0) {
         data.updatedAt = new Date().toISOString();
-        await fs.writeJson(prdSetStatePath, data, { spaces: 2 });
-        console.log(chalk.gray(`  Pruned prd-set-state.json (removed ${prunedCount} old PRD states)`));
+        await fs.writeJson(executionStatePath, data, { spaces: 2 });
+        console.log(chalk.gray(`  Pruned execution-state.json (removed ${prunedCount} old PRD/PRD set states)`));
       } else {
-        console.log(chalk.gray(`  prd-set-state.json (no old states to prune)`));
+        console.log(chalk.gray(`  execution-state.json (no old states to prune)`));
       }
     } catch (error) {
-      console.log(chalk.yellow(`  Warning: Could not prune prd-set-state.json: ${error}`));
+      console.log(chalk.yellow(`  Warning: Could not prune execution-state.json: ${error}`));
     }
   }
 

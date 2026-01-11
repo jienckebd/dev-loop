@@ -3,11 +3,27 @@
  * 
  * Validates AI provider responses against the CodeChanges JSON schema
  * to ensure consistent parsing across all providers.
+ * 
+ * Uses a multi-strategy extraction pipeline with adaptive ordering
+ * and hybrid approach (custom extraction + partial-json-parser-js).
  */
 
 import { CodeChanges } from '../../types';
 import { CODE_CHANGES_JSON_SCHEMA } from './code-changes-schema';
 import { logger } from '../../core/utils/logger';
+import * as fs from 'fs-extra';
+import * as path from 'path';
+
+// Import partial-json-parser-js for edge cases
+let parsePartialJson: ((jsonString: string, allowPartial?: number) => any) | null = null;
+let Allow: any = null;
+try {
+  const partialJson = require('partial-json');
+  parsePartialJson = partialJson.parse || partialJson.parseJSON;
+  Allow = partialJson.Allow;
+} catch (error) {
+  logger.warn('[JsonSchemaValidator] partial-json not available, will use fallback methods only');
+}
 
 export interface ValidationResult {
   valid: boolean;
@@ -16,13 +32,650 @@ export interface ValidationResult {
   normalized?: CodeChanges;
 }
 
+export interface Candidate {
+  json: string;
+  strategy: string;
+  score: number;
+  validationResult?: ValidationResult;
+}
+
+/**
+ * Extraction Strategy Interface
+ */
+interface ExtractionStrategy {
+  name: string;
+  extract(text: string): string[]; // Returns array of candidate JSON strings
+  score(candidate: string): number; // Confidence score 0-1
+}
+
+/**
+ * Strategy Statistics for Adaptive Ordering
+ */
+interface StrategyStats {
+  attempts: number;
+  successes: number;
+  lastSuccess?: number; // Timestamp of last success
+}
+
 /**
  * Simple JSON Schema validator (lightweight, no external dependencies)
  * 
  * This implements basic JSON Schema validation for CodeChanges structure.
- * For production use, consider using ajv or similar library.
+ * Enhanced with multi-strategy extraction and adaptive learning.
  */
 export class JsonSchemaValidator {
+  // Strategy statistics for adaptive ordering
+  private static strategyStats: Map<string, StrategyStats> = new Map();
+  private static statsPath: string = path.resolve(process.cwd(), '.devloop/json-parsing-stats.json');
+  private static statsLoaded: boolean = false;
+
+  /**
+   * Load strategy statistics from disk
+   */
+  private static loadStrategyStats(): void {
+    if (this.statsLoaded) return;
+    
+    try {
+      if (fs.existsSync(this.statsPath)) {
+        const data = fs.readJsonSync(this.statsPath);
+        this.strategyStats = new Map(Object.entries(data));
+        logger.debug(`[JsonSchemaValidator] Loaded strategy stats: ${this.strategyStats.size} strategies`);
+      }
+    } catch (error) {
+      logger.warn(`[JsonSchemaValidator] Failed to load strategy stats: ${error}`);
+    }
+    
+    this.statsLoaded = true;
+  }
+
+  /**
+   * Save strategy statistics to disk
+   */
+  private static saveStrategyStats(): void {
+    try {
+      fs.ensureDirSync(path.dirname(this.statsPath));
+      const data = Object.fromEntries(this.strategyStats);
+      fs.writeJsonSync(this.statsPath, data, { spaces: 2 });
+    } catch (error) {
+      logger.warn(`[JsonSchemaValidator] Failed to save strategy stats: ${error}`);
+    }
+  }
+
+  /**
+   * Update strategy statistics
+   */
+  private static updateStrategyStats(strategyName: string, success: boolean): void {
+    this.loadStrategyStats();
+    
+    const stats = this.strategyStats.get(strategyName) || { attempts: 0, successes: 0 };
+    stats.attempts++;
+    if (success) {
+      stats.successes++;
+      stats.lastSuccess = Date.now();
+    }
+    this.strategyStats.set(strategyName, stats);
+    
+    // Save periodically (every 10 attempts)
+    if (stats.attempts % 10 === 0) {
+      this.saveStrategyStats();
+    }
+  }
+
+  /**
+   * Get strategy success rate
+   */
+  private static getStrategySuccessRate(strategyName: string): number {
+    this.loadStrategyStats();
+    const stats = this.strategyStats.get(strategyName);
+    if (!stats || stats.attempts === 0) {
+      return 0.5; // Default confidence for untested strategies
+    }
+    return stats.successes / stats.attempts;
+  }
+
+  /**
+   * Unescape JSON string (handle escaped quotes, newlines, etc.)
+   * Uses partial-json-parser-js as fallback for complex cases
+   */
+  private static unescapeJsonString(text: string): string {
+    // First attempt: Standard unescaping
+    // Handle: {\"files\": [...]} -> {"files": [...]}
+    // Handle: \\" -> "
+    // Handle: \\n -> \n
+    
+    let unescaped = text;
+    
+    // Multiple passes for nested escaping
+    for (let pass = 0; pass < 3; pass++) {
+      // Unescape double-escaped quotes: \\\" -> \"
+      unescaped = unescaped.replace(/\\\\"/g, '\\"');
+      // Unescape escaped quotes: \" -> "
+      unescaped = unescaped.replace(/\\"/g, '"');
+      // Unescape escaped newlines: \\n -> \n
+      unescaped = unescaped.replace(/\\\\n/g, '\\n');
+      // Unescape newlines: \n -> newline
+      unescaped = unescaped.replace(/\\n/g, '\n');
+      // Unescape escaped backslashes: \\\\ -> \\
+      unescaped = unescaped.replace(/\\\\\\\\/g, '\\\\');
+    }
+    
+    return unescaped;
+  }
+
+  /**
+   * Try to parse JSON with multiple methods
+   */
+  private static tryParseJson(jsonString: string): { success: boolean; parsed?: any; method: string } {
+    // Method 1: Standard JSON.parse
+    try {
+      const parsed = JSON.parse(jsonString);
+      return { success: true, parsed, method: 'standard' };
+    } catch {
+      // Continue to next method
+    }
+
+    // Method 2: Unescape and try again
+    try {
+      const unescaped = this.unescapeJsonString(jsonString);
+      const parsed = JSON.parse(unescaped);
+      return { success: true, parsed, method: 'unescaped' };
+    } catch {
+      // Continue to next method
+    }
+
+    // Method 3: partial-json-parser-js (for truncated/incomplete JSON)
+    if (parsePartialJson && Allow) {
+      try {
+        // Try with all partial types allowed
+        const parsed = parsePartialJson(jsonString, Allow.ALL);
+        return { success: true, parsed, method: 'partial-json' };
+      } catch {
+        // Continue to next method
+      }
+    }
+
+    return { success: false, method: 'none' };
+  }
+
+  /**
+   * Strategy 1: Direct JSON Parse
+   */
+  private static strategy1_DirectParse(text: string): ExtractionStrategy {
+    return {
+      name: 'direct-parse',
+      extract: (text: string): string[] => {
+        const result = this.tryParseJson(text);
+        return result.success ? [text] : [];
+      },
+      score: (candidate: string): number => {
+        return 1.0; // High confidence for direct parse
+      }
+    };
+  }
+
+  /**
+   * Strategy 2: Markdown Code Blocks
+   */
+  private static strategy2_MarkdownBlocks(text: string): ExtractionStrategy {
+    return {
+      name: 'markdown-blocks',
+      extract: (text: string): string[] => {
+        const candidates: string[] = [];
+        // Match various markdown code block formats
+        const patterns = [
+          /```json\s*([\s\S]*?)\s*```/g,
+          /```\s*([\s\S]*?)\s*```/g,
+          /`([^`]+)`/g // Inline code blocks
+        ];
+        
+        for (const pattern of patterns) {
+          let match;
+          while ((match = pattern.exec(text)) !== null) {
+            const candidate = match[1].trim();
+            if (candidate.startsWith('{') && candidate.includes('files')) {
+              candidates.push(candidate);
+            }
+          }
+        }
+        
+        return candidates;
+      },
+      score: (candidate: string): number => {
+        // Higher score if it looks like CodeChanges
+        let score = 0.7;
+        if (candidate.includes('"files"') && candidate.includes('"summary"')) {
+          score = 0.9;
+        }
+        return score;
+      }
+    };
+  }
+
+  /**
+   * Strategy 3: JSON After Phrases
+   */
+  private static strategy3_AfterPhrases(text: string): ExtractionStrategy {
+    return {
+      name: 'after-phrases',
+      extract: (text: string): string[] => {
+        const candidates: string[] = [];
+        // Expanded phrase list based on observed patterns
+        const phrases = [
+          'returning the json response:',
+          'returning json confirmation:',
+          'returning json:',
+          'json format:',
+          'json response:',
+          'response:',
+          'result:',
+          'here\'s the json:',
+          'json:',
+          'returning:',
+          'format:'
+        ];
+        
+        for (const phrase of phrases) {
+          const regex = new RegExp(`${phrase.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}[\\s\\n]*([\\s\\S]*?)(?=\\n\\n|\\n\\*|$)`, 'i');
+          const match = text.match(regex);
+          if (match && match[1]) {
+            const candidate = match[1].trim();
+            if (candidate.startsWith('{') || candidate.startsWith('[')) {
+              candidates.push(candidate);
+            }
+          }
+        }
+        
+        return candidates;
+      },
+      score: (candidate: string): number => {
+        let score = 0.6;
+        if (candidate.includes('"files"')) {
+          score = 0.8;
+        }
+        return score;
+      }
+    };
+  }
+
+  /**
+   * Strategy 4: Balanced Brace Matching (Improved)
+   */
+  private static strategy4_BalancedBraces(text: string): ExtractionStrategy {
+    return {
+      name: 'balanced-braces',
+      extract: (text: string): string[] => {
+        const candidates: string[] = [];
+        const jsonObjects: string[] = [];
+        let depth = 0;
+        let start = -1;
+        let inString = false;
+        let escapeNext = false;
+
+        for (let i = 0; i < text.length; i++) {
+          const char = text[i];
+
+          if (escapeNext) {
+            escapeNext = false;
+            continue;
+          }
+
+          if (char === '\\') {
+            escapeNext = true;
+            continue;
+          }
+
+          if (char === '"' && !escapeNext) {
+            inString = !inString;
+            continue;
+          }
+
+          if (!inString) {
+            if (char === '{') {
+              if (depth === 0) {
+                start = i;
+              }
+              depth++;
+            } else if (char === '}') {
+              depth--;
+              if (depth === 0 && start !== -1) {
+                const candidate = text.substring(start, i + 1);
+                // Check for schema fields
+                if (candidate.includes('files') || candidate.includes('summary')) {
+                  jsonObjects.push(candidate);
+                }
+                start = -1;
+              }
+            }
+          }
+        }
+
+        // Sort by size (largest first) and return top candidates
+        return jsonObjects.sort((a, b) => b.length - a.length).slice(0, 5);
+      },
+      score: (candidate: string): number => {
+        let score = 0.5;
+        if (candidate.includes('"files"') && candidate.includes('"summary"')) {
+          score = 0.85;
+        } else if (candidate.includes('"files"')) {
+          score = 0.7;
+        }
+        return score;
+      }
+    };
+  }
+
+  /**
+   * Strategy 5: Unescape JSON Strings (using partial-json-parser-js)
+   */
+  private static strategy5_UnescapeJson(text: string): ExtractionStrategy {
+    return {
+      name: 'unescape-json',
+      extract: (text: string): string[] => {
+        const candidates: string[] = [];
+        
+        // Find escaped JSON patterns: {\"files\": or {\\\"files\\\":
+        const escapedPatterns = [
+          /\{\\*"files\\*"/g,
+          /\{\\*"summary\\*"/g,
+          /\\*"files\\*":/g
+        ];
+        
+        for (const pattern of escapedPatterns) {
+          const matches = text.matchAll(pattern);
+          for (const match of matches) {
+            // Extract JSON object starting from this position
+            const startPos = Math.max(0, match.index! - 50);
+            const endPos = Math.min(text.length, match.index! + 2000);
+            const candidate = text.substring(startPos, endPos);
+            
+            // Try to find the complete JSON object
+            const jsonMatch = candidate.match(/\{[\s\S]*\}/);
+            if (jsonMatch) {
+              const unescaped = this.unescapeJsonString(jsonMatch[0]);
+              candidates.push(unescaped);
+            }
+          }
+        }
+        
+        return candidates;
+      },
+      score: (candidate: string): number => {
+        return 0.75; // Medium-high confidence
+      }
+    };
+  }
+
+  /**
+   * Strategy 6: Extract from Nested Result Objects
+   */
+  private static strategy6_NestedResults(text: string): ExtractionStrategy {
+    return {
+      name: 'nested-results',
+      extract: (text: string): string[] => {
+        const candidates: string[] = [];
+        
+        // Try to parse as JSON object first
+        try {
+          const parsed = JSON.parse(text);
+          if (parsed && typeof parsed === 'object') {
+            // Recursively extract from result fields
+            const extractFromResult = (obj: any, depth: number = 0): void => {
+              if (depth > 5) return; // Prevent infinite recursion
+              
+              if (obj && typeof obj === 'object') {
+                if (obj.result && typeof obj.result === 'string') {
+                  candidates.push(obj.result);
+                  // Try to parse the result string as JSON
+                  try {
+                    const nested = JSON.parse(obj.result);
+                    extractFromResult(nested, depth + 1);
+                  } catch {
+                    // Not JSON, continue
+                  }
+                } else if (obj.text && typeof obj.text === 'string') {
+                  candidates.push(obj.text);
+                } else if (obj.response && typeof obj.response === 'string') {
+                  candidates.push(obj.response);
+                }
+              }
+            };
+            
+            extractFromResult(parsed);
+          }
+        } catch {
+          // Not valid JSON, continue
+        }
+        
+        return candidates;
+      },
+      score: (candidate: string): number => {
+        return 0.65; // Medium confidence
+      }
+    };
+  }
+
+  /**
+   * Strategy 7: Find JSON Objects by Schema Field Presence
+   */
+  private static strategy7_SchemaFieldDetection(text: string): ExtractionStrategy {
+    return {
+      name: 'schema-field-detection',
+      extract: (text: string): string[] => {
+        const candidates: string[] = [];
+        
+        // Find positions of "files" and "summary" fields
+        const filesMatches = [...text.matchAll(/"files"\s*:/gi)];
+        const summaryMatches = [...text.matchAll(/"summary"\s*:/gi)];
+        
+        // For each "files" match, try to extract the containing JSON object
+        for (const match of filesMatches) {
+          const startPos = match.index!;
+          // Look backwards for opening brace
+          let braceStart = -1;
+          for (let i = startPos; i >= 0; i--) {
+            if (text[i] === '{') {
+              braceStart = i;
+              break;
+            }
+          }
+          
+          if (braceStart !== -1) {
+            // Look forwards for matching closing brace
+            let depth = 0;
+            let inString = false;
+            let escapeNext = false;
+            let braceEnd = -1;
+            
+            for (let i = braceStart; i < text.length; i++) {
+              const char = text[i];
+              
+              if (escapeNext) {
+                escapeNext = false;
+                continue;
+              }
+              
+              if (char === '\\') {
+                escapeNext = true;
+                continue;
+              }
+              
+              if (char === '"' && !escapeNext) {
+                inString = !inString;
+                continue;
+              }
+              
+              if (!inString) {
+                if (char === '{') {
+                  depth++;
+                } else if (char === '}') {
+                  depth--;
+                  if (depth === 0) {
+                    braceEnd = i;
+                    break;
+                  }
+                }
+              }
+            }
+            
+            if (braceEnd !== -1) {
+              const candidate = text.substring(braceStart, braceEnd + 1);
+              candidates.push(candidate);
+            }
+          }
+        }
+        
+        return candidates;
+      },
+      score: (candidate: string): number => {
+        let score = 0.8;
+        if (candidate.includes('"files"') && candidate.includes('"summary"')) {
+          score = 0.95; // Very high confidence
+        }
+        return score;
+      }
+    };
+  }
+
+  /**
+   * Strategy 8: Regex-based Extraction with Validation
+   */
+  private static strategy8_RegexExtraction(text: string): ExtractionStrategy {
+    return {
+      name: 'regex-extraction',
+      extract: (text: string): string[] => {
+        const candidates: string[] = [];
+        
+        // Multiple regex patterns to find JSON objects
+        const patterns = [
+          /\{\s*"files"\s*:\s*\[[\s\S]*?\]\s*,\s*"summary"\s*:\s*"[^"]*"\s*\}/g,
+          /\{\s*"files"\s*:\s*\[[\s\S]*?\]\s*\}/g,
+          /\{\s*"summary"\s*:\s*"[^"]*"\s*,\s*"files"\s*:\s*\[[\s\S]*?\]\s*\}/g
+        ];
+        
+        for (const pattern of patterns) {
+          const matches = text.matchAll(pattern);
+          for (const match of matches) {
+            candidates.push(match[0]);
+          }
+        }
+        
+        return candidates;
+      },
+      score: (candidate: string): number => {
+        return 0.6; // Medium confidence
+      }
+    };
+  }
+
+  /**
+   * Strategy 9: Partial JSON Parser Fallback
+   */
+  private static strategy9_PartialJsonFallback(text: string): ExtractionStrategy {
+    return {
+      name: 'partial-json-fallback',
+      extract: (text: string): string[] => {
+        const candidates: string[] = [];
+        
+        if (!parsePartialJson || !Allow) {
+          return candidates; // Not available
+        }
+        
+        // Try to find incomplete JSON objects that might be truncated
+        // Look for patterns that suggest incomplete JSON
+        const incompletePatterns = [
+          /\{\s*"files"\s*:\s*\[[\s\S]*$/g, // Ends with array
+          /\{\s*"summary"\s*:\s*"[^"]*$/g, // Ends with string
+          /\{\s*"files"\s*:\s*\[[\s\S]*?,\s*\{[\s\S]*$/g // Ends in middle of object
+        ];
+        
+        for (const pattern of incompletePatterns) {
+          const matches = text.matchAll(pattern);
+          for (const match of matches) {
+            try {
+              // Try to parse as partial JSON
+              const parsed = parsePartialJson(match[0], Allow.ALL);
+              if (parsed && typeof parsed === 'object') {
+                // Convert back to JSON string for validation
+                candidates.push(JSON.stringify(parsed));
+              }
+            } catch {
+              // Not parseable even as partial
+            }
+          }
+        }
+        
+        return candidates;
+      },
+      score: (candidate: string): number => {
+        return 0.5; // Lower confidence for partial JSON
+      }
+    };
+  }
+
+  /**
+   * Get all extraction strategies
+   */
+  private static getAllStrategies(text: string): ExtractionStrategy[] {
+    return [
+      this.strategy1_DirectParse(text),
+      this.strategy2_MarkdownBlocks(text),
+      this.strategy3_AfterPhrases(text),
+      this.strategy4_BalancedBraces(text),
+      this.strategy5_UnescapeJson(text),
+      this.strategy6_NestedResults(text),
+      this.strategy7_SchemaFieldDetection(text),
+      this.strategy8_RegexExtraction(text),
+      this.strategy9_PartialJsonFallback(text)
+    ];
+  }
+
+  /**
+   * Get strategies ordered by success rate
+   */
+  private static getOrderedStrategies(text: string): ExtractionStrategy[] {
+    const allStrategies = this.getAllStrategies(text);
+    
+    // Sort by success rate (highest first)
+    return allStrategies.sort((a, b) => {
+      const rateA = this.getStrategySuccessRate(a.name);
+      const rateB = this.getStrategySuccessRate(b.name);
+      return rateB - rateA;
+    });
+  }
+
+  /**
+   * Score a candidate based on multiple factors
+   */
+  private static scoreCandidate(candidate: Candidate, strategy: ExtractionStrategy): number {
+    let score = strategy.score(candidate.json);
+    
+    // Factor 1: Schema validation (valid = 1.0, invalid = 0.0)
+    if (candidate.validationResult) {
+      if (candidate.validationResult.valid) {
+        score = 1.0; // Valid schema = highest score
+      } else {
+        score = 0.0; // Invalid schema = lowest score
+      }
+    }
+    
+    // Factor 2: Strategy success rate (if valid)
+    if (candidate.validationResult?.valid) {
+      const strategyRate = this.getStrategySuccessRate(strategy.name);
+      score = score * 0.7 + strategyRate * 0.3; // Weighted combination
+    }
+    
+    // Factor 3: JSON completeness
+    if (candidate.json.includes('"files"') && candidate.json.includes('"summary"')) {
+      score += 0.1;
+    }
+    
+    // Factor 4: Size/complexity (prefer larger, more complete objects)
+    const sizeScore = Math.min(candidate.json.length / 1000, 0.1); // Max 0.1 bonus
+    score += sizeScore;
+    
+    return Math.min(1.0, score);
+  }
+
   /**
    * Validate an object against the CodeChanges JSON schema
    */
@@ -180,101 +833,80 @@ export class JsonSchemaValidator {
   }
 
   /**
-   * Extract and validate JSON from text using schema
+   * Extract and validate JSON from text using multi-strategy approach
    * 
    * This method tries multiple strategies to extract valid JSON,
    * then validates it against the schema.
    */
   static extractAndValidate(text: string): ValidationResult {
-    // Strategy 1: Try direct JSON parse
-    try {
-      const parsed = JSON.parse(text);
-      return this.validate(parsed);
-    } catch {
-      // Not valid JSON, continue to extraction strategies
+    if (!text || typeof text !== 'string') {
+      return {
+        valid: false,
+        errors: ['Input must be a non-empty string'],
+        warnings: []
+      };
     }
 
-    // Strategy 2: Extract from markdown code blocks
-    const jsonBlockMatch = text.match(/```(?:json)?\s*([\s\S]*?)\s*```/);
-    if (jsonBlockMatch) {
+    // Get strategies ordered by success rate
+    const strategies = this.getOrderedStrategies(text);
+    const allCandidates: Candidate[] = [];
+
+    // Try each strategy
+    for (const strategy of strategies) {
       try {
-        const parsed = JSON.parse(jsonBlockMatch[1].trim());
-        return this.validate(parsed);
-      } catch {
-        // Continue to next strategy
-      }
-    }
-
-    // Strategy 3: Find JSON object after common phrases
-    const jsonAfterPhraseMatch = text.match(/(?:returning|json format|response|result|json response)[:\s]*\n?\s*(\{[\s\S]*\})/i);
-    if (jsonAfterPhraseMatch) {
-      try {
-        const parsed = JSON.parse(jsonAfterPhraseMatch[1]);
-        return this.validate(parsed);
-      } catch {
-        // Continue to next strategy
-      }
-    }
-
-    // Strategy 4: Find largest valid JSON object (balanced braces)
-    const jsonObjects: string[] = [];
-    let depth = 0;
-    let start = -1;
-    let inString = false;
-    let escapeNext = false;
-
-    for (let i = 0; i < text.length; i++) {
-      const char = text[i];
-      const prevChar = i > 0 ? text[i - 1] : '';
-
-      if (escapeNext) {
-        escapeNext = false;
-        continue;
-      }
-
-      if (char === '\\') {
-        escapeNext = true;
-        continue;
-      }
-
-      if (char === '"' && !escapeNext) {
-        inString = !inString;
-        continue;
-      }
-
-      if (!inString) {
-        if (char === '{') {
-          if (depth === 0) {
-            start = i;
-          }
-          depth++;
-        } else if (char === '}') {
-          depth--;
-          if (depth === 0 && start !== -1) {
-            const candidate = text.substring(start, i + 1);
-            // Validate it's likely JSON by checking for common fields
-            if (candidate.includes('files') || candidate.includes('summary')) {
-              jsonObjects.push(candidate);
+        const candidates = strategy.extract(text);
+        
+        for (const candidateJson of candidates) {
+          // Try to parse the candidate
+          const parseResult = this.tryParseJson(candidateJson);
+          
+          if (parseResult.success && parseResult.parsed) {
+            // Validate against schema
+            const validationResult = this.validate(parseResult.parsed);
+            
+            const candidate: Candidate = {
+              json: candidateJson,
+              strategy: strategy.name,
+              score: 0, // Will be calculated
+              validationResult
+            };
+            
+            // Score the candidate
+            candidate.score = this.scoreCandidate(candidate, strategy);
+            allCandidates.push(candidate);
+            
+            // If valid, update stats and return immediately
+            if (validationResult.valid) {
+              this.updateStrategyStats(strategy.name, true);
+              logger.debug(`[JsonSchemaValidator] Successfully extracted using strategy: ${strategy.name}`);
+              return validationResult;
             }
-            start = -1;
           }
         }
-      }
-    }
-
-    // Try to parse and validate each candidate
-    for (const candidate of jsonObjects.sort((a, b) => b.length - a.length)) {
-      try {
-        const parsed = JSON.parse(candidate);
-        const result = this.validate(parsed);
-        if (result.valid) {
-          return result;
+        
+        // Update stats (strategy attempted but didn't find valid result)
+        if (candidates.length > 0) {
+          this.updateStrategyStats(strategy.name, false);
         }
-      } catch {
-        // Continue to next candidate
+      } catch (error) {
+        logger.debug(`[JsonSchemaValidator] Strategy ${strategy.name} failed: ${error}`);
+        this.updateStrategyStats(strategy.name, false);
       }
     }
 
+    // If we have candidates but none are valid, return the highest-scoring one's validation result
+    if (allCandidates.length > 0) {
+      allCandidates.sort((a, b) => b.score - a.score);
+      const bestCandidate = allCandidates[0];
+      logger.warn(`[JsonSchemaValidator] Best candidate (strategy: ${bestCandidate.strategy}, score: ${bestCandidate.score.toFixed(2)}) failed validation: ${bestCandidate.validationResult?.errors.join(', ')}`);
+      return bestCandidate.validationResult || {
+        valid: false,
+        errors: ['Could not extract valid JSON from text'],
+        warnings: []
+      };
+    }
+
+    // No candidates found
     return {
       valid: false,
       errors: ['Could not extract valid JSON from text'],

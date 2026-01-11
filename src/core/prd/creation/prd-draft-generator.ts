@@ -11,7 +11,7 @@ import { ConversationManager } from '../../conversation/conversation-manager';
 import { Conversation } from '../../conversation/types';
 import { CodebaseAnalysisResult } from '../../analysis/codebase-analyzer';
 import { FeatureType } from '../../analysis/feature-type-detector';
-import { PromptSelector } from '../../prompts/prompt-selector';
+import { PromptSelector } from '../../../prompts/code-generation/prompt-selector';
 import { AIProvider, AIProviderConfig } from '../../../providers/ai/interface';
 import { TextGenerationAdapter } from '../refinement/text-generation-adapter';
 import { logger } from '../../utils/logger';

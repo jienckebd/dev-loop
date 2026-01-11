@@ -42,6 +42,8 @@
     "inquirer": "^9.2.12",
     "openai": "^4.20.0",
     "ora": "^5.4.1",
+    "immer": "^10.0.3",
+    "partial-json": "^0.1.7",
     "task-master-ai": "^0.40.0",
     "yaml": "^2.3.4",
     "zod": "^4.3.5"

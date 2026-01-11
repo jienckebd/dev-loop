@@ -12,6 +12,7 @@ import { IssueClassification } from './issue-classifier';
 import { DevLoopEvent } from '../utils/event-stream';
 import { logger } from '../utils/logger';
 import { getEventStream } from '../utils/event-stream';
+import { UnifiedStateManager } from '../state/StateManager';
 
 export interface ActionStrategy {
   name: string;
@@ -171,20 +172,20 @@ export function createTaskBlockingStrategy(config: Config): ActionStrategy {
           }
         }
 
-        // Reset retry count
-        const retryCountsPath = path.join(process.cwd(), '.devloop/retry-counts.json');
-        let retryCounts: Record<string, number> = {};
-        
-        if (fs.existsSync(retryCountsPath)) {
-          try {
-            retryCounts = JSON.parse(fs.readFileSync(retryCountsPath, 'utf8'));
-          } catch (error) {
-            logger.warn('[TaskBlockingStrategy] Failed to parse retry-counts.json:', error);
-          }
+        // Reset retry count using UnifiedStateManager
+        try {
+          const stateManager = new UnifiedStateManager(process.cwd());
+          await stateManager.initialize();
+          await stateManager.updateExecutionState((draft) => {
+            // Reset retry count for task in current PRD if active
+            if (draft.active.prdId && draft.prds[draft.active.prdId]) {
+              const prd = draft.prds[draft.active.prdId];
+              prd.retryCounts[taskId] = 0;
+            }
+          });
+        } catch (error) {
+          logger.warn('[TaskBlockingStrategy] Failed to reset retry count:', error);
         }
-
-        retryCounts[taskId] = 0;
-        fs.writeFileSync(retryCountsPath, JSON.stringify(retryCounts, null, 2));
 
         logger.info(`[TaskBlockingStrategy] Unblocked task ${taskId} (reset retry count)`);
 
@@ -809,24 +810,23 @@ async function fixTaskDependencyDeadlock(config: Config, classification: IssueCl
     }
 
     if (blockedTasks.length > 0) {
-      // Reset retry counts for blocked tasks
-      const retryCountsPath = path.join(process.cwd(), '.devloop/retry-counts.json');
-      let retryCounts: Record<string, number> = {};
-      
-      if (fs.existsSync(retryCountsPath)) {
-        try {
-          retryCounts = JSON.parse(fs.readFileSync(retryCountsPath, 'utf8'));
-        } catch (error) {
-          logger.warn('[ContributionModeStrategy] Failed to parse retry-counts.json:', error);
-        }
+      // Reset retry counts for blocked tasks using UnifiedStateManager
+      try {
+        const stateManager = new UnifiedStateManager(process.cwd());
+        await stateManager.initialize();
+        await stateManager.updateExecutionState((draft) => {
+          // Reset retry counts for all blocked tasks in current PRD if active
+          if (draft.active.prdId && draft.prds[draft.active.prdId]) {
+            const prd = draft.prds[draft.active.prdId];
+            for (const taskId of blockedTasks) {
+              prd.retryCounts[taskId] = 0;
+            }
+          }
+        });
+        logger.info(`[ContributionModeStrategy] Reset retry counts for ${blockedTasks.length} blocked tasks`);
+      } catch (error) {
+        logger.warn('[ContributionModeStrategy] Failed to reset retry counts:', error);
       }
-
-      for (const taskId of blockedTasks) {
-        retryCounts[taskId] = 0;
-      }
-
-      fs.writeFileSync(retryCountsPath, JSON.stringify(retryCounts, null, 2));
-      logger.info(`[ContributionModeStrategy] Reset retry counts for ${blockedTasks.length} blocked tasks`);
     }
 
     getEventStream().emit(

@@ -17,7 +17,7 @@ import { CodebaseInsightExtractor, CodebaseInsight } from './codebase-insight-ex
 import { ConversationManager } from '../../conversation/conversation-manager';
 import { PRDBuildingProgressTracker } from '../../tracking/prd-building-progress-tracker';
 import { InteractivePromptSystem } from '../builder/interactive-prompt-system';
-import { PromptSelector } from '../../prompts/prompt-selector';
+import { PromptSelector } from '../../../prompts/code-generation/prompt-selector';
 import { AIProvider, AIProviderConfig } from '../../../providers/ai/interface';
 import { BuildMode } from '../../conversation/types';
 import { logger } from '../../utils/logger';

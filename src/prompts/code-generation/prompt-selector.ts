@@ -8,9 +8,9 @@
 import * as path from 'path';
 import * as fs from 'fs-extra';
 import { FrameworkPlugin } from '../../frameworks';
-import { FeatureType } from '../analysis/feature-type-detector';
-import { BuildMode } from '../conversation/types';
-import { logger } from '../utils/logger';
+import { FeatureType } from '../../core/analysis/feature-type-detector';
+import { BuildMode } from '../../core/conversation/types';
+import { logger } from '../../core/utils/logger';
 
 /**
  * Prompt Template Path

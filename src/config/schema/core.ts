@@ -111,7 +111,7 @@ const configSchemaBase = z.object({
       patterns: z.string().optional().default('.devloop/patterns.json').describe('Path to patterns.json'),
       observations: z.string().optional().default('.devloop/observations.json').describe('Path to observations.json'),
       testResults: z.string().optional().default('.devloop/test-results.json/test-results.json').describe('Path to test-results.json'),
-      prdSetState: z.string().optional().default('.devloop/prd-set-state.json').describe('Path to prd-set-state.json'),
+      prdSetState: z.string().optional().default('.devloop/execution-state.json').describe('Path to execution-state.json (unified execution state)'),
       // Filtering options to prevent stale data from interfering
       filtering: z.object({
         patternsRetentionDays: z.number().optional().default(180).describe('Keep patterns used in last N days'),
@@ -541,7 +541,8 @@ const configSchemaBase = z.object({
         // Maximum number of history entries per session (default: 50)
         maxHistoryItems: z.number().int().default(50),
         // Path to sessions storage file (relative to project root)
-        sessionsPath: z.string().default('.devloop/cursor-sessions.json'),
+        // Note: Sessions are now stored in execution-state.json, but this path can be used for backward compatibility
+        sessionsPath: z.string().default('.devloop/execution-state.json'),
       }).optional(),
     }).optional(),
   }).optional(),

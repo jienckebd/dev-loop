@@ -1,115 +1,96 @@
+import Anthropic from '@anthropic-ai/sdk';
 import {
   AIPatternProvider,
   AICapabilities,
   ProviderUsage,
   AnalysisContext,
   AnalysisResult,
-} from '../provider-interface';
-import { logger } from "../../core/utils/logger";
+  AIDetectedPattern,
+  AIRecommendation,
+} from '../../../ai/provider-interface';
+import { logger } from "../../../core/utils/logger";
 
-export interface OllamaConfig {
-  baseUrl?: string;
+export interface AnthropicConfig {
+  apiKey: string;
   model?: string;
   embeddingModel?: string;
   maxTokens?: number;
   temperature?: number;
 }
 
-export class OllamaPatternProvider implements AIPatternProvider {
-  readonly name = 'ollama';
-  private baseUrl: string;
+export class AnthropicPatternProvider implements AIPatternProvider {
+  readonly name = 'anthropic';
+  private client: Anthropic;
   private usage: ProviderUsage = {
     tokensUsed: 0,
     requestsMade: 0,
     embeddingsGenerated: 0,
-    estimatedCost: 0, // Local models have no cost
+    estimatedCost: 0,
   };
 
   readonly capabilities: AICapabilities = {
     embeddings: true,
     analysis: true,
-    maxTokens: 32768, // Typical for local models
-    embeddingDimensions: 768, // nomic-embed-text
+    maxTokens: 200000,
+    embeddingDimensions: 1024, // Voyage embeddings
     batchSize: 10,
   };
 
-  constructor(private config: OllamaConfig) {
-    this.baseUrl = config.baseUrl || 'http://localhost:11434';
+  constructor(private config: AnthropicConfig) {
+    if (!config.apiKey) {
+      throw new Error('Anthropic API key is required');
+    }
+    this.client = new Anthropic({ apiKey: config.apiKey });
   }
 
   async generateEmbedding(text: string): Promise<number[]> {
-    try {
-      const model = this.config.embeddingModel || 'nomic-embed-text';
-      const response = await fetch(`${this.baseUrl}/api/embeddings`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          model,
-          prompt: text,
-        }),
-      });
-
-      if (!response.ok) {
-        throw new Error(`Ollama API error: ${response.statusText}`);
-      }
-
-      const data = await response.json() as { embedding: number[] };
-      this.usage.embeddingsGenerated += 1;
-      this.usage.requestsMade += 1;
-
-      return data.embedding;
-    } catch (error: any) {
-      logger.error(`Ollama embedding error: ${error.message}`);
-      throw error;
-    }
+    // Note: Anthropic doesn't have native embeddings, but they partner with Voyage AI
+    // For now, we'll use a workaround or note that embeddings need to be via Voyage API
+    // This is a placeholder - actual implementation would use Voyage AI API
+    throw new Error('Anthropic does not provide embeddings directly. Use Voyage AI API or OpenAI for embeddings.');
   }
 
   async generateEmbeddings(texts: string[]): Promise<number[][]> {
-    // Ollama doesn't support batch embeddings, so we'll do them sequentially
-    // In production, you might want to parallelize with a limit
-    const embeddings: number[][] = [];
-    for (const text of texts) {
-      embeddings.push(await this.generateEmbedding(text));
-    }
-    return embeddings;
+    // Batch embeddings - would use Voyage AI API
+    throw new Error('Anthropic does not provide embeddings directly. Use Voyage AI API or OpenAI for embeddings.');
   }
 
   async analyze(prompt: string, context?: AnalysisContext): Promise<AnalysisResult> {
-    const model = this.config.model || 'codellama';
+    const model = this.config.model || 'claude-3-haiku-20240307';
     const systemPrompt = this.buildSystemPrompt(context);
 
     try {
-      const response = await fetch(`${this.baseUrl}/api/generate`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          model,
-          prompt: `${systemPrompt}\n\n${prompt}`,
-          stream: false,
-          options: {
-            temperature: this.config.temperature || 0.3,
-            num_predict: this.config.maxTokens || 4096,
+      const response = await this.client.messages.create({
+        model,
+        max_tokens: this.config.maxTokens || 4096,
+        temperature: this.config.temperature || 0.3,
+        system: systemPrompt,
+        messages: [
+          {
+            role: 'user',
+            content: prompt,
           },
-        }),
+        ],
       });
 
-      if (!response.ok) {
-        throw new Error(`Ollama API error: ${response.statusText}`);
+      const content = response.content[0];
+      if (content.type !== 'text') {
+        throw new Error('Unexpected response type from Anthropic API');
       }
 
-      const data = await response.json() as { response?: string; eval_count?: number; prompt_eval_count?: number };
-      const content = data.response || '';
-
-      // Track usage (approximate)
-      this.usage.tokensUsed += (data.eval_count || 0) + (data.prompt_eval_count || 0);
+      // Track usage
+      const inputTokens = response.usage.input_tokens;
+      const outputTokens = response.usage.output_tokens;
+      this.usage.tokensUsed += inputTokens + outputTokens;
       this.usage.requestsMade += 1;
+      this.usage.estimatedCost += this.estimateCost(inputTokens, outputTokens, model);
 
       // Parse response
-      const result = this.parseAnalysisResponse(content);
+      const result = this.parseAnalysisResponse(content.text);
 
       return result;
     } catch (error: any) {
-      logger.error(`Ollama analysis error: ${error.message}`);
+      logger.error(`Anthropic API error: ${error.message}`);
       throw error;
     }
   }
@@ -154,6 +135,7 @@ Provide clear, actionable recommendations with examples.`;
   private parseAnalysisResponse(text: string): AnalysisResult {
     // Try to parse JSON from the response
     try {
+      // Look for JSON in code blocks or at the end
       const jsonMatch = text.match(/```(?:json)?\s*(\{[\s\S]*\})\s*```/) || text.match(/(\{[\s\S]*\})/);
       if (jsonMatch) {
         const parsed = JSON.parse(jsonMatch[1]);
@@ -183,5 +165,13 @@ Provide clear, actionable recommendations with examples.`;
       confidence: 0.7,
       reasoning: text,
     };
+  }
+
+  private estimateCost(inputTokens: number, outputTokens: number, model: string): number {
+    // Claude 3 Haiku pricing (as of 2024)
+    const inputCostPer1k = 0.00025; // $0.25 per 1M tokens
+    const outputCostPer1k = 0.00125; // $1.25 per 1M tokens
+
+    return (inputTokens / 1000) * inputCostPer1k + (outputTokens / 1000) * outputCostPer1k;
   }
 }

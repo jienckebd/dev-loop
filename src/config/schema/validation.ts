@@ -9,6 +9,9 @@ import {
   testResultsFileSchema,
 } from './runtime';
 import {
+  executionStateFileSchema,
+} from './execution-state';
+import {
   prdSetMetricsFileSchema,
   prdMetricsFileSchema,
   phaseMetricsFileSchema,
@@ -111,6 +114,10 @@ export function validateStateFile(data: unknown): z.infer<typeof stateFileSchema
 
 export function validateTestResultsFile(data: unknown): z.infer<typeof testResultsFileSchema> {
   return testResultsFileSchema.parse(data);
+}
+
+export function validateExecutionStateFile(data: unknown): z.infer<typeof executionStateFileSchema> {
+  return executionStateFileSchema.parse(data);
 }
 
 /**

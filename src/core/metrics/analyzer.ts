@@ -89,7 +89,7 @@ export class MetricsAnalyzer {
 
   constructor(
     metricsPath: string = '.devloop/metrics.json',
-    prdSetMetricsPath: string = '.devloop/prd-set-metrics.json'
+    prdSetMetricsPath: string = '.devloop/metrics.json' // Consolidated into unified metrics.json
   ) {
     this.metricsPath = path.resolve(process.cwd(), metricsPath);
     this.prdSetMetricsPath = path.resolve(process.cwd(), prdSetMetricsPath);
