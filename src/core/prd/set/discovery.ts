@@ -4,6 +4,10 @@ import { parse as yamlParse } from 'yaml';
 import { PrdManifestParser, PrdSetManifest } from '../parser/manifest-parser';
 import { PrdConfigParser, PrdMetadata } from '../parser/config-parser';
 import { PrdSet } from '../coordination/coordinator';
+import { PlanningDocParser } from '../parser/planning-doc-parser';
+import { GapAnalyzer, Gap, GapAnalysisResult } from '../enhancement/gap-analyzer';
+import { CodebaseAnalysisResult } from '../../analysis/codebase-analyzer';
+import { FeatureTypeDetector } from '../../analysis/feature-type-detector';
 import { logger } from '../../utils/logger';
 import { validateConfigOverlay } from '../../../config/schema/validation';
 import { ConfigOverlay } from '../../../config/schema/overlays';
@@ -298,6 +302,95 @@ export class PrdSetDiscovery {
     }
 
     return sets;
+  }
+
+  /**
+   * Detect gaps in a PRD set (for enhance mode)
+   */
+  async detectGaps(
+    prdSet: DiscoveredPrdSet,
+    codebaseAnalysis?: CodebaseAnalysisResult,
+    featureTypeDetector?: FeatureTypeDetector
+  ): Promise<GapAnalysisResult> {
+    if (this.debug) {
+      logger.debug(`[PrdSetDiscovery] Detecting gaps in PRD set: ${prdSet.setId}`);
+    }
+
+    // Parse PRD document for gap analysis
+    const planningParser = new PlanningDocParser(this.debug);
+    let parsedDoc;
+    try {
+      parsedDoc = await planningParser.parsePrdSet(prdSet.directory);
+    } catch (error) {
+      // Fallback: try to parse first PRD file
+      if (prdSet.prdSet.prds && prdSet.prdSet.prds.length > 0) {
+        const firstPrd = prdSet.prdSet.prds[0];
+        parsedDoc = await planningParser.parse(path.resolve(prdSet.directory, firstPrd.path));
+      } else {
+        throw new Error(`Failed to parse PRD set for gap detection: ${error}`);
+      }
+    }
+
+    // Initialize gap analyzer
+    const gapAnalyzer = new GapAnalyzer({
+      projectRoot: process.cwd(),
+      codebaseAnalysis: codebaseAnalysis || {
+        projectRoot: process.cwd(),
+        relevantFiles: [],
+        fileContexts: new Map(),
+        codebaseContext: '',
+      },
+      featureTypeDetector,
+      debug: this.debug,
+    });
+
+    // Detect gaps
+    const gaps = await gapAnalyzer.analyzeGaps(prdSet, {
+      parsedDoc,
+    });
+
+    return gaps;
+  }
+
+  /**
+   * Check if PRD set has gaps (quick check)
+   */
+  async hasGaps(prdSet: DiscoveredPrdSet): Promise<boolean> {
+    const gaps = await this.detectGaps(prdSet);
+    return gaps.totalGaps > 0;
+  }
+
+  /**
+   * Get gap summary for a PRD set
+   */
+  async getGapSummary(prdSet: DiscoveredPrdSet): Promise<string> {
+    const gaps = await this.detectGaps(prdSet);
+    return gaps.summary;
+  }
+
+  /**
+   * Get critical gaps only
+   */
+  async getCriticalGaps(prdSet: DiscoveredPrdSet): Promise<Gap[]> {
+    const gaps = await this.detectGaps(prdSet);
+    return gaps.gaps.filter(gap => gap.severity === 'critical');
+  }
+
+  /**
+   * Get high priority gaps only
+   */
+  async getHighPriorityGaps(prdSet: DiscoveredPrdSet): Promise<Gap[]> {
+    const gaps = await this.detectGaps(prdSet);
+    return gaps.gaps.filter(gap => gap.severity === 'critical' || gap.severity === 'high');
+  }
+
+  /**
+   * Check if PRD set is executable (no critical or high priority gaps)
+   */
+  async isExecutable(prdSet: DiscoveredPrdSet): Promise<boolean> {
+    const gaps = await this.detectGaps(prdSet);
+    const criticalGaps = gaps.gaps.filter(gap => gap.severity === 'critical' || gap.severity === 'high');
+    return criticalGaps.length === 0;
   }
 }
 

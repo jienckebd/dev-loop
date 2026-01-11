@@ -29,7 +29,7 @@ import { contributionCommand } from './cli/commands/contribution';
 import { evolveCommand } from './cli/commands/evolve';
 import { prdCommand } from './cli/commands/prd';
 import { validatePrdCommand } from './cli/commands/validate-prd';
-import { registerConvertPlanningDocCommand } from './cli/commands/convert-planning-doc';
+import { registerBuildPrdSetCommand } from './cli/commands/build-prd-set';
 import { prdSetExecuteCommand, prdSetStatusCommand, prdSetListCommand, prdSetValidateCommand } from './cli/commands/prd-set';
 import { scanCommand } from './cli/commands/scan';
 import { recommendCommand } from './cli/commands/recommend';
@@ -328,8 +328,8 @@ program
     });
   });
 
-// Register convert-planning-doc command
-registerConvertPlanningDocCommand(program);
+// Register build-prd-set command (comprehensive command with three modes: convert, enhance, create)
+registerBuildPrdSetCommand(program);
 
 program
   .command('validate-cursor-agents')
@@ -518,17 +518,27 @@ program
 
 program
   .command('archive')
-  .description('Archive Task Master and dev-loop JSON state files')
+  .description('Archive Task Master and dev-loop JSON state files (learning files are NOT archived - they stay in place)')
   .option('-c, --config <path>', 'Path to config file', 'devloop.config.js')
   .option('--prd-name <name>', 'PRD name for archive directory (default: "default")')
   .option('--archive-path <path>', 'Custom archive path (default: .devloop/archive)')
   .option('--compress', 'Compress archive as .tar.gz')
+  .option('--prune', 'Remove old entries from learning JSON files (patterns.json, observations.json, test-results.json)')
+  .option('--prune-days <n>', 'Only keep entries newer than N days (default: 90)', (v) => parseInt(v, 10))
+  .option('--prune-test-results', 'Remove test results older than threshold')
+  .option('--prune-patterns', 'Remove patterns not used in last N days')
+  .option('--prune-observations', 'Remove observations older than N days')
   .action(async (options) => {
     await archiveCommand({
       config: options.config,
       prdName: options.prdName,
       archivePath: options.archivePath,
       compress: options.compress,
+      prune: options.prune,
+      pruneDays: options.pruneDays,
+      pruneTestResults: options.pruneTestResults,
+      prunePatterns: options.prunePatterns,
+      pruneObservations: options.pruneObservations,
     });
   });
 

@@ -14,6 +14,10 @@ import { createReadStream, createWriteStream } from 'fs';
 import { loadConfig } from '../../config/loader';
 import { exec } from 'child_process';
 import { promisify } from 'util';
+import { PatternLoader } from '../../core/prd/learning/pattern-loader';
+import { ObservationLoader } from '../../core/prd/learning/observation-loader';
+import { TestResultsLoader } from '../../core/prd/learning/test-results-loader';
+import { SchemaValidator } from '../../core/prd/learning/schema-validator';
 
 const execAsync = promisify(exec);
 
@@ -22,6 +26,12 @@ export interface ArchiveOptions {
   prdName?: string;
   archivePath?: string;
   compress?: boolean;
+  // Pruning options (manual pruning of learning files)
+  prune?: boolean; // Remove old entries from learning JSON files instead of archiving them
+  pruneDays?: number; // Only keep entries newer than N days (default: 90)
+  pruneTestResults?: boolean; // Remove test results older than threshold
+  prunePatterns?: boolean; // Remove patterns not used in last N days
+  pruneObservations?: boolean; // Remove observations older than N days
 }
 
 export async function archiveCommand(options: ArchiveOptions): Promise<void> {
@@ -83,12 +93,15 @@ export async function archiveCommand(options: ArchiveOptions): Promise<void> {
     // Files to archive
     const filesToArchive: Array<{ source: string; dest: string }> = [];
 
-    // Dev-loop state files
+    // Dev-loop state files (EXCLUDE learning files - they stay in place)
+    // Learning files (patterns.json, observations.json, test-results.json, prd-set-state.json, config/*.json)
+    // are NOT archived - they remain in place with filtering to prevent stale data interference
+    const excludeLearningFiles = (config as any).archive?.excludeLearningFiles !== false; // Default: true
+    
     const devloopFiles = [
       '.devloop/state.json',
       '.devloop/metrics.json',
-      '.devloop/observations.json',
-      '.devloop/patterns.json',
+      // NOTE: observations.json, patterns.json are NOT archived (learning files stay in place)
       '.devloop/retry-counts.json',
       '.devloop/contribution-mode.json',
       '.devloop/prd-set-metrics.json',
@@ -99,6 +112,7 @@ export async function archiveCommand(options: ArchiveOptions): Promise<void> {
       '.devloop/observation-metrics.json',
       '.devloop/pattern-metrics.json',
       '.devloop/cursor-sessions.json', // Cursor background agent session state
+      // NOTE: test-results.json/test-results.json, prd-set-state.json, config/*.json are NOT archived
     ];
 
     for (const file of devloopFiles) {
@@ -238,12 +252,14 @@ export async function archiveCommand(options: ArchiveOptions): Promise<void> {
       console.log(chalk.gray(`  Reset ${path.relative(projectRoot, taskmasterStatePath)}`));
     }
 
-    // Reset dev-loop state files
+    // Reset dev-loop state files (EXCLUDE learning files - they stay in place)
+    // Learning files (patterns.json, observations.json, test-results.json, prd-set-state.json, config/*.json)
+    // are NOT reset - they remain in place with filtering to prevent stale data interference
     const devloopFilesToReset = [
       '.devloop/state.json',
       '.devloop/metrics.json',
-      '.devloop/observations.json',
-      '.devloop/patterns.json',
+      // NOTE: observations.json, patterns.json are NOT reset (learning files stay in place)
+      // NOTE: test-results.json/test-results.json, prd-set-state.json, config/*.json are NOT reset
       '.devloop/retry-counts.json',
       '.devloop/contribution-mode.json',
       '.devloop/prd-set-metrics.json',
@@ -256,12 +272,11 @@ export async function archiveCommand(options: ArchiveOptions): Promise<void> {
       '.devloop/cursor-sessions.json', // Reset cursor sessions
     ];
 
-    // File-specific reset values
+    // File-specific reset values (only for files that were archived)
     const resetValues: Record<string, any> = {
       '.devloop/state.json': {},
       '.devloop/metrics.json': { version: '1.0', runs: [], summary: { totalRuns: 0, successRate: 0, avgAiCallMs: 0, avgTestRunMs: 0, totalTokensInput: 0, totalTokensOutput: 0 } },
-      '.devloop/observations.json': { version: '1.0', observations: [] },
-      '.devloop/patterns.json': { version: '1.0', patterns: [] },
+      // NOTE: observations.json, patterns.json are NOT reset (learning files stay in place)
       '.devloop/retry-counts.json': {},
       '.devloop/contribution-mode.json': {},
       '.devloop/prd-set-metrics.json': {},
@@ -291,6 +306,24 @@ export async function archiveCommand(options: ArchiveOptions): Promise<void> {
 
     // Note: PRD context files are not reset (directory may not exist if empty)
     // Note: Chat instruction files and completed files don't need reset (directories will be empty)
+
+    // Handle pruning of learning files if --prune flag is used
+    if (options.prune || (config as any).archive?.pruning?.enabled) {
+      await pruneLearningFiles(projectRoot, config as any, options);
+    }
+
+    // Log which learning files were NOT archived (they stay in place)
+    if (excludeLearningFiles) {
+      console.log(chalk.cyan('\n📚 Learning files (NOT archived - kept in place with filtering):'));
+      console.log(chalk.gray('  • .devloop/patterns.json (kept - auto-filtered on load)'));
+      console.log(chalk.gray('  • .devloop/observations.json (kept - auto-filtered on load)'));
+      console.log(chalk.gray('  • .devloop/test-results.json/test-results.json (kept - auto-filtered on load)'));
+      console.log(chalk.gray('  • .devloop/prd-set-state.json (kept - auto-filtered on load)'));
+      console.log(chalk.gray('  • .devloop/config/*.json (kept - framework patterns)'));
+      console.log(chalk.gray('  • .devloop/prd-building-checkpoints/*.json (kept - may be pruned manually)'));
+      console.log(chalk.gray('\n  These files have versioning/timestamps to prevent stale data from interfering.'));
+      console.log(chalk.gray('  Use --prune flag to manually remove old entries if needed.'));
+    }
 
     // Compress if requested
     if (options.compress) {
@@ -342,6 +375,146 @@ function formatFileSize(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(2)} KB`;
   return `${(bytes / 1024 / 1024).toFixed(2)} MB`;
+}
+
+/**
+ * Prune old entries from learning JSON files (if --prune flag is used)
+ */
+async function pruneLearningFiles(
+  projectRoot: string,
+  config: any,
+  options: ArchiveOptions
+): Promise<void> {
+  console.log(chalk.cyan('✂️  Pruning old entries from learning files...'));
+
+  const pruningConfig = config.archive?.pruning || {};
+  const pruneDays = options.pruneDays || pruningConfig.patternsRetentionDays || 180;
+
+  // Prune patterns.json if explicitly requested or --prune flag is set
+  if (options.prune || options.prunePatterns === true) {
+    const patternsPath = path.resolve(projectRoot, '.devloop/patterns.json');
+    if (await fs.pathExists(patternsPath)) {
+      try {
+        const patternLoader = new PatternLoader({
+          filePath: patternsPath,
+          filterOptions: {
+            retentionDays: pruneDays,
+            autoPrune: true,
+          },
+          autoPrune: true,
+          validateOnLoad: true,
+          debug: false,
+        });
+        const patterns = await patternLoader.load();
+        // Patterns are already pruned by loader, file is saved by loader if needed
+        console.log(chalk.gray(`  Pruned patterns.json (kept ${patterns.length} recent patterns)`));
+      } catch (error) {
+        console.log(chalk.yellow(`  Warning: Could not prune patterns.json: ${error}`));
+      }
+    }
+  }
+
+  // Prune observations.json if explicitly requested or --prune flag is set
+  if (options.prune || options.pruneObservations === true) {
+    const observationsPath = path.resolve(projectRoot, '.devloop/observations.json');
+    if (await fs.pathExists(observationsPath)) {
+      try {
+        const observationLoader = new ObservationLoader({
+          filePath: observationsPath,
+          filterOptions: {
+            retentionDays: pruneDays,
+            autoPrune: true,
+          },
+          autoPrune: true,
+          validateOnLoad: true,
+          debug: false,
+        });
+        const observations = await observationLoader.load();
+        // Observations are already pruned by loader, file is saved by loader if needed
+        console.log(chalk.gray(`  Pruned observations.json (kept ${observations.length} recent observations)`));
+      } catch (error) {
+        console.log(chalk.yellow(`  Warning: Could not prune observations.json: ${error}`));
+      }
+    }
+  }
+
+  // Prune test-results.json if explicitly requested or --prune flag is set
+  if (options.prune || options.pruneTestResults === true) {
+    const testResultsPath = path.resolve(projectRoot, '.devloop/test-results.json/test-results.json');
+    if (await fs.pathExists(testResultsPath)) {
+      try {
+        const testResultsLoader = new TestResultsLoader({
+          filePath: testResultsPath,
+          filterOptions: {
+            retentionDays: pruneDays,
+            autoPrune: true,
+          },
+          autoPrune: true,
+          validateOnLoad: true,
+          debug: false,
+        });
+        const testResults = await testResultsLoader.load();
+        // Test results are already pruned by loader, file is saved by loader if needed
+        console.log(chalk.gray(`  Pruned test-results.json (kept ${testResults.length} recent test results)`));
+      } catch (error) {
+        console.log(chalk.yellow(`  Warning: Could not prune test-results.json: ${error}`));
+      }
+    }
+  }
+
+  // Prune prd-set-state.json (remove old completed/cancelled states)
+  const prdSetStatePath = path.resolve(projectRoot, '.devloop/prd-set-state.json');
+  if (await fs.pathExists(prdSetStatePath)) {
+    try {
+      const validator = new SchemaValidator({
+        autoFix: true,
+        autoMigrate: false,
+        backup: true,
+        debug: false,
+      });
+      await validator.validatePrdSetStateFile(prdSetStatePath);
+      // Validation auto-fixes schema issues, but we also need to prune old states
+      const data = await fs.readJson(prdSetStatePath);
+      const now = new Date();
+      const prdStateRetentionDays = options.pruneDays || pruningConfig.prdStateRetentionDays || 90;
+      const retentionMs = prdStateRetentionDays * 24 * 60 * 60 * 1000;
+
+      let prunedCount = 0;
+      for (const [prdId, state] of Object.entries(data.prdStates || {})) {
+        const stateEntry = state as any;
+        if (stateEntry.updatedAt) {
+          const updatedAt = new Date(stateEntry.updatedAt);
+          const daysSinceUpdate = (now.getTime() - updatedAt.getTime()) / (1000 * 60 * 60 * 24);
+          
+          // Remove old cancelled states (older than 30 days)
+          if (stateEntry.status === 'cancelled' && daysSinceUpdate > 30) {
+            delete data.prdStates[prdId];
+            prunedCount++;
+            continue;
+          }
+          
+          // Remove old completed states (older than retentionDays)
+          if (stateEntry.status === 'done' && daysSinceUpdate > prdStateRetentionDays) {
+            delete data.prdStates[prdId];
+            prunedCount++;
+            continue;
+          }
+        }
+      }
+
+      if (prunedCount > 0) {
+        data.updatedAt = new Date().toISOString();
+        await fs.writeJson(prdSetStatePath, data, { spaces: 2 });
+        console.log(chalk.gray(`  Pruned prd-set-state.json (removed ${prunedCount} old PRD states)`));
+      } else {
+        console.log(chalk.gray(`  prd-set-state.json (no old states to prune)`));
+      }
+    } catch (error) {
+      console.log(chalk.yellow(`  Warning: Could not prune prd-set-state.json: ${error}`));
+    }
+  }
+
+  console.log(chalk.green('✓ Pruning complete'));
 }
 
 

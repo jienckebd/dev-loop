@@ -96,21 +96,22 @@ export class FrameworkLoader {
   /**
    * Load a framework plugin by type.
    * Falls back to auto-detection if type is not specified.
-   * If multiple frameworks are detected, returns a CompositePlugin.
+   * If multiple frameworks are detected and no type is specified, returns a CompositePlugin.
+   * CRITICAL: When type is explicitly configured, it takes precedence over auto-detection.
    *
-   * @param type Framework type (e.g., 'drupal', 'composite')
+   * @param type Framework type (e.g., 'drupal', 'composite') - when provided, this takes precedence
    * @returns The loaded framework plugin
    */
   async loadFramework(type?: string): Promise<FrameworkPlugin> {
-    // 1. Explicit type from config - check built-in first
+    // 1. Explicit type from config - check built-in first (CONFIG TAKES PRECEDENCE)
     if (type && this.loadedPlugins.has(type)) {
       if (this.debug) {
-        console.log(`[FrameworkLoader] Using built-in framework: ${type}`);
+        console.log(`[FrameworkLoader] Using configured framework from project config: ${type}`);
       }
       return this.loadedPlugins.get(type)!;
     }
 
-    // 2. Check for project-local plugin
+    // 2. Check for project-local plugin (only if type was specified - config takes precedence)
     if (type) {
       const customPlugin = await this.loadCustomPlugin(type);
       if (customPlugin) {
@@ -119,9 +120,14 @@ export class FrameworkLoader {
         }
         return customPlugin;
       }
+
+      // If type was specified but not found, log warning but continue to auto-detection
+      if (this.debug) {
+        console.warn(`[FrameworkLoader] Configured framework type '${type}' not found, falling back to auto-detection`);
+      }
     }
 
-    // 3. Check for npm plugin (@dev-loop/framework-*)
+    // 3. Check for npm plugin (@dev-loop/framework-*) (only if type was specified)
     if (type) {
       const npmPlugin = await this.loadNpmPlugin(type);
       if (npmPlugin) {
@@ -132,7 +138,7 @@ export class FrameworkLoader {
       }
     }
 
-    // 4. Auto-detect from project structure
+    // 4. Auto-detect from project structure (only if type was NOT explicitly configured)
     if (!type) {
       const detected = await this.detectAllFrameworks();
 

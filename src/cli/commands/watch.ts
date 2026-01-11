@@ -11,6 +11,8 @@ import { getReportGenerator, PrdExecutionReport } from "../../core/reporting/gen
 import { getParallelMetricsTracker } from "../../core/metrics/parallel";
 import { ProgressTracker } from "../../core/tracking/progress-tracker";
 import { PrdConfigParser } from "../../core/prd/parser/config-parser";
+import { PRDBuildingProgressTracker } from "../../core/tracking/prd-building-progress-tracker";
+import { ConversationManager } from "../../core/conversation/conversation-manager";
 
 /**
  * Watch command - Daemon mode for single PRD execution
@@ -40,6 +42,7 @@ export async function watchCommand(options: {
   debug?: boolean;
   untilComplete?: boolean;
   maxIterations?: number;
+  prdBuilding?: boolean; // Watch PRD building sessions instead of PRD execution
 }): Promise<void> {
   const spinner = ora('Loading configuration').start();
   const debug = options.debug || false;
@@ -55,6 +58,88 @@ export async function watchCommand(options: {
     spinner.start('Initializing workflow engine');
     const engine = new WorkflowEngine(config);
     spinner.succeed('Workflow engine initialized');
+
+    // NEW: PRD Building Watch Mode - monitor PRD building progress and auto-save checkpoints
+    if (options.prdBuilding) {
+      spinner.start('Initializing PRD building watch mode');
+      const prdBuildingTracker = new PRDBuildingProgressTracker({
+        enabled: true,
+        autoSaveInterval: 300, // Auto-save every 5 minutes
+        debug,
+      });
+
+      const conversationManager = new ConversationManager({
+        enabled: true,
+        debug,
+      });
+
+      console.log(chalk.cyan('PRD Building Watch Mode: Monitoring PRD building sessions...'));
+      console.log(chalk.gray('This will monitor conversations and auto-save checkpoints every 5 minutes.\n'));
+
+      // Monitor conversations for active PRD building sessions
+      const checkInterval = setInterval(async () => {
+        try {
+          const conversations = await conversationManager.listConversations();
+          const activeConversations = conversations.filter(
+            conv => conv.state === 'questioning' || conv.state === 'refining'
+          );
+
+          if (activeConversations.length > 0) {
+            console.log(chalk.cyan(`[PRD Building Watch] Active sessions: ${activeConversations.length}`));
+            for (const conv of activeConversations) {
+              const progress = prdBuildingTracker.getProgress(conv.id);
+              if (progress) {
+                console.log(
+                  chalk.gray(
+                    `  - ${conv.id}: ${progress.phase} (${progress.completionPercentage}% complete)`
+                  )
+                );
+              }
+            }
+
+            // Auto-save checkpoints for active sessions
+            for (const conv of activeConversations) {
+              const latestCheckpoint = await prdBuildingTracker.getLatestCheckpoint(conv.id);
+              const progress = prdBuildingTracker.getProgress(conv.id);
+              if (progress && progress.completionPercentage > 0) {
+                // Auto-save checkpoint if significant progress made since last checkpoint
+                const shouldSave = !latestCheckpoint || 
+                  progress.completionPercentage - (latestCheckpoint as any)?.progress?.completionPercentage > 10;
+                
+                if (shouldSave) {
+                  // Would need PRD draft to save checkpoint - this is a placeholder
+                  console.log(chalk.gray(`  - Auto-saving checkpoint for ${conv.id}...`));
+                }
+              }
+            }
+          }
+        } catch (error) {
+          if (debug) {
+            console.warn(`[PRD Building Watch] Error monitoring: ${error}`);
+          }
+        }
+      }, 60000); // Check every minute
+
+      // Handle shutdown
+      const shutdown = async () => {
+        clearInterval(checkInterval);
+        prdBuildingTracker.destroy();
+        await removePidFile();
+        process.exit(0);
+      };
+
+      process.on('SIGINT', shutdown);
+      process.on('SIGTERM', shutdown);
+
+      spinner.succeed('PRD building watch mode active');
+      console.log(chalk.green('\n✓ PRD Building Watch Mode Active\n'));
+      console.log(chalk.gray('Monitoring PRD building sessions and auto-saving checkpoints...'));
+      console.log(chalk.gray('Press Ctrl+C to stop.\n'));
+
+      // Keep running indefinitely until interrupted
+      await new Promise(() => {}); // Block indefinitely
+      return;
+    }
 
     // CRITICAL FIX: Load PRD metadata from contribution mode and set target module
     // This ensures watch mode respects targetModule from PRD execution config

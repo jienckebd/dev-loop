@@ -73,6 +73,56 @@ const configSchemaBase = z.object({
   taskMaster: z.object({
     tasksPath: z.string(),
   }),
+  // PRD Building configuration
+  prdBuilding: z.object({
+    preProductionDir: z.string().default('.taskmaster/pre-production'),
+    productionDir: z.string().default('.taskmaster/production'),
+    refinement: z.object({
+      interactive: z.boolean().default(true),
+      askPrePhaseQuestions: z.boolean().default(true),
+      askMidPhaseQuestions: z.boolean().default(true),
+      askPostPhaseQuestions: z.boolean().default(true),
+      maxRefinementIterations: z.number().default(3).describe('Maximum refinement iterations per phase'),
+      showCodebaseInsights: z.boolean().default(true),
+      // NEW: Domain-specific rules
+      domainRules: z.object({
+        conventions: z.array(z.string()).optional().describe('Project-specific coding conventions'),
+        architecturalPatterns: z.array(z.string()).optional().describe('Architectural patterns to follow'),
+        businessRules: z.array(z.string()).optional().describe('Business domain rules'),
+        namingConventions: z.record(z.string(), z.string()).optional().describe('Naming convention patterns'),
+      }).optional(),
+      // NEW: Pattern libraries
+      patternLibraries: z.object({
+        schemas: z.array(z.string()).optional().describe('Schema pattern library paths'),
+        tests: z.array(z.string()).optional().describe('Test pattern library paths'),
+        features: z.array(z.string()).optional().describe('Feature pattern library paths'),
+      }).optional(),
+      // NEW: Semantic discovery config
+      semanticDiscovery: z.object({
+        enabled: z.boolean().default(true),
+        minScore: z.number().default(0.6).describe('Minimum semantic similarity score'),
+        maxResults: z.number().default(10).describe('Maximum files to return per query'),
+        cacheEmbeddings: z.boolean().default(true),
+      }).optional(),
+    }).optional(),
+    // NEW: Learning files configuration (patterns, observations, test results)
+    learningFiles: z.object({
+      enabled: z.boolean().optional().default(true).describe('Enable/disable learning from past data'),
+      patterns: z.string().optional().default('.devloop/patterns.json').describe('Path to patterns.json'),
+      observations: z.string().optional().default('.devloop/observations.json').describe('Path to observations.json'),
+      testResults: z.string().optional().default('.devloop/test-results.json/test-results.json').describe('Path to test-results.json'),
+      prdSetState: z.string().optional().default('.devloop/prd-set-state.json').describe('Path to prd-set-state.json'),
+      // Filtering options to prevent stale data from interfering
+      filtering: z.object({
+        patternsRetentionDays: z.number().optional().default(180).describe('Keep patterns used in last N days'),
+        observationsRetentionDays: z.number().optional().default(180).describe('Keep observations from last N days'),
+        testResultsRetentionDays: z.number().optional().default(180).describe('Keep test results from last N days'),
+        prdStateRetentionDays: z.number().optional().default(90).describe('Keep PRD states for completed PRDs'),
+        relevanceThreshold: z.number().optional().default(0.5).describe('Minimum relevance score (0-1)'),
+        autoPrune: z.boolean().optional().default(true).describe('Auto-prune old entries when loading'),
+      }).optional(),
+    }).optional(),
+  }).optional(),
   // MCP (Model Context Protocol) configuration
   mcp: z.object({
     // Event monitoring configuration for proactive intervention
@@ -274,6 +324,12 @@ const configSchemaBase = z.object({
     ignoreGlobs: z.array(z.string()).optional(),
     // Stopwords to filter out from identifier search
     identifierStopwords: z.array(z.string()).optional(),
+    // NEW: Paths to search for documentation files
+    documentationPaths: z.array(z.string()).optional().describe('Paths to search for documentation (e.g., docs/, .taskmaster/docs/)'),
+    // NEW: Paths where code can be edited during PRD generation
+    editablePaths: z.array(z.string()).optional().describe('Paths where code can be edited (e.g., docroot/modules/share/, tests/playwright/auto/)'),
+    // NEW: Paths that should never be edited (protected files/directories)
+    protectedPaths: z.array(z.string()).optional().describe('Paths that should never be edited (e.g., docroot/core/, docroot/modules/contrib/, playwright.config.ts)'),
   }).optional(),
   // Framework-specific configuration (makes dev-loop framework-agnostic)
   // Framework-specific extensions go in framework.config.{frameworkType}
@@ -612,6 +668,21 @@ const configSchemaBase = z.object({
     maxSuggestions: z.number().default(20),
     minConfidence: z.number().default(0.7),
     backupBeforeApply: z.boolean().default(true),
+  }).optional(),
+
+  // Archive configuration
+  archive: z.object({
+    defaultPath: z.string().optional().default('.devloop/archive').describe('Default archive directory path'),
+    excludeLearningFiles: z.boolean().optional().default(true).describe('Don\'t archive learning JSON files (patterns.json, observations.json, test-results.json)'),
+    // Pruning options (only applies when --prune is used)
+    pruning: z.object({
+      enabled: z.boolean().optional().default(false).describe('Auto-prune on archive (default: false, manual via --prune flag)'),
+      patternsRetentionDays: z.number().optional().default(180).describe('Keep patterns used in last N days'),
+      observationsRetentionDays: z.number().optional().default(180).describe('Keep observations from last N days'),
+      testResultsRetentionDays: z.number().optional().default(180).describe('Keep test results from last N days'),
+      prdStateRetentionDays: z.number().optional().default(90).describe('Keep PRD states for completed/cancelled PRDs'),
+      checkpointRetentionDays: z.number().optional().default(30).describe('Keep PRD building checkpoints for N days'),
+    }).optional(),
   }).optional(),
 });
 

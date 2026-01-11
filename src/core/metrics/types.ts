@@ -894,9 +894,7 @@ export interface InterventionMetrics {
     preventedCount: number; // Number of issues prevented by interventions
     falsePositives: number; // Interventions that weren't needed
   };
-}
-
-export function createDefaultInterventionMetrics(): InterventionMetrics {
+}export function createDefaultInterventionMetrics(): InterventionMetrics {
   return {
     totalInterventions: 0,
     successfulInterventions: 0,

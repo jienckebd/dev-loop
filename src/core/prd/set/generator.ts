@@ -1,5 +1,9 @@
 import { stringify as yamlStringify } from 'yaml';
+import * as fs from 'fs-extra';
+import * as path from 'path';
 import { ParsedPlanningDoc, ParsedPhase } from '../parser/planning-doc-parser';
+import { DiscoveredPrdSet } from './discovery';
+import { BuildMode } from '../../conversation/types';
 import { logger } from '../../utils/logger';
 
 /**
@@ -13,6 +17,7 @@ export interface GeneratedFile {
 
 /**
  * Generator for creating PRD set structures from parsed planning documents
+ * Supports all three modes: convert, enhance, create
  */
 export class PrdSetGenerator {
   private debug: boolean;
@@ -22,7 +27,7 @@ export class PrdSetGenerator {
   }
 
   /**
-   * Generate PRD set files from a parsed planning document
+   * Generate PRD set files from a parsed planning document (convert/create mode)
    */
   async generate(
     parsedDoc: ParsedPlanningDoc,
@@ -49,16 +54,88 @@ export class PrdSetGenerator {
     return files;
   }
 
+  /**
+   * Generate PRD set files from an existing PRD set (enhance mode)
+   */
+  async generateFromPrdSet(
+    prdSet: DiscoveredPrdSet,
+    outputDir: string,
+    options?: {
+      preserveExisting?: boolean;
+      mode?: BuildMode;
+    }
+  ): Promise<GeneratedFile[]> {
+    const files: GeneratedFile[] = [];
+    const preserveExisting = options?.preserveExisting !== false; // Default to true
+
+    // Load existing manifest and PRD files
+    const existingManifest = prdSet.manifest;
+    const existingDir = prdSet.directory;
+
+    // Generate updated manifest (preserve existing if preserveExisting is true)
+    if (preserveExisting && fs.existsSync(prdSet.indexPath)) {
+      // Read existing manifest
+      const existingContent = await fs.readFile(prdSet.indexPath, 'utf-8');
+      files.push({
+        filename: 'index.md.yml',
+        content: existingContent,
+        type: 'manifest',
+      });
+    } else {
+      // Generate new manifest
+      // This would require parsing the PRD set into ParsedPlanningDoc format
+      // For now, use existing manifest structure
+      const manifestContent = yamlStringify(existingManifest, { indent: 2, lineWidth: 100 });
+      files.push({
+        filename: 'index.md.yml',
+        content: `---\n${manifestContent}---\n`,
+        type: 'manifest',
+      });
+    }
+
+    // Generate config overlay if present
+    if (prdSet.configOverlay && Object.keys(prdSet.configOverlay).length > 0) {
+      files.push(this.generateConfigOverlay(prdSet.configOverlay));
+    }
+
+    return files;
+  }
+
+  /**
+   * Generate PRD set files (unified method for all modes)
+   */
+  async generatePrdSet(
+    input: ParsedPlanningDoc | DiscoveredPrdSet,
+    outputDir: string,
+    setId: string,
+    mode: BuildMode = 'convert'
+  ): Promise<GeneratedFile[]> {
+    if ('prdSet' in input) {
+      // DiscoveredPrdSet (enhance mode)
+      return await this.generateFromPrdSet(input, outputDir, { mode });
+    } else {
+      // ParsedPlanningDoc (convert/create mode)
+      return await this.generate(input, outputDir, setId);
+    }
+  }
+
   private generateManifest(parsedDoc: ParsedPlanningDoc, setId: string): GeneratedFile {
+    // PRD sets (index.md.yml) should always have status 'split' per validator requirements
+    // The validator checks for status 'split' on parent PRDs in PRD set structures
+    const hasMultiplePhases = parsedDoc.phases.length > 1;
+    const hasTasks = parsedDoc.phases.some(phase => phase.tasks && phase.tasks.length > 0);
+    
     const manifest: Record<string, any> = {
-      // Parent PRD with status: split
+      // Parent PRD with status: split (required for PRD set structure per validator)
       prd: {
         id: setId,
         version: parsedDoc.version,
-        status: parsedDoc.phases.length > 1 ? 'split' : 'ready',
-        note: parsedDoc.phases.length > 1
+        status: 'split', // PRD sets always have status 'split' per PrdSetValidator.validateSetLevel()
+        note: hasMultiplePhases
           ? `This PRD has been split into ${parsedDoc.phases.length} phased PRDs.`
-          : undefined,
+          : (hasTasks 
+              ? `This PRD set contains ${parsedDoc.phases[0]?.tasks?.length || 0} task(s) in a single phase.`
+              : `PRD set structure generated from planning document.`),
       },
       execution: {
         strategy: 'phased',
@@ -78,6 +155,15 @@ export class PrdSetGenerator {
             ? `phase${phase.id}_${this.slugify(phase.name)}.md`
             : undefined,
           config: phase.config,
+          tasks: phase.tasks?.map(task => ({
+            id: task.id,
+            title: task.title,
+            description: task.description,
+            testStrategy: task.testStrategy,
+            validationChecklist: task.validationChecklist,
+            dependencies: task.dependencies,
+            files: task.files,
+          })),
         })),
       },
       testing: parsedDoc.testing || {
