@@ -1355,7 +1355,7 @@ export class WorkflowEngine {
             const totalDuration = Date.now() - startTime;
             if (this.debugMetrics) {
               this.debugMetrics.recordTiming('total', totalDuration);
-              this.debugMetrics.completeRun('success');
+              this.debugMetrics.completeRun('completed');
             }
             
             await this.updateState({ status: 'idle' });
@@ -1378,7 +1378,7 @@ export class WorkflowEngine {
             const totalDuration = Date.now() - startTime;
             if (this.debugMetrics) {
               this.debugMetrics.recordTiming('total', totalDuration);
-              this.debugMetrics.completeRun('success');
+              this.debugMetrics.completeRun('completed');
             }
             
             await this.updateState({ status: 'idle' });
