@@ -1,10 +1,11 @@
-import { stringify as yamlStringify } from 'yaml';
+import { stringify as yamlStringify, parse as yamlParse } from 'yaml';
 import * as fs from 'fs-extra';
 import * as path from 'path';
 import { ParsedPlanningDoc, ParsedPhase } from '../parser/planning-doc-parser';
 import { DiscoveredPrdSet } from './discovery';
 import { BuildMode } from '../../conversation/types';
 import { logger } from '../../utils/logger';
+import { Config } from '../../../config/schema/core';
 
 /**
  * Represents a generated file
@@ -299,6 +300,172 @@ export class PrdSetGenerator {
       .replace(/[^a-z0-9]+/g, '_')
       .replace(/^_+|_+$/g, '')
       .substring(0, 30);
+  }
+
+  /**
+   * Detect actual ID pattern from tasks and update PRD set files
+   * @param prdSetDir - Directory containing PRD set files
+   * @param setId - PRD set ID
+   * @returns true if fix was applied, false otherwise
+   */
+  async fixIdPattern(prdSetDir: string, setId: string): Promise<boolean> {
+    const indexPath = path.join(prdSetDir, 'index.md.yml');
+    if (!await fs.pathExists(indexPath)) {
+      return false;
+    }
+
+    // Read and parse index.md.yml
+    const indexContent = await fs.readFile(indexPath, 'utf-8');
+    const indexMatch = indexContent.match(/^---\n([\s\S]*?)\n---/);
+    if (!indexMatch) return false;
+
+    const indexYaml = yamlParse(indexMatch[1]);
+    const allTaskIds: string[] = [];
+
+    // Extract task IDs from parent PRD
+    if (indexYaml.requirements?.phases) {
+      for (const phase of indexYaml.requirements.phases) {
+        if (phase.tasks) {
+          for (const task of phase.tasks) {
+            if (task.id) allTaskIds.push(task.id);
+          }
+        }
+      }
+    }
+
+    // Extract task IDs from child PRD files
+    const phaseFiles = await fs.readdir(prdSetDir);
+    for (const file of phaseFiles) {
+      if (file.startsWith('phase') && file.endsWith('.md.yml')) {
+        const phasePath = path.join(prdSetDir, file);
+        const phaseContent = await fs.readFile(phasePath, 'utf-8');
+        const phaseMatch = phaseContent.match(/^---\n([\s\S]*?)\n---/);
+        if (phaseMatch) {
+          const phaseYaml = yamlParse(phaseMatch[1]);
+          if (phaseYaml.requirements?.phases?.[0]?.tasks) {
+            for (const task of phaseYaml.requirements.phases[0].tasks) {
+              if (task.id) allTaskIds.push(task.id);
+            }
+          }
+        }
+      }
+    }
+
+    if (allTaskIds.length === 0) return false;
+
+    // Detect pattern from task IDs (e.g., REQ-1.1 -> REQ-{id})
+    const firstTaskId = allTaskIds[0];
+    const patternMatch = firstTaskId.match(/^([A-Z]+)-/);
+    if (!patternMatch) return false;
+
+    const detectedPattern = `${patternMatch[1]}-{id}`;
+    const currentPattern = indexYaml.requirements?.idPattern || 'TASK-{id}';
+
+    // If pattern matches, no fix needed
+    if (currentPattern === detectedPattern) return false;
+
+    if (this.debug) {
+      logger.debug(`[PrdSetGenerator] Fixing ID pattern: ${currentPattern} -> ${detectedPattern}`);
+    }
+
+    // Update idPattern in index.md.yml
+    indexYaml.requirements.idPattern = detectedPattern;
+    const updatedIndexYaml = yamlStringify(indexYaml, { indent: 2, lineWidth: 100 });
+    const updatedIndexContent = `---\n${updatedIndexYaml}---${indexContent.substring(indexMatch[0].length)}`;
+    await fs.writeFile(indexPath, updatedIndexContent, 'utf-8');
+
+    // Update idPattern in all phase files
+    for (const file of phaseFiles) {
+      if (file.startsWith('phase') && file.endsWith('.md.yml')) {
+        const phasePath = path.join(prdSetDir, file);
+        const phaseContent = await fs.readFile(phasePath, 'utf-8');
+        const phaseMatch = phaseContent.match(/^---\n([\s\S]*?)\n---/);
+        if (phaseMatch) {
+          const phaseYaml = yamlParse(phaseMatch[1]);
+          phaseYaml.requirements.idPattern = detectedPattern;
+          const updatedPhaseYaml = yamlStringify(phaseYaml, { indent: 2, lineWidth: 100 });
+          const updatedPhaseContent = `---\n${updatedPhaseYaml}---${phaseContent.substring(phaseMatch[0].length)}`;
+          await fs.writeFile(phasePath, updatedPhaseContent, 'utf-8');
+        }
+      }
+    }
+
+    return true;
+  }
+
+  /**
+   * Fix testing configuration using project config
+   * @param prdSetDir - Directory containing PRD set files
+   * @param projectConfig - Project configuration from devloop.config.js
+   * @returns true if fix was applied, false otherwise
+   */
+  async fixTestingConfig(prdSetDir: string, projectConfig?: Config): Promise<boolean> {
+    if (!projectConfig) return false;
+
+    const indexPath = path.join(prdSetDir, 'index.md.yml');
+    if (!await fs.pathExists(indexPath)) {
+      return false;
+    }
+
+    // Read and parse index.md.yml
+    const indexContent = await fs.readFile(indexPath, 'utf-8');
+    const indexMatch = indexContent.match(/^---\n([\s\S]*?)\n---/);
+    if (!indexMatch) return false;
+
+    const indexYaml = yamlParse(indexMatch[1]);
+    let fixApplied = false;
+
+    // Get framework from config (e.g., 'drupal' from framework plugin)
+    const framework = (projectConfig as any).framework?.name || 
+                      (projectConfig as any).framework ||
+                      undefined;
+
+    // Get test runner from config.testing.runner
+    const runner = (projectConfig as any).testing?.runner || 'playwright';
+
+    // Get test directory from config.testGeneration.testDir or config.testing
+    const testDir = (projectConfig as any).testGeneration?.testDir ||
+                    (projectConfig as any).testing?.directory ||
+                    'tests/playwright/';
+
+    // Initialize testing section if missing
+    if (!indexYaml.testing) {
+      indexYaml.testing = {};
+      fixApplied = true;
+    }
+
+    // Update testing configuration
+    if (framework && !indexYaml.testing.framework) {
+      indexYaml.testing.framework = framework;
+      fixApplied = true;
+    }
+
+    if (runner && !indexYaml.testing.runner) {
+      indexYaml.testing.runner = runner;
+      fixApplied = true;
+    }
+
+    if (!indexYaml.testing.directory) {
+      indexYaml.testing.directory = testDir;
+      fixApplied = true;
+    }
+
+    // Remove incorrect 'runner' field if it exists at wrong level
+    if ((indexYaml as any).runner) {
+      delete (indexYaml as any).runner;
+      fixApplied = true;
+    }
+
+    if (fixApplied) {
+      if (this.debug) {
+        logger.debug(`[PrdSetGenerator] Fixing testing config: framework=${framework}, runner=${runner}, directory=${testDir}`);
+      }
+      const updatedIndexYaml = yamlStringify(indexYaml, { indent: 2, lineWidth: 100 });
+      const updatedIndexContent = `---\n${updatedIndexYaml}---${indexContent.substring(indexMatch[0].length)}`;
+      await fs.writeFile(indexPath, updatedIndexContent, 'utf-8');
+    }
+
+    return fixApplied;
   }
 }
 

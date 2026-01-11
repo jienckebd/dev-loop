@@ -12,6 +12,9 @@ import { PrdSetErrorHandler } from './error-handler';
 import { PrdSetMetrics } from '../../metrics/prd-set';
 import { createConfigContext, applyPrdSetConfig, ConfigContext } from '../../config/merger';
 import { logger } from '../../utils/logger';
+import * as fs from 'fs-extra';
+import * as path from 'path';
+import { TaskMasterBridge } from '../../execution/task-bridge';
 
 export interface PrdSetMetadata {
   setId: string;
@@ -110,6 +113,47 @@ export class PrdSetOrchestrator {
       logger.debug(`[PrdSetOrchestrator] Starting execution of PRD set: ${discoveredSet.setId}`);
     }
 
+    // Check for execution lock to prevent concurrent PRD set execution
+    const lockFile = path.join(process.cwd(), '.devloop', 'prd-set-execution.lock');
+    if (await fs.pathExists(lockFile)) {
+      try {
+        const lockData = await fs.readJson(lockFile);
+        // Check if process is still running
+        try {
+          process.kill(lockData.pid, 0); // Signal 0 checks if process exists
+          // Process exists, another PRD set is executing
+          throw new Error(`Another PRD set is executing: ${lockData.setId} (started at ${lockData.startedAt}, PID: ${lockData.pid})`);
+        } catch (killError: any) {
+          // Process doesn't exist (stale lock), remove it
+          if (this.debug) {
+            logger.debug(`[PrdSetOrchestrator] Removing stale lock file from crashed process (PID: ${lockData.pid})`);
+          }
+          await fs.remove(lockFile);
+        }
+      } catch (error: any) {
+        if (error.message.includes('Another PRD set is executing')) {
+          throw error;
+        }
+        // Lock file corrupted, remove it
+        if (this.debug) {
+          logger.debug(`[PrdSetOrchestrator] Removing corrupted lock file`);
+        }
+        await fs.remove(lockFile);
+      }
+    }
+
+    // Create execution lock
+    await fs.ensureDir(path.dirname(lockFile));
+    await fs.writeJson(lockFile, {
+      setId: discoveredSet.setId,
+      startedAt: new Date().toISOString(),
+      pid: process.pid,
+    }, { spaces: 2 });
+
+    if (this.debug) {
+      logger.debug(`[PrdSetOrchestrator] Created execution lock: ${lockFile}`);
+    }
+
     // Apply PRD set config overlay if available
     if (discoveredSet.configOverlay) {
       applyPrdSetConfig(this.configContext, discoveredSet.configOverlay);
@@ -160,6 +204,9 @@ export class PrdSetOrchestrator {
       startTime: startTime.toISOString(),
     };
     this.prdSetMetrics.startPrdSetExecution(discoveredSet.setId, prdSetMetadata);
+
+    // Wrap execution in try/finally to ensure lock cleanup and task restoration
+    try {
 
     // Create tasks for PRDs level by level
     // For unified daemon mode: PRD sets create tasks in Task Master instead of executing directly
@@ -352,6 +399,66 @@ export class PrdSetOrchestrator {
     }
 
     return result;
+    } finally {
+      // Restore deferred tasks before removing lock
+      try {
+        const taskBridge = new TaskMasterBridge(this.baseConfig);
+        const allTasks = await taskBridge.getAllTasks();
+        // Find tasks deferred by this PRD set (check task details for deferredBy)
+        const deferredByThisSet = allTasks.filter((t: any) => {
+          if (t.status !== 'blocked') return false;
+          try {
+            const taskDetails = t.details ? JSON.parse(t.details) : {};
+            return taskDetails.deferredBy === discoveredSet.setId;
+          } catch {
+            return false;
+          }
+        });
+
+        for (const task of deferredByThisSet) {
+          // Remove deferred metadata from task details
+          if (task.details) {
+            try {
+              const taskDetails = JSON.parse(task.details);
+              delete taskDetails.deferredReason;
+              delete taskDetails.deferredBy;
+              delete taskDetails.deferredAt;
+              await taskBridge.updateTask(task.id, {
+                status: 'pending',
+                details: JSON.stringify(taskDetails),
+              } as any);
+            } catch (parseError) {
+              // If details parsing fails, just restore status
+              await taskBridge.updateTaskStatus(task.id, 'pending');
+              if (this.debug) {
+                logger.debug(`[PrdSetOrchestrator] Failed to parse task details for ${task.id}: ${parseError}`);
+              }
+            }
+          } else {
+            // No details, just restore status
+            await taskBridge.updateTaskStatus(task.id, 'pending');
+          }
+        }
+
+        if (deferredByThisSet.length > 0) {
+          console.log(`[PrdSetOrchestrator] Restored ${deferredByThisSet.length} deferred tasks`);
+        }
+      } catch (restoreError) {
+        logger.warn(`[PrdSetOrchestrator] Failed to restore deferred tasks: ${restoreError}`);
+      }
+
+      // Remove execution lock
+      try {
+        if (await fs.pathExists(lockFile)) {
+          await fs.remove(lockFile);
+          if (this.debug) {
+            logger.debug(`[PrdSetOrchestrator] Removed execution lock: ${lockFile}`);
+          }
+        }
+      } catch (lockError) {
+        logger.warn(`[PrdSetOrchestrator] Failed to remove execution lock: ${lockError}`);
+      }
+    }
   }
 
   /**

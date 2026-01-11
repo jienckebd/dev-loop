@@ -278,6 +278,24 @@ export class TaskMasterBridge {
     }
   }
 
+  /**
+   * Update task properties (beyond just status)
+   */
+  async updateTask(taskId: string, updates: Partial<Task>): Promise<void> {
+    try {
+      const tasks = await this.loadTasks();
+      const task = tasks.find((t) => t.id === taskId);
+      if (task) {
+        Object.assign(task, updates);
+        await this.saveTasks(tasks);
+      } else {
+        throw new Error(`Task not found: ${taskId}`);
+      }
+    } catch (error) {
+      throw new Error(`Failed to update task: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
+
   async createTask(task: Omit<Task, 'status'> & { status?: TaskStatus }): Promise<Task> {
     try {
       const tasks = await this.loadTasks();
@@ -290,6 +308,25 @@ export class TaskMasterBridge {
       // Check for duplicate task ID - skip if task with same ID already exists
       const existingTask = tasks.find(t => t.id === task.id);
       if (existingTask) {
+        const existingPrdSetId = (existingTask as any).prdSetId;
+        const newPrdSetId = (task as any).prdSetId;
+        
+        // If task exists but from different PRD set, update it to current PRD set
+        if (existingPrdSetId && newPrdSetId && existingPrdSetId !== newPrdSetId) {
+          console.log(`[TaskBridge] Task ${task.id} exists from PRD set ${existingPrdSetId}, updating to ${newPrdSetId}`);
+          // Update prdSetId in task details
+          const taskDetails = existingTask.details ? JSON.parse(existingTask.details) : {};
+          taskDetails.prdSetId = newPrdSetId;
+          await this.updateTask(task.id, {
+            details: JSON.stringify(taskDetails),
+          } as any);
+          // Also update the task object directly if it has prdSetId property
+          (existingTask as any).prdSetId = newPrdSetId;
+          await this.saveTasks(tasks);
+          return existingTask;
+        }
+        
+        // Otherwise, skip as before
         console.log(`[TaskBridge] Task ${task.id} already exists (status: ${existingTask.status}), skipping creation`);
         return existingTask;
       }

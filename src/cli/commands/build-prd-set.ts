@@ -46,6 +46,8 @@ interface BuildPrdSetOptions {
   questions?: number; // Create mode (alias for maxQuestions)
   template?: string; // Create mode
   watch?: boolean; // Watch mode for PRD building
+  requireExecutable?: boolean; // Require 100% executability (default: true)
+  maxExecutabilityIterations?: number; // Maximum iterations for executability validation (default: 10)
 }
 
 /**
@@ -80,6 +82,9 @@ export function registerBuildPrdSetCommand(program: Command): void {
     .option('--skip-questions', 'Skip questions and generate PRD directly from prompt (create mode)')
     .option('--template <template>', 'Use specific PRD template (create mode)')
     .option('--watch', 'Watch mode: monitor PRD building progress with auto-save checkpoints')
+    .option('--require-executable', 'Require 100% executability (default: true)', true)
+    .option('--no-require-executable', 'Allow PRD sets that are not 100% executable')
+    .option('--max-executability-iterations <n>', 'Maximum iterations for executability validation', '10')
     .action(async (input: string | undefined, options: BuildPrdSetOptions) => {
       await buildPrdSet(input, options);
     });
@@ -289,6 +294,8 @@ async function buildPrdSet(input: string | undefined, options: BuildPrdSetOption
       skipQuestions: options.skipQuestions || false,
       validateOnly: options.validateOnly,
       force: options.force,
+      requireExecutable: options.requireExecutable !== false, // Default to true
+      maxExecutabilityIterations: parseInt(String(options.maxExecutabilityIterations || '10'), 10),
     };
 
     // Start watch mode if requested

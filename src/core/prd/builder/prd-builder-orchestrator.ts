@@ -53,6 +53,8 @@ export interface BuildOptions {
   skipQuestions?: boolean; // Create mode
   validateOnly?: boolean; // Convert mode
   force?: boolean; // Convert mode
+  requireExecutable?: boolean; // Require 100% executability (default: true)
+  maxExecutabilityIterations?: number; // Maximum iterations for executability validation (default: 10)
 }
 
 /**

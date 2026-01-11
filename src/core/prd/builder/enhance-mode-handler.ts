@@ -23,6 +23,7 @@ import { Config } from '../../../config/schema/core';
 import { BuildMode } from '../../conversation/types';
 import { logger } from '../../utils/logger';
 import { PatternEntry, ObservationEntry, TestResultExecution } from '../learning/types';
+import { ExecutabilityValidator, ExecutabilityValidationResult } from '../refinement/executability-validator';
 
 /**
  * Enhance Mode Options
@@ -299,11 +300,65 @@ export class EnhanceModeHandler {
           }
         );
 
-        // 8. Update conversation state
+        // 8. Validate and auto-fix until executable
+        const maxFixIterations = 5;
+        let fixIteration = 0;
+        let isExecutable = false;
+        const fixesApplied: string[] = [];
+
+        while (!isExecutable && fixIteration < maxFixIterations) {
+          // Reload PRD set after enhancements
+          const updatedPrdSet = await this.prdDiscovery.discoverPrdSet(prdSetPathResolved);
+          
+          // Validate executability
+          const validator = new ExecutabilityValidator({ debug: this.debug });
+          const validationResult = await validator.validateExecutability(updatedPrdSet);
+          
+          if (validationResult.executable && validationResult.score === 100) {
+            isExecutable = true;
+            break;
+          }
+          
+          // Apply auto-fixes
+          let fixApplied = false;
+          
+          // Fix ID pattern if mismatch detected
+          if (this.needsIdPatternFix(validationResult)) {
+            const fixed = await this.prdSetGenerator.fixIdPattern(prdSetPathResolved, discoveredSet.setId);
+            if (fixed) {
+              fixesApplied.push('ID pattern corrected to match task IDs');
+              fixApplied = true;
+              logger.debug(`[EnhanceModeHandler] Fixed ID pattern in PRD set`);
+            }
+          }
+          
+          // Fix testing config if needed
+          if (this.needsTestingConfigFix(validationResult)) {
+            const fixed = await this.prdSetGenerator.fixTestingConfig(prdSetPathResolved, this.projectConfig);
+            if (fixed) {
+              fixesApplied.push('Testing configuration updated from project config');
+              fixApplied = true;
+              logger.debug(`[EnhanceModeHandler] Fixed testing configuration in PRD set`);
+            }
+          }
+          
+          // If no fixes applied, break to avoid infinite loop
+          if (!fixApplied) {
+            logger.debug(`[EnhanceModeHandler] No auto-fixes available, stopping validation loop`);
+            break;
+          }
+          
+          fixIteration++;
+        }
+
+        // Update executable status
+        const finalExecutable = isExecutable || (refinement.executable && gaps.criticalGaps === 0);
+
+        // 9. Update conversation state
         if (this.conversationManager && conversationId) {
           await this.conversationManager.updateState(
             conversationId,
-            refinement.executable ? 'complete' : 'refining'
+            finalExecutable ? 'complete' : 'refining'
           );
         }
 
@@ -311,15 +366,62 @@ export class EnhanceModeHandler {
           prdSetPath: prdSetPathResolved,
           gaps,
           enhancements: enhancementResult.success ? enhancementResult : undefined,
-          executable: refinement.executable && gaps.criticalGaps === 0,
-          summary: this.generateSummary(gaps, enhancementResult, options),
+          executable: finalExecutable,
+          summary: this.generateSummary(gaps, enhancementResult, options, fixesApplied),
         };
       }
     }
 
-    // If no gaps to enhance, return result without enhancements
+    // If no gaps to enhance, validate and auto-fix existing PRD set
+    const maxFixIterations = 5;
+    let fixIteration = 0;
+    let isExecutable = false;
+    const fixesApplied: string[] = [];
+
+    while (!isExecutable && fixIteration < maxFixIterations) {
+      // Validate executability
+      const validator = new ExecutabilityValidator({ debug: this.debug });
+      const validationResult = await validator.validateExecutability(discoveredSet);
+      
+      if (validationResult.executable && validationResult.score === 100) {
+        isExecutable = true;
+        break;
+      }
+      
+      // Apply auto-fixes
+      let fixApplied = false;
+      
+      // Fix ID pattern if mismatch detected
+      if (this.needsIdPatternFix(validationResult)) {
+        const fixed = await this.prdSetGenerator.fixIdPattern(prdSetPathResolved, discoveredSet.setId);
+        if (fixed) {
+          fixesApplied.push('ID pattern corrected to match task IDs');
+          fixApplied = true;
+          logger.debug(`[EnhanceModeHandler] Fixed ID pattern in PRD set`);
+        }
+      }
+      
+      // Fix testing config if needed
+      if (this.needsTestingConfigFix(validationResult)) {
+        const fixed = await this.prdSetGenerator.fixTestingConfig(prdSetPathResolved, this.projectConfig);
+        if (fixed) {
+          fixesApplied.push('Testing configuration updated from project config');
+          fixApplied = true;
+          logger.debug(`[EnhanceModeHandler] Fixed testing configuration in PRD set`);
+        }
+      }
+      
+      // If no fixes applied, break to avoid infinite loop
+      if (!fixApplied) {
+        logger.debug(`[EnhanceModeHandler] No auto-fixes available, stopping validation loop`);
+        break;
+      }
+      
+      fixIteration++;
+    }
+
     // 8. Generate summary
-    const summary = this.generateSummary(gaps, undefined, options);
+    const summary = this.generateSummary(gaps, undefined, options, fixesApplied);
 
     // 9. Update conversation state
     if (this.conversationManager && conversationId) {
@@ -333,9 +435,34 @@ export class EnhanceModeHandler {
       prdSetPath: prdSetPathResolved,
       gaps,
       enhancements: undefined,
-      executable: gaps.criticalGaps === 0,
+      executable: isExecutable || gaps.criticalGaps === 0,
       summary,
     };
+  }
+
+  /**
+   * Check if validation result indicates ID pattern fix is needed
+   */
+  private needsIdPatternFix(validationResult: ExecutabilityValidationResult): boolean {
+    // Check if errors mention ID pattern mismatch
+    return validationResult.errors.some(e => 
+      e.type === 'invalid-structure' && 
+      (e.message.includes('ID pattern') || e.message.includes('task ID') || e.message.includes('idPattern'))
+    );
+  }
+
+  /**
+   * Check if validation result indicates testing config fix is needed
+   */
+  private needsTestingConfigFix(validationResult: ExecutabilityValidationResult): boolean {
+    // Check if errors mention testing configuration
+    return validationResult.errors.some(e => 
+      e.type === 'invalid-config' && 
+      (e.message.includes('testing') || e.message.includes('framework') || e.message.includes('runner'))
+    ) || validationResult.warnings.some(w =>
+      w.type === 'missing-optional' && 
+      (w.message.includes('testing') || w.message.includes('framework') || w.message.includes('runner'))
+    );
   }
 
 
@@ -345,7 +472,8 @@ export class EnhanceModeHandler {
   private generateSummary(
     gaps: GapAnalysisResult,
     enhancementResult?: EnhancementApplicationResult,
-    options?: EnhanceModeOptions
+    options?: EnhanceModeOptions,
+    fixesApplied?: string[]
   ): string {
     const parts: string[] = [];
 
@@ -358,6 +486,14 @@ export class EnhanceModeHandler {
     if (enhancementResult && enhancementResult.success) {
       parts.push('Enhancements Applied:');
       parts.push(enhancementResult.summary);
+      parts.push('');
+    }
+
+    if (fixesApplied && fixesApplied.length > 0) {
+      parts.push('Auto-Fixes Applied:');
+      fixesApplied.forEach((fix, index) => {
+        parts.push(`  ${index + 1}. ${fix}`);
+      });
       parts.push('');
     }
 

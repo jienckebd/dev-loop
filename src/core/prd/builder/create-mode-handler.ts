@@ -24,6 +24,8 @@ import { AIProvider, AIProviderConfig } from '../../../providers/ai/interface';
 import { Config } from '../../../config/schema/core';
 import { logger } from '../../utils/logger';
 import { PatternEntry, ObservationEntry, TestResultExecution } from '../learning/types';
+import { ExecutabilityValidator, ExecutabilityValidationResult } from '../refinement/executability-validator';
+import { PrdSetDiscovery } from '../set/discovery';
 
 /**
  * Create Mode Options
@@ -439,6 +441,9 @@ export class CreateModeHandler {
     
     await fs.ensureDir(prdSetDir);
 
+    // Track fixes applied (declared outside if block for scope)
+    const fixesApplied: string[] = [];
+
     if (prdDraft) {
       const generatedFiles = await this.prdSetGenerator.generate(prdDraft, prdSetDir, setId);
 
@@ -448,6 +453,61 @@ export class CreateModeHandler {
         await fs.writeFile(filePath, file.content, 'utf-8');
         logger.debug(`[CreateModeHandler] Generated file: ${filePath}`);
       }
+
+      // 7a. Validate and auto-fix until executable
+      const maxFixIterations = 5;
+      let fixIteration = 0;
+      let isExecutableAfterFix = false;
+
+      while (!isExecutableAfterFix && fixIteration < maxFixIterations) {
+        // Load generated PRD set
+        const prdSetDiscovery = new PrdSetDiscovery(this.debug);
+        const discoveredPrdSet = await prdSetDiscovery.discoverPrdSet(prdSetDir);
+        
+        // Validate executability
+        const validator = new ExecutabilityValidator({ debug: this.debug });
+        const validationResult = await validator.validateExecutability(discoveredPrdSet);
+        
+        if (validationResult.executable && validationResult.score === 100) {
+          isExecutableAfterFix = true;
+          executable = true;
+          break;
+        }
+        
+        // Apply auto-fixes
+        let fixApplied = false;
+        
+        // Fix ID pattern if mismatch detected
+        if (this.needsIdPatternFix(validationResult)) {
+          const fixed = await this.prdSetGenerator.fixIdPattern(prdSetDir, setId);
+          if (fixed) {
+            fixesApplied.push('ID pattern corrected to match task IDs');
+            fixApplied = true;
+            logger.debug(`[CreateModeHandler] Fixed ID pattern in PRD set`);
+          }
+        }
+        
+        // Fix testing config if needed
+        if (this.needsTestingConfigFix(validationResult)) {
+          const fixed = await this.prdSetGenerator.fixTestingConfig(prdSetDir, this.projectConfig);
+          if (fixed) {
+            fixesApplied.push('Testing configuration updated from project config');
+            fixApplied = true;
+            logger.debug(`[CreateModeHandler] Fixed testing configuration in PRD set`);
+          }
+        }
+        
+        // If no fixes applied, break to avoid infinite loop
+        if (!fixApplied) {
+          logger.debug(`[CreateModeHandler] No auto-fixes available, stopping validation loop`);
+          break;
+        }
+        
+        fixIteration++;
+      }
+
+      // Update executable status
+      executable = isExecutableAfterFix || executable;
     }
 
     // 8. Update conversation state
@@ -480,7 +540,10 @@ export class CreateModeHandler {
       questionsAsked,
       answersReceived,
       refinement,
-      executable
+      prdSetDir,
+      setId,
+      executable,
+      fixesApplied
     );
 
     return {
@@ -509,13 +572,17 @@ export class CreateModeHandler {
     questionsAsked: number,
     answersReceived: number,
     refinement: any,
-    executable: boolean
+    prdSetPath: string,
+    setId: string,
+    executable: boolean,
+    fixesApplied?: string[]
   ): string {
     const parts: string[] = [];
 
     parts.push(`PRD Set Creation Summary`);
     parts.push(`PRD ID: ${prd.prdId}`);
     parts.push(`Title: ${prd.title}`);
+    parts.push(`Output directory: ${prdSetPath}`);
     parts.push('');
     parts.push(`Questions Asked: ${questionsAsked}`);
     parts.push(`Answers Received: ${answersReceived}`);
@@ -530,9 +597,50 @@ export class CreateModeHandler {
       parts.push('');
     }
 
+    if (fixesApplied && fixesApplied.length > 0) {
+      parts.push('Auto-Fixes Applied:');
+      fixesApplied.forEach((fix, index) => {
+        parts.push(`  ${index + 1}. ${fix}`);
+      });
+      parts.push('');
+    }
+
     parts.push(`Status: ${executable ? '✓ PRD set is 100% executable' : '✗ PRD set needs additional refinement'}`);
+    
+    if (!executable) {
+      parts.push('');
+      parts.push('To make executable:');
+      parts.push('  1. Review validation errors above');
+      parts.push('  2. Run: dev-loop prd-set validate ' + prdSetPath);
+      parts.push('  3. Fix remaining issues manually or re-run with refinement');
+    }
 
     return parts.join('\n');
+  }
+
+  /**
+   * Check if validation result indicates ID pattern fix is needed
+   */
+  private needsIdPatternFix(validationResult: ExecutabilityValidationResult): boolean {
+    // Check if errors mention ID pattern mismatch
+    return validationResult.errors.some(e => 
+      e.type === 'invalid-structure' && 
+      (e.message.includes('ID pattern') || e.message.includes('task ID') || e.message.includes('idPattern'))
+    );
+  }
+
+  /**
+   * Check if validation result indicates testing config fix is needed
+   */
+  private needsTestingConfigFix(validationResult: ExecutabilityValidationResult): boolean {
+    // Check if errors mention testing configuration
+    return validationResult.errors.some(e => 
+      e.type === 'invalid-config' && 
+      (e.message.includes('testing') || e.message.includes('framework') || e.message.includes('runner'))
+    ) || validationResult.warnings.some(w =>
+      w.type === 'missing-optional' && 
+      (w.message.includes('testing') || w.message.includes('framework') || w.message.includes('runner'))
+    );
   }
 
   /**

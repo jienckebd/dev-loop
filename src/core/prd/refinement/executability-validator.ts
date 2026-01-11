@@ -140,14 +140,54 @@ export class ExecutabilityValidator {
    */
   private extractPrdDoc(prd: ParsedPlanningDoc | DiscoveredPrdSet): ParsedPlanningDoc {
     if ('prdSet' in prd) {
-      // DiscoveredPrdSet - need to parse first PRD
-      // For now, return a basic structure (this would need enhancement)
+      // DiscoveredPrdSet - extract structure from manifest
+      const discoveredSet = prd as DiscoveredPrdSet;
+      const manifest = discoveredSet.manifest;
+      const parentMetadata = manifest.parentPrd.metadata;
+      
+      // Extract phases and tasks from requirements.phases
+      // Note: phaseMeta may have tasks even though type doesn't include it
+      const phases: any[] = [];
+      if (parentMetadata.requirements?.phases) {
+        for (const phaseMeta of parentMetadata.requirements.phases) {
+          // Type assertion needed because tasks may exist in actual data
+          const phaseWithTasks = phaseMeta as any;
+          phases.push({
+            id: phaseMeta.id,
+            name: phaseMeta.name || `Phase ${phaseMeta.id}`,
+            description: phaseWithTasks.description || '',
+            parallel: phaseMeta.parallel || false,
+            status: phaseMeta.status || 'pending',
+            dependsOn: phaseMeta.dependsOn,
+            checkpoint: phaseMeta.checkpoint || false,
+            tasks: phaseWithTasks.tasks || [],
+          });
+        }
+      }
+      
+      // Convert testing config from PrdMetadata format to ParsedPlanningDoc format
+      const testingConfig = parentMetadata.testing ? {
+        directory: parentMetadata.testing.directory,
+        runner: (parentMetadata.testing as any).runner,
+        framework: parentMetadata.testing.framework,
+        command: (parentMetadata.testing as any).command,
+      } : undefined;
+      
+      // Store requirements.idPattern in rawFrontmatter so it's accessible for validation
+      const rawFrontmatter: any = {
+        requirements: parentMetadata.requirements,
+      };
+      
       return {
-        prdId: prd.setId,
-        version: '1.0.0',
-        status: 'ready',
-        title: prd.setId,
-        phases: [],
+        prdId: discoveredSet.setId,
+        version: parentMetadata.prd?.version || '1.0.0',
+        status: parentMetadata.prd?.status || 'ready',
+        title: (parentMetadata.prd as any)?.title || discoveredSet.setId,
+        description: (parentMetadata.prd as any)?.description || '',
+        phases,
+        testing: testingConfig,
+        dependencies: parentMetadata.dependencies,
+        rawFrontmatter,
         rawContent: '',
       };
     }
@@ -371,6 +411,32 @@ export class ExecutabilityValidator {
                   suggestion: 'Remove invalid dependency or add missing task',
                 });
               }
+            }
+          }
+        }
+      }
+    }
+
+    // Check ID pattern consistency
+    // Get idPattern from rawFrontmatter (for ParsedPlanningDoc) or from extracted metadata
+    const idPattern = (prd as any).rawFrontmatter?.requirements?.idPattern;
+    if (idPattern && prd.phases) {
+      // Convert pattern to regex (e.g., "REQ-{id}" -> /^REQ-(.+)$/)
+      const patternPrefix = idPattern.split('{id}')[0];
+      const patternRegex = new RegExp(`^${patternPrefix.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(.+)$`);
+
+      for (const phase of prd.phases) {
+        if (phase.tasks) {
+          for (const task of phase.tasks) {
+            if (!patternRegex.test(task.id)) {
+              errors.push({
+                type: 'invalid-structure',
+                severity: 'high',
+                message: `Task ID "${task.id}" does not match idPattern "${idPattern}"`,
+                phase: phase.id,
+                task: task.id,
+                suggestion: `Update idPattern to match actual task ID format (e.g., "${this.detectPatternFromTaskId(task.id)}")`,
+              });
             }
           }
         }
@@ -760,6 +826,26 @@ export class ExecutabilityValidator {
       });
     }
 
+    // Check test runner/framework configuration
+    const testingWithFramework = prd.testing as any;
+    // Check for incorrect 'runner' field at top level (should be in testing section)
+    if (testingWithFramework.runner && !testingWithFramework.framework) {
+      warnings.push({
+        type: 'optimization-opportunity',
+        message: 'Testing configuration uses "runner" field - should use "framework" and "runner" structure',
+        suggestion: 'Update testing configuration: framework from project config, runner from testing.runner',
+      });
+    }
+
+    // Check that framework is set (if project config has framework)
+    if (!testingWithFramework.framework) {
+      warnings.push({
+        type: 'missing-optional',
+        message: 'Testing framework not specified',
+        suggestion: 'Add testing.framework from project config (e.g., "drupal")',
+      });
+    }
+
     // Check test runner (warning if missing)
     if (!prd.testing.runner) {
       warnings.push({
@@ -916,5 +1002,20 @@ export class ExecutabilityValidator {
     const result = await this.validateExecutability(prd, enhancements);
     // Require 100% score for executability
     return result.executable && result.score === 100;
+  }
+
+  /**
+   * Detect ID pattern from task ID
+   * @param taskId - Task ID (e.g., "REQ-1.1", "TASK-1")
+   * @returns Detected pattern (e.g., "REQ-{id}", "TASK-{id}")
+   */
+  private detectPatternFromTaskId(taskId: string): string {
+    // REQ-1.1 -> REQ-{id}
+    // TASK-1 -> TASK-{id}
+    const match = taskId.match(/^([A-Z]+)-/);
+    if (match) {
+      return `${match[1]}-{id}`;
+    }
+    return 'TASK-{id}'; // Default
   }
 }

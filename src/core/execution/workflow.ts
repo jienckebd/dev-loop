@@ -4145,6 +4145,38 @@ export class WorkflowEngine {
       requirements = this.resolveRequirementDependencies(requirements, prdConfig.dependencies);
     }
 
+    // Mark existing tasks from other PRD sets as deferred before creating new tasks
+    const allTasks = await this.taskBridge.getAllTasks();
+    const currentPrdSetId = prdSetId || 'unknown';
+    let deferredCount = 0;
+
+    for (const task of allTasks) {
+      const taskPrdSetId = (task as any).prdSetId;
+      // Check if task is already deferred by checking task details
+      const taskDetails = task.details ? JSON.parse(task.details) : {};
+      const isDeferred = taskDetails.deferredBy !== undefined;
+      
+      // If task belongs to a different PRD set and is not already done/deferred
+      if (taskPrdSetId && taskPrdSetId !== currentPrdSetId &&
+          task.status !== 'done' && !isDeferred) {
+        // Update task with deferred metadata (store in details, keep status as 'pending' or 'blocked')
+        taskDetails.deferredReason = `Another PRD set (${currentPrdSetId}) is executing`;
+        taskDetails.deferredBy = currentPrdSetId;
+        taskDetails.deferredAt = new Date().toISOString();
+        
+        // Mark as blocked to prevent execution (deferred is not a valid TaskStatus)
+        await this.taskBridge.updateTaskStatus(task.id, 'blocked');
+        await this.taskBridge.updateTask(task.id, {
+          details: JSON.stringify(taskDetails),
+        } as any);
+        deferredCount++;
+      }
+    }
+
+    if (deferredCount > 0) {
+      console.log(`[WorkflowEngine] Deferred ${deferredCount} tasks from other PRD sets`);
+    }
+
     // Create tasks from requirements
     let taskCount = 0;
     console.log('[WorkflowEngine] Creating tasks from PRD requirements...');
