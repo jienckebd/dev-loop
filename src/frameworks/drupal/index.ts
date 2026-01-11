@@ -109,7 +109,7 @@ export class DrupalPlugin implements FrameworkPlugin {
         wizardPatterns: z.object({
           prePopulationHook: z.string().optional(),
           entitySaveHook: z.string().optional(),
-          thirdPartySettings: z.record(z.array(z.string())).optional(),
+          thirdPartySettings: z.record(z.string(), z.array(z.string())).optional(),
           idFormats: z.object({
             feedType: z.string().optional(),
             webhook: z.string().optional(),

@@ -24,6 +24,8 @@ Complete guide to monitoring inner agent execution as the outer agent in contrib
 
 As the outer agent in contribution mode, you monitor inner agent execution and take proactive action when issues are detected. This guide covers best practices for event monitoring, including manual polling, automated monitoring, and hybrid approaches.
 
+**CRITICAL: Monitor event streaming FIRST, logs/metrics SECOND.** Use `devloop_events_poll` or `devloop_event_monitor_start` as primary monitoring. Check logs/metrics only when events don't provide sufficient detail.
+
 ```mermaid
 flowchart TB
     OuterAgent[Outer Agent] -->|Monitor| Events[Event Stream]

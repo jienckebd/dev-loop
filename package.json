@@ -44,7 +44,7 @@
     "ora": "^5.4.1",
     "task-master-ai": "^0.40.0",
     "yaml": "^2.3.4",
-    "zod": "^3.22.4"
+    "zod": "^4.3.5"
   },
   "devDependencies": {
     "@types/fs-extra": "^11.0.4",

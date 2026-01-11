@@ -15,6 +15,10 @@ export * from './prd';
 export * from './overlays';
 export * from './phase';
 export * from './validation';
+export * from './runtime';
+export * from './metrics';
+export * from './metadata';
+export * from './generator';
 
 // Main exports (maintains backward compatibility with old schema.ts)
 export { configSchema, Config, configOverlaySchema } from './core';

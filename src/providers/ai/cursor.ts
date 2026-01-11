@@ -13,6 +13,8 @@ import { generateAgentConfig } from './cursor-agent-generator';
 import { createChatRequest } from './cursor-chat-requests';
 import { CursorChatOpener } from './cursor-chat-opener';
 import { extractCodeChanges, parseCodeChangesFromText, JsonParsingContext, extractCodeChangesWithAiFallback, shouldUseAiFallback } from './json-parser';
+import { CODE_CHANGES_JSON_SCHEMA_STRING, CODE_CHANGES_EXAMPLE_JSON } from './code-changes-schema';
+import { JsonSchemaValidator } from './json-schema-validator';
 import { ObservationTracker } from "../../core/tracking/observation-tracker";
 import * as path from 'path';
 import * as fs from 'fs-extra';
@@ -124,7 +126,14 @@ export class CursorProvider implements AIProvider {
         const result = await chatOpener.openChat(chatRequest);
 
         if (result.success && result.response) {
-          const codeChanges = this.extractCodeChangesFromResponse(result.response, context);
+          // First try schema-based validation for robust parsing
+          let codeChanges = this.extractCodeChangesWithSchemaValidation(result.response, context);
+          
+          // Fallback to original extraction if schema validation fails
+          if (!codeChanges) {
+            codeChanges = this.extractCodeChangesFromResponse(result.response, context);
+          }
+          
           const taskType = context.task.taskType || this.inferTaskTypeFromTask(context.task);
           const isAnalysisTask = taskType === 'analysis' || taskType === 'investigate';
           
@@ -188,7 +197,11 @@ export class CursorProvider implements AIProvider {
 
               const retryResult = await chatOpener.openChat(retryRequest);
               if (retryResult.success && retryResult.response) {
-                const retryChanges = this.extractCodeChangesFromResponse(retryResult.response, context);
+                // Try schema validation first, then fallback
+                let retryChanges = this.extractCodeChangesWithSchemaValidation(retryResult.response, context);
+                if (!retryChanges) {
+                  retryChanges = this.extractCodeChangesFromResponse(retryResult.response, context);
+                }
                 if (retryChanges) {
                   // Check task type again for retry response
                   const retryTaskType = context.task.taskType || this.inferTaskTypeFromTask(context.task);
@@ -327,18 +340,21 @@ export class CursorProvider implements AIProvider {
     lines.push('');
     lines.push('**YOU MUST RETURN PURE JSON. NO MARKDOWN CODE BLOCKS, NO NARRATIVE TEXT.**');
     lines.push('');
-    lines.push('Your ENTIRE response must be exactly this JSON object (NO ```json wrapper, NO markdown):');
+    lines.push('## JSON SCHEMA (MUST FOLLOW EXACTLY):');
     lines.push('');
-    lines.push(JSON.stringify({
-      files: [
-        {
-          path: 'relative/path/to/file',
-          content: 'complete file content',
-          operation: 'create'
-        }
-      ],
-      summary: 'brief summary of changes'
-    }, null, 2));
+    lines.push('Your response MUST conform to this JSON Schema:');
+    lines.push('');
+    lines.push('```json');
+    lines.push(CODE_CHANGES_JSON_SCHEMA_STRING);
+    lines.push('```');
+    lines.push('');
+    lines.push('## EXAMPLE RESPONSE:');
+    lines.push('');
+    lines.push('```json');
+    lines.push(CODE_CHANGES_EXAMPLE_JSON);
+    lines.push('```');
+    lines.push('');
+    lines.push('## CRITICAL RULES:');
     lines.push('');
     lines.push('### FORBIDDEN:');
     lines.push('- ❌ Markdown code blocks (```json ... ```) - causes parsing failures');
@@ -346,12 +362,19 @@ export class CursorProvider implements AIProvider {
     lines.push('- ❌ Narrative text before or after JSON');
     lines.push('- ❌ Explanations, questions, or comments');
     lines.push('- ❌ Multiple JSON objects - return exactly ONE');
+    lines.push('- ❌ Additional properties not in schema');
     lines.push('');
     lines.push('### REQUIRED:');
     lines.push('- ✅ Pure JSON object starting with { character');
-    lines.push('- ✅ Valid structure with "files" array and "summary" string');
-    lines.push('- ✅ Each file has "path", "content", and "operation" fields');
+    lines.push('- ✅ Valid structure matching the JSON Schema above');
+    lines.push('- ✅ "files" array (can be empty) and "summary" string');
+    lines.push('- ✅ Each file has "path", "operation", and appropriate fields per operation type');
     lines.push('- ✅ End with } character and nothing else');
+    lines.push('');
+    lines.push('### OPERATION TYPES:');
+    lines.push('- **create/update**: Requires "content" field with full file content');
+    lines.push('- **patch**: Requires "patches" array with "search"/"replace" objects');
+    lines.push('- **delete**: Only requires "path" and "operation"');
     lines.push('');
     lines.push('If no changes needed, return: {"files": [], "summary": "No changes required"}');
 
@@ -456,8 +479,61 @@ export class CursorProvider implements AIProvider {
   }
 
   /**
+   * Extract CodeChanges using JSON Schema validation (primary method)
+   * This provides robust, provider-agnostic parsing
+   */
+  private extractCodeChangesWithSchemaValidation(response: any, taskContext: TaskContext): CodeChanges | null {
+    try {
+      // Handle nested result objects
+      let textToValidate: string = '';
+      
+      if (response && typeof response === 'object') {
+        // Extract text from nested result structures
+        if (response.type === 'result' && response.result !== undefined) {
+          // Recursively extract result text
+          let extracted = response.result;
+          let depth = 0;
+          while (typeof extracted === 'object' && extracted !== null && extracted.type === 'result' && extracted.result !== undefined && depth < 5) {
+            extracted = extracted.result;
+            depth++;
+          }
+          textToValidate = typeof extracted === 'string' ? extracted : JSON.stringify(extracted);
+        } else if (response.text) {
+          textToValidate = typeof response.text === 'string' ? response.text : JSON.stringify(response.text);
+        } else if (response.response) {
+          textToValidate = typeof response.response === 'string' ? response.response : JSON.stringify(response.response);
+        } else {
+          // Try to stringify the whole response
+          textToValidate = JSON.stringify(response);
+        }
+      } else if (typeof response === 'string') {
+        textToValidate = response;
+      } else {
+        return null;
+      }
+
+      // Use schema validator to extract and validate
+      const validationResult = JsonSchemaValidator.extractAndValidate(textToValidate);
+      
+      if (validationResult.valid && validationResult.normalized) {
+        logger.info(`[CursorProvider] Successfully extracted CodeChanges using JSON Schema validation`);
+        return validationResult.normalized;
+      } else {
+        logger.warn(`[CursorProvider] Schema validation failed: ${validationResult.errors.join(', ')}`);
+        if (validationResult.warnings.length > 0) {
+          logger.warn(`[CursorProvider] Schema validation warnings: ${validationResult.warnings.join(', ')}`);
+        }
+        return null;
+      }
+    } catch (error) {
+      logger.warn(`[CursorProvider] Schema validation error: ${error instanceof Error ? error.message : String(error)}`);
+      return null;
+    }
+  }
+
+  /**
    * Extract CodeChanges from background agent response
-   * Uses shared parser utility for consistent parsing logic
+   * Uses shared parser utility for consistent parsing logic (fallback method)
    */
   private extractCodeChangesFromResponse(response: any, taskContext: TaskContext): CodeChanges | null {
     const parsingContext: JsonParsingContext = {

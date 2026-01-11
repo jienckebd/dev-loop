@@ -1,6 +1,32 @@
 import { z } from 'zod';
 import { configSchema } from './core';
 import { createConfigOverlaySchema } from './overlays';
+import {
+  patternsFileSchema,
+  observationsFileSchema,
+  metricsFileSchema,
+  stateFileSchema,
+  testResultsFileSchema,
+} from './runtime';
+import {
+  prdSetMetricsFileSchema,
+  prdMetricsFileSchema,
+  phaseMetricsFileSchema,
+  parallelMetricsFileSchema,
+  featureMetricsFileSchema,
+  schemaMetricsFileSchema,
+  contributionModeFileSchema,
+  retryCountsFileSchema,
+  evolutionStateFileSchema,
+} from './metrics';
+import {
+  prdSetStateSchema,
+  chatRequestSchema,
+  sessionSchema,
+  checkpointSchema,
+  conversationFileSchema,
+  prdContextV2FileSchema,
+} from './metadata';
 
 /**
  * Validation functions for configuration schemas
@@ -64,3 +90,91 @@ export function validateConfig(data: unknown): z.infer<typeof configSchema> {
   return configSchema.parse(data);
 }
 
+/**
+ * Runtime data schema validation functions
+ */
+export function validatePatternsFile(data: unknown): z.infer<typeof patternsFileSchema> {
+  return patternsFileSchema.parse(data);
+}
+
+export function validateObservationsFile(data: unknown): z.infer<typeof observationsFileSchema> {
+  return observationsFileSchema.parse(data);
+}
+
+export function validateMetricsFile(data: unknown): z.infer<typeof metricsFileSchema> {
+  return metricsFileSchema.parse(data);
+}
+
+export function validateStateFile(data: unknown): z.infer<typeof stateFileSchema> {
+  return stateFileSchema.parse(data);
+}
+
+export function validateTestResultsFile(data: unknown): z.infer<typeof testResultsFileSchema> {
+  return testResultsFileSchema.parse(data);
+}
+
+/**
+ * Metrics schema validation functions
+ */
+export function validatePrdSetMetricsFile(data: unknown): z.infer<typeof prdSetMetricsFileSchema> {
+  return prdSetMetricsFileSchema.parse(data);
+}
+
+export function validatePrdMetricsFile(data: unknown): z.infer<typeof prdMetricsFileSchema> {
+  return prdMetricsFileSchema.parse(data);
+}
+
+export function validatePhaseMetricsFile(data: unknown): z.infer<typeof phaseMetricsFileSchema> {
+  return phaseMetricsFileSchema.parse(data);
+}
+
+export function validateParallelMetricsFile(data: unknown): z.infer<typeof parallelMetricsFileSchema> {
+  return parallelMetricsFileSchema.parse(data);
+}
+
+export function validateFeatureMetricsFile(data: unknown): z.infer<typeof featureMetricsFileSchema> {
+  return featureMetricsFileSchema.parse(data);
+}
+
+export function validateSchemaMetricsFile(data: unknown): z.infer<typeof schemaMetricsFileSchema> {
+  return schemaMetricsFileSchema.parse(data);
+}
+
+export function validateContributionModeFile(data: unknown): z.infer<typeof contributionModeFileSchema> {
+  return contributionModeFileSchema.parse(data);
+}
+
+export function validateRetryCountsFile(data: unknown): z.infer<typeof retryCountsFileSchema> {
+  return retryCountsFileSchema.parse(data);
+}
+
+export function validateEvolutionStateFile(data: unknown): z.infer<typeof evolutionStateFileSchema> {
+  return evolutionStateFileSchema.parse(data);
+}
+
+/**
+ * Metadata schema validation functions
+ */
+export function validatePrdSetState(data: unknown): z.infer<typeof prdSetStateSchema> {
+  return prdSetStateSchema.parse(data);
+}
+
+export function validateChatRequest(data: unknown): z.infer<typeof chatRequestSchema> {
+  return chatRequestSchema.parse(data);
+}
+
+export function validateSession(data: unknown): z.infer<typeof sessionSchema> {
+  return sessionSchema.parse(data);
+}
+
+export function validateCheckpoint(data: unknown): z.infer<typeof checkpointSchema> {
+  return checkpointSchema.parse(data);
+}
+
+export function validateConversationFile(data: unknown): z.infer<typeof conversationFileSchema> {
+  return conversationFileSchema.parse(data);
+}
+
+export function validatePrdContextV2File(data: unknown): z.infer<typeof prdContextV2FileSchema> {
+  return prdContextV2FileSchema.parse(data);
+}

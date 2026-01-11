@@ -25,7 +25,7 @@ export function createPrdSchema(configOverlaySchema: ZodTypeAny) {
     // Files that should never be modified
     protectedFiles: z.array(z.string()).optional(),
     // Requirement dependency graph (requirement ID -> array of prerequisite requirement IDs)
-    dependencies: z.record(z.array(z.string())).optional(),
+    dependencies: z.record(z.string(), z.array(z.string())).optional(),
     // Execute requirements in dependency order
     resolveDependencies: z.boolean().default(false),
     // Requirement status tracking
@@ -74,7 +74,7 @@ export function createPrdSchema(configOverlaySchema: ZodTypeAny) {
         // Phase config overlay (NEW) - allows phase-specific config overrides
         config: z.lazy(() => configOverlaySchema).optional(),
       })).optional(),
-      dependencies: z.record(z.array(z.string())).optional(), // Explicit requirement dependencies
+      dependencies: z.record(z.string(), z.array(z.string())).optional(), // Explicit requirement dependencies
     }).optional(),
     // NEW: Testing configuration
     testing: z.object({
@@ -101,7 +101,7 @@ export function createPrdSchema(configOverlaySchema: ZodTypeAny) {
       schemaOrg: z.object({
         type: z.string(),
         additionalTypes: z.array(z.string()).optional(),
-        properties: z.record(z.string()).optional(),
+        properties: z.record(z.string(), z.string()).optional(),
       }).optional(),
       metadata: z.object({
         author: z.string().optional(),
@@ -118,7 +118,7 @@ export function createPrdSchema(configOverlaySchema: ZodTypeAny) {
       specUrl: z.string().url().optional(),
       specPath: z.string().optional(),
       components: z.object({
-        schemas: z.record(z.any()).optional(),
+        schemas: z.record(z.string(), z.any()).optional(),
       }).optional(),
       schemasToImport: z.array(z.string()).optional(),
       fieldTypeMapping: z.record(z.string(), z.string()).optional(),
@@ -142,11 +142,11 @@ export function createPrdSchema(configOverlaySchema: ZodTypeAny) {
         label: z.string(),
         schemaOrg: z.object({
           type: z.string(),
-          properties: z.record(z.string()).optional(),
+          properties: z.record(z.string(), z.string()).optional(),
         }).optional(),
       })).optional(),
       fieldMappings: z.object({
-        global: z.record(z.object({
+        global: z.record(z.string(), z.object({
           fieldName: z.string(),
           fieldType: z.string(),
           required: z.boolean().optional(),
@@ -160,12 +160,12 @@ export function createPrdSchema(configOverlaySchema: ZodTypeAny) {
       primaryType: z.string().optional(),
       strategy: z.enum(['manual', 'ai_assisted', 'auto']).default('manual'),
       aiProvider: z.string().optional(),
-      typeMappings: z.record(z.object({
+      typeMappings: z.record(z.string(), z.object({
         type: z.string(),
         subTypes: z.array(z.string()).optional(),
-        properties: z.record(z.string()).optional(),
+        properties: z.record(z.string(), z.string()).optional(),
       })).optional(),
-      propertyMappings: z.record(z.string()).optional(),
+      propertyMappings: z.record(z.string(), z.string()).optional(),
       customVocabulary: z.object({
         prefix: z.string(),
         namespace: z.string().url(),
@@ -185,7 +185,7 @@ export function createPrdSchema(configOverlaySchema: ZodTypeAny) {
         description: z.string(),
         test: z.string(),
       })).optional(),
-      requirementTests: z.record(z.object({
+      requirementTests: z.record(z.string(), z.object({
         description: z.string(),
         acceptance: z.array(z.object({
           given: z.string().optional(),
@@ -196,7 +196,7 @@ export function createPrdSchema(configOverlaySchema: ZodTypeAny) {
         assertions: z.array(z.any()).optional(),
         testFile: z.string().optional(),
       })).optional(),
-      fieldValidation: z.record(z.array(z.object({
+      fieldValidation: z.record(z.string(), z.array(z.object({
         constraint: z.string(),
         when: z.string().optional(),
         message: z.string().optional(),
@@ -216,7 +216,7 @@ export function createPrdSchema(configOverlaySchema: ZodTypeAny) {
         label: z.string(),
         importUrl: z.string(),
         schedule: z.string().optional(),
-        fieldMappings: z.record(z.string()).optional(),
+        fieldMappings: z.record(z.string(), z.string()).optional(),
       })).optional(),
       webhooks: z.array(z.object({
         id: z.string(),
@@ -249,7 +249,7 @@ export function createPrdSchema(configOverlaySchema: ZodTypeAny) {
         prd: z.string(),
         relationship: z.string(),
       })).optional(),
-      entityRelationships: z.record(z.array(z.object({
+      entityRelationships: z.record(z.string(), z.array(z.object({
         targetType: z.string(),
         relationship: z.string(),
         cardinality: z.enum(['one_to_one', 'one_to_many', 'many_to_one', 'many_to_many']),

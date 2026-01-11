@@ -197,7 +197,7 @@ export function registerEventMonitoringTools(server: any): void {
     'Configure event monitoring thresholds and action settings',
     z.object({
       pollingInterval: z.number().optional().describe('Polling interval in milliseconds'),
-      thresholds: z.record(z.object({
+      thresholds: z.record(z.string(), z.object({
         count: z.number().optional(),
         rate: z.number().optional(),
         windowMs: z.number().optional(),

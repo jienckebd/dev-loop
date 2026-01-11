@@ -36,6 +36,9 @@ import { recommendCommand } from './cli/commands/recommend';
 import { feedbackCommand } from './cli/commands/feedback';
 import { archiveCommand } from './cli/commands/archive';
 import { reportCommand } from './cli/commands/report';
+import { generateSchemasCommand } from './cli/commands/generate-schemas';
+import { validateDataCommand } from './cli/commands/validate-data';
+import { validateConfigCommand } from './cli/commands/validate-config';
 
 const program = new Command();
 
@@ -255,6 +258,46 @@ program
       checkTasks: options.tasks,
       checkEnvironment: options.environment,
       fix: options.fix,
+    });
+  });
+
+program
+  .command('validate-config')
+  .description('Validate configuration files at different levels')
+  .option('--level <level>', 'Validation level: project, framework, prd-set, prd, phase, all', 'all')
+  .option('--prd-set <id>', 'PRD set ID (for prd-set level)')
+  .option('--prd <path>', 'PRD file path (for prd/phase levels)')
+  .option('--phase <id>', 'Phase ID (for phase level)', (v) => parseInt(v, 10))
+  .option('--json', 'Output results as JSON')
+  .action(async (options) => {
+    await validateConfigCommand({
+      level: options.level as any,
+      prdSetId: options.prdSet,
+      prd: options.prd,
+      phase: options.phase,
+      json: options.json,
+    });
+  });
+
+program
+  .command('validate-data')
+  .description('Validate all .devloop JSON data files')
+  .option('--json', 'Output results as JSON')
+  .option('--file <path>', 'Validate specific file only')
+  .action(async (options) => {
+    await validateDataCommand({
+      json: options.json,
+      file: options.file,
+    });
+  });
+
+program
+  .command('generate-schemas')
+  .description('Generate JSON Schema files from Zod schemas')
+  .option('-o, --output <path>', 'Output directory for schema files', 'node_modules/dev-loop/schemas')
+  .action(async (options) => {
+    await generateSchemasCommand({
+      output: options.output,
     });
   });
 

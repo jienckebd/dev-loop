@@ -119,7 +119,7 @@ devloop_contribution_stop()
 
 Contribution mode includes automatic issue detection to alert the outer agent when systemic problems occur. These metrics enable proactive identification and resolution of issues before they impact execution.
 
-**CRITICAL: The outer agent should monitor via event streaming, NOT log parsing.** All issue detection emits `contribution:issue_detected` events that can be polled via `devloop_events_poll` or monitored proactively via `devloop_event_monitor_start`. Log parsing is deprecated in favor of structured event streaming.
+**CRITICAL: The outer agent should monitor via event streaming FIRST, logs/metrics SECOND.** All issue detection emits `contribution:issue_detected` events that can be polled via `devloop_events_poll` or monitored proactively via `devloop_event_monitor_start`. Check logs or metrics files only when event streaming doesn't provide sufficient information.
 
 ### Module Confusion Detection
 
@@ -735,7 +735,7 @@ Use `prd-set execute` to create tasks from multiple related PRDs, then `watch` m
 
 ### Event Monitoring Best Practices
 
-**CRITICAL: The outer agent should monitor via event streaming, NOT log parsing.** All issue detection emits `contribution:issue_detected` events that can be polled via `devloop_events_poll` or monitored proactively via `devloop_event_monitor_start`. Log parsing is deprecated in favor of structured event streaming.
+**CRITICAL: The outer agent should monitor via event streaming FIRST, logs/metrics SECOND.** All issue detection emits `contribution:issue_detected` events that can be polled via `devloop_events_poll` or monitored proactively via `devloop_event_monitor_start`. Check logs or metrics files only when event streaming doesn't provide sufficient information.
 
 **Monitoring Approaches:**
 

@@ -129,7 +129,7 @@ const configSchemaBase = z.object({
     eventMonitoring: z.object({
       enabled: z.boolean().default(false),
       pollingInterval: z.number().default(5000).describe('Polling interval in milliseconds'),
-      thresholds: z.record(z.object({
+      thresholds: z.record(z.string(), z.object({
         count: z.number().optional().describe('Number of events before triggering'),
         rate: z.number().optional().describe('Percentage rate (0-1) before triggering'),
         windowMs: z.number().optional().describe('Time window in milliseconds (0 = no time limit)'),
@@ -428,15 +428,15 @@ const configSchemaBase = z.object({
     // Test setup boilerplate pattern
     setupPattern: z.string().optional(),
     // Selector documentation
-    selectors: z.record(z.any()).optional(),
+    selectors: z.record(z.string(), z.any()).optional(),
     // Entity save timing rules
     entitySaveTiming: z.object({
       rules: z.array(z.object({
         id: z.string(),
         description: z.string(),
       })).optional(),
-      stepProcessing: z.record(z.string()).optional(),
-      validationRequirements: z.record(z.array(z.string())).optional(),
+      stepProcessing: z.record(z.string(), z.string()).optional(),
+      validationRequirements: z.record(z.string(), z.array(z.string())).optional(),
     }).optional(),
     // Test isolation rules
     isolationRules: z.array(z.string()).optional(),
@@ -644,7 +644,7 @@ const configSchemaBase = z.object({
     enabled: z.boolean().default(true),
     autoFix: z.boolean().default(true),
     configPath: z.string().optional(),
-    rules: z.record(z.enum(['error', 'warn', 'off'])).optional(),
+    rules: z.record(z.string(), z.enum(['error', 'warn', 'off'])).optional(),
   }).optional(),
 
   // Health scoring configuration (Phase 8 enhancement)
