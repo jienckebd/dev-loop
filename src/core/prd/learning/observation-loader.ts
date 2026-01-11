@@ -133,14 +133,14 @@ export class ObservationLoader {
       }
 
       // Filter by relevance score
-      if (observation.relevanceScore < filterOpts.relevanceThreshold) {
+      if (observation.relevanceScore < (filterOpts.relevanceThreshold ?? 0.5)) {
         return false; // Below threshold
       }
 
       // Filter by createdAt (only load recent observations)
       const createdAt = new Date(observation.createdAt);
       const daysSinceCreation = (now.getTime() - createdAt.getTime()) / (1000 * 60 * 60 * 24);
-      if (daysSinceCreation > filterOpts.retentionDays) {
+      if (daysSinceCreation > (filterOpts.retentionDays ?? 180)) {
         return false; // Too old
       }
 
@@ -168,7 +168,7 @@ export class ObservationLoader {
    */
   private async pruneOldEntries(observations: ObservationEntry[], data: ObservationsFile): Promise<ObservationEntry[]> {
     const now = new Date();
-    const retentionDays = this.config.filterOptions.retentionDays;
+    const retentionDays = this.config.filterOptions.retentionDays ?? 180;
 
     return observations.filter(observation => {
       const createdAt = new Date(observation.createdAt);

@@ -78,6 +78,48 @@ This checks:
 - Status values valid
 - idPattern format correct
 
+### Alternative: Build PRD Set from Planning Document
+
+Instead of manually creating PRDs, you can use `build-prd-set` to convert planning documents:
+
+```bash
+dev-loop build-prd-set --convert planning-doc.md --output-dir .taskmaster/production
+```
+
+This automatically:
+- Extracts requirements (REQ-X.Y format)
+- Creates phases based on requirement numbering
+- Generates PRD set structure (index.md.yml + phase files)
+- Includes tasks in phase frontmatter
+
+**Planning Document Format:**
+
+Use `REQ-X.Y: Title` format in your planning document:
+
+```markdown
+### REQ-1.1: Create Module Info File
+
+**Priority**: must
+**Type**: functional
+
+**Description**: Create the module info file with proper metadata.
+
+**Acceptance Criteria**:
+- File exists at `docroot/modules/share/my_module/my_module.info.yml`
+- Contains: name, type, description, core_version_requirement
+
+**Target Files**:
+- `docroot/modules/share/my_module/my_module.info.yml`
+```
+
+The command will:
+1. Parse all `REQ-X.Y` requirements
+2. Group by phase (based on `REQ-X` prefix)
+3. Extract task metadata (title, description, validation checklist, files)
+4. Generate PRD set with proper structure
+
+See [`../users/PRD_BUILDING.md`](../users/PRD_BUILDING.md) for complete guide including enhance and create modes.
+
 ## Key Concepts
 
 ### Phase Dependencies

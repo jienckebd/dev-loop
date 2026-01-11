@@ -16,22 +16,34 @@ export interface InteractivePromptSystemConfig {
   useRichUI?: boolean; // Use @clack/prompts if available, fallback to inquirer
   library?: 'clack' | 'inquirer'; // Force specific library
   debug?: boolean;
+  autoApprove?: boolean; // Skip interactive prompts (use defaults)
 }
 
 /**
  * Interactive Prompt System
  */
 export class InteractivePromptSystem {
-  private config: InteractivePromptSystemConfig & { useRichUI: boolean; library: 'clack' | 'inquirer'; debug: boolean };
+  private config: InteractivePromptSystemConfig & { useRichUI: boolean; library: 'clack' | 'inquirer'; debug: boolean; autoApprove: boolean };
   private useClack: boolean;
+  private isTTY: boolean;
 
   constructor(config: InteractivePromptSystemConfig = {}) {
     this.config = {
       useRichUI: config.useRichUI !== false,
       library: config.library || 'clack',
       debug: config.debug || false,
+      autoApprove: config.autoApprove || false,
     };
     this.useClack = this.detectLibrary();
+    // Check if TTY is available (for non-interactive environments)
+    this.isTTY = process.stdin.isTTY && process.stdout.isTTY;
+  }
+
+  /**
+   * Set auto-approve mode (skip interactive prompts)
+   */
+  setAutoApprove(autoApprove: boolean): void {
+    this.config.autoApprove = autoApprove;
   }
 
   /**
@@ -341,10 +353,30 @@ export class InteractivePromptSystem {
     iteration: number,
     enhancements: Array<{ type: string; description: string; changes?: any }>
   ): Promise<'approve' | 'reject' | 'edit'> {
-    if (this.useClack) {
-      return await this.presentRefinementClack(iteration, enhancements);
-    } else {
-      return await this.presentRefinementInquirer(iteration, enhancements);
+    // If auto-approve is enabled, automatically approve
+    if (this.config.autoApprove) {
+      return 'approve';
+    }
+
+    // If TTY is not available, auto-approve (non-interactive environment)
+    if (!this.isTTY) {
+      logger.warn('[InteractivePromptSystem] TTY not available, auto-approving refinement');
+      return 'approve';
+    }
+
+    try {
+      if (this.useClack) {
+        return await this.presentRefinementClack(iteration, enhancements);
+      } else {
+        return await this.presentRefinementInquirer(iteration, enhancements);
+      }
+    } catch (error) {
+      // If TTY initialization fails, auto-approve
+      if (error instanceof Error && (error.message.includes('TTY') || error.message.includes('tty'))) {
+        logger.warn(`[InteractivePromptSystem] TTY error: ${error.message}, auto-approving refinement`);
+        return 'approve';
+      }
+      throw error;
     }
   }
 
@@ -837,11 +869,56 @@ export class InteractivePromptSystem {
       return new Map();
     }
 
-    if (this.useClack) {
-      return await this.askRefinementQuestionsClack(questions, phase);
-    } else {
-      return await this.askRefinementQuestionsInquirer(questions, phase);
+    // If auto-approve is enabled, return default answers
+    if (this.config.autoApprove) {
+      return this.getDefaultAnswers(questions);
     }
+
+    // If TTY is not available, use default answers (non-interactive environment)
+    if (!this.isTTY) {
+      logger.warn('[InteractivePromptSystem] TTY not available, using default answers for refinement questions');
+      return this.getDefaultAnswers(questions);
+    }
+
+    try {
+      if (this.useClack) {
+        return await this.askRefinementQuestionsClack(questions, phase);
+      } else {
+        return await this.askRefinementQuestionsInquirer(questions, phase);
+      }
+    } catch (error) {
+      // If TTY initialization fails, fall back to default answers
+      if (error instanceof Error && (error.message.includes('TTY') || error.message.includes('tty'))) {
+        logger.warn(`[InteractivePromptSystem] TTY error: ${error.message}, using default answers`);
+        return this.getDefaultAnswers(questions);
+      }
+      throw error;
+    }
+  }
+
+  /**
+   * Get default answers for questions (used when auto-approve or non-interactive)
+   */
+  private getDefaultAnswers(
+    questions: Array<{ id: string; type: string; text: string; options?: string[]; required: boolean; context?: string; hint?: string }>
+  ): Map<string, any> {
+    const answers = new Map<string, any>();
+    for (const question of questions) {
+      if (question.options && question.options.length > 0) {
+        // For multiple choice, use first option (or all for multi-select)
+        if (question.type === 'prioritization' && question.options.length > 3) {
+          answers.set(question.id, question.options);
+        } else {
+          answers.set(question.id, question.options[0]);
+        }
+      } else if (!question.required) {
+        answers.set(question.id, '');
+      } else {
+        // For required questions without defaults, use a generic answer
+        answers.set(question.id, 'Use default configuration');
+      }
+    }
+    return answers;
   }
 
   /**
@@ -1001,10 +1078,36 @@ export class InteractivePromptSystem {
       return { selectedInsights: [], preferences: new Map() };
     }
 
-    if (this.useClack) {
-      return await this.showCodebaseInsightsClack(insights, message);
-    } else {
-      return await this.showCodebaseInsightsInquirer(insights, message);
+    // If auto-approve is enabled, select all insights with default preferences
+    if (this.config.autoApprove) {
+      const selectedInsights = insights.map(insight => insight.id);
+      const preferences = new Map<string, any>();
+      return { selectedInsights, preferences };
+    }
+
+    // If TTY is not available, select all insights (non-interactive environment)
+    if (!this.isTTY) {
+      logger.warn('[InteractivePromptSystem] TTY not available, selecting all codebase insights');
+      const selectedInsights = insights.map(insight => insight.id);
+      const preferences = new Map<string, any>();
+      return { selectedInsights, preferences };
+    }
+
+    try {
+      if (this.useClack) {
+        return await this.showCodebaseInsightsClack(insights, message);
+      } else {
+        return await this.showCodebaseInsightsInquirer(insights, message);
+      }
+    } catch (error) {
+      // If TTY initialization fails, select all insights
+      if (error instanceof Error && (error.message.includes('TTY') || error.message.includes('tty'))) {
+        logger.warn(`[InteractivePromptSystem] TTY error: ${error.message}, selecting all codebase insights`);
+        const selectedInsights = insights.map(insight => insight.id);
+        const preferences = new Map<string, any>();
+        return { selectedInsights, preferences };
+      }
+      throw error;
     }
   }
 

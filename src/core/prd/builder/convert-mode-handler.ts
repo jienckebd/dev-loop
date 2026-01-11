@@ -183,22 +183,38 @@ export class ConvertModeHandler {
       logger.debug(`[ConvertModeHandler] Created conversation: ${conversationId}`);
     }
 
-    // 5. Refine PRD through iterative enhancements
-    logger.debug('[ConvertModeHandler] Starting refinement iterations');
-    const refinement = await this.refinementOrchestrator.refine(
-      parsedDoc,
-      {
-        conversationId: conversationId || '',
-        mode: 'convert',
+    // 5. Refine PRD through iterative enhancements (skip if maxIterations is 0)
+    let refinement: any;
+    if (options.maxIterations === 0) {
+      logger.debug('[ConvertModeHandler] Skipping refinement (maxIterations=0)');
+      // Create a minimal refinement result without AI calls
+      refinement = {
         prd: parsedDoc,
-        codebaseAnalysis,
-        featureTypes: featureTypeResult.featureTypes,
-      },
-      {
-        maxIterations: options.maxIterations || 5,
-        autoApprove: options.autoApprove || false,
-      }
-    );
+        schemas: { summary: 'Skipped', schemas: [] },
+        tests: { summary: 'Skipped', testPlans: [] },
+        features: { summary: 'Skipped', enhancements: [] },
+        validation: { executable: false, errors: [], warnings: [] },
+        executable: false,
+        iterations: 0,
+        summary: 'Refinement skipped (maxIterations=0)',
+      };
+    } else {
+      logger.debug('[ConvertModeHandler] Starting refinement iterations');
+      refinement = await this.refinementOrchestrator.refine(
+        parsedDoc,
+        {
+          conversationId: conversationId || '',
+          mode: 'convert',
+          prd: parsedDoc,
+          codebaseAnalysis,
+          featureTypes: featureTypeResult.featureTypes,
+        },
+        {
+          maxIterations: options.maxIterations || 5,
+          autoApprove: options.autoApprove || false,
+        }
+      );
+    }
 
     // 6. Generate PRD set files
     logger.debug('[ConvertModeHandler] Generating PRD set files');

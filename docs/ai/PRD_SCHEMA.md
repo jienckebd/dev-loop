@@ -92,6 +92,45 @@ prd:
 - Child PRDs must have `parentPrd` and `prdSequence` set
 - Parent PRD with `status: split` should have child PRDs listed in `relationships.dependedOnBy`
 
+**PRD Set Structure:**
+
+When `status: split`, the PRD is a parent PRD in a PRD set. The PRD set consists of:
+- `index.md.yml` - Parent PRD manifest with status: split
+- `phase{N}_{name}.md.yml` - Child PRD files (one per phase)
+
+**File References:**
+
+Each phase in `requirements.phases[]` can include a `file` field referencing the child PRD:
+
+```yaml
+requirements:
+  phases:
+    - id: 1
+      name: Phase 1
+      file: phase1_phase_1.md.yml  # Reference to child PRD file
+```
+
+The `file` field is required when there are multiple phases (PRD set structure). The child PRD file should exist in the same directory as `index.md.yml`.
+
+**Relationships Format:**
+
+The `relationships.dependedOnBy` field uses object format for PRD sets:
+
+```yaml
+relationships:
+  dependedOnBy:
+    - prd: {parent-id}_phase1
+      features: [phase_1]
+    - prd: {parent-id}_phase2
+      features: [phase_2]
+```
+
+Each entry must have:
+- `prd` - Child PRD ID (format: `{parent-id}_phase{N}`)
+- `features` - Array of feature identifiers (typically phase names)
+
+The child PRD ID must match the `id` field in the corresponding child PRD file.
+
 ---
 
 ### execution (Required)

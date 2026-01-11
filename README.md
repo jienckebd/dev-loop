@@ -20,6 +20,7 @@ Dev-loop documentation is organized by audience and topic. Choose the documentat
 
 **For Users:**
 - [`docs/users/README.md`](docs/users/README.md) - Complete user guide with CLI reference, configuration, and all features
+- [`docs/users/PRD_BUILDING.md`](docs/users/PRD_BUILDING.md) - PRD building guide (convert/enhance/create)
 - [`docs/users/METRICS.md`](docs/users/METRICS.md) - Metrics and reporting guide
 - [`docs/users/REPORTS.md`](docs/users/REPORTS.md) - Report generation guide
 
@@ -76,6 +77,7 @@ flowchart LR
 | **AI Pattern Detection** | Semantic code analysis with abstraction recommendations | [`docs/users/README.md`](docs/users/README.md#ai-enhanced-pattern-detection) |
 | **Code Quality Scanning** | Static analysis, security, tech debt, and duplicate detection | [`docs/users/README.md`](docs/users/README.md#code-quality-scanning) |
 | **Pattern Learning** | Learns from outcomes to improve code generation | [`docs/users/README.md`](docs/users/README.md) |
+| **PRD Building** | Convert planning docs, enhance PRD sets, or create interactively | [`docs/users/PRD_BUILDING.md`](docs/users/PRD_BUILDING.md) |
 | **17 PRD Features** | Framework config, test generation, error guidance, and more | [`docs/ai/PRD_FEATURES.md`](docs/ai/PRD_FEATURES.md) |
 | **MCP Integration** | Task Master and Dev-Loop MCP servers for AI assistant integration | [`docs/users/README.md`](docs/users/README.md#mcp-integration) |
 | **Contribution Mode** | Two-agent architecture for contributing to dev-loop | [`docs/contributing/CONTRIBUTION_MODE.md`](docs/contributing/CONTRIBUTION_MODE.md) |

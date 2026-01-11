@@ -138,6 +138,38 @@ module.exports = {
     defaultPath: '.devloop/archive',
     compress: false,
     preserveStructure: true,
+    pruning: {
+      enabled: true,
+      preserveLearningFiles: true,  // Don't archive patterns.json, observations.json, etc.
+      learningFilePaths: [
+        '.devloop/patterns.json',
+        '.devloop/observations.json',
+        '.devloop/test-results.json',
+        '.devloop/prd-set-state.json',
+      ],
+    },
+  },
+  // PRD Building Configuration
+  prdBuilding: {
+    preProductionDir: '.taskmaster/pre-production',  // Planning documents directory
+    productionDir: '.taskmaster/production',        // Generated PRD sets directory
+    learningFiles: {
+      enabled: true,
+      patterns: '.devloop/patterns.json',
+      observations: '.devloop/observations.json',
+      testResults: '.devloop/test-results.json/test-results.json',
+      filtering: {
+        relevanceThreshold: 0.5,
+        retentionDays: 180,
+        lastUsedDays: 90,
+      },
+    },
+    refinement: {
+      askPrePhaseQuestions: true,
+      askMidPhaseQuestions: true,
+      askPostPhaseQuestions: true,
+      showCodebaseInsights: true,
+    },
   },
   patternLearning: { enabled: true, patternsPath: '.devloop/patterns.json' },
 };
@@ -149,6 +181,7 @@ module.exports = {
 - **Code Quality Scanning** — See [Code Quality Scanning](#code-quality-scanning) for `scan` config
 - **Framework Plugins** — See [Framework Plugins](#framework-plugins) for `framework` config
 - **Cursor Integration** — See [Cursor Integration](#cursor-integration) for `cursor.agents` config
+- **PRD Building** — See [PRD_BUILDING.md](./PRD_BUILDING.md) for `prdBuilding` config
 
 ## CLI Reference
 
@@ -172,6 +205,27 @@ module.exports = {
 | `task-master parse-prd --input=<file>` | Create tasks from PRD |
 | `task-master add-task --prompt="..."` | Add single task |
 | `task-master set-status --id=<id> --status=done` | Update status |
+
+### PRD Building Commands
+
+| Command | Description |
+|---------|-------------|
+| `dev-loop build-prd-set --convert <path> [options]` | Convert planning document to PRD set |
+| `dev-loop build-prd-set --enhance <path> [options]` | Enhance existing PRD set |
+| `dev-loop build-prd-set --create [--prompt TEXT] [options]` | Create PRD set interactively |
+| `dev-loop prd-set validate <path>` | Validate PRD set structure |
+| `dev-loop prd-set list` | List discovered PRD sets |
+| `dev-loop prd-set status [--prd-set <id>]` | Show PRD set execution status |
+| `dev-loop prd-set execute <path>` | Execute PRD set |
+
+**Common Options:**
+- `--output-dir <dir>` - Output directory (default: `.taskmaster/production`)
+- `--auto-approve` - Skip interactive prompts (for CI/CD)
+- `--skip-analysis` - Skip codebase analysis (faster)
+- `--max-iterations <n>` - Refinement iterations (default: 3, use 0 to skip)
+- `--debug` - Enable debug output
+
+See [PRD_BUILDING.md](./PRD_BUILDING.md) for complete PRD building guide.
 
 ### Debugging Commands
 

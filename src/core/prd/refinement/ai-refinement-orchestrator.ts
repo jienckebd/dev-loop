@@ -113,9 +113,13 @@ export class AIRefinementOrchestrator {
       aiProviderConfig: config.aiProviderConfig, // Required
       codebaseAnalysis: config.codebaseAnalysis,
       promptSelector: config.promptSelector,
+      projectConfig: config.projectConfig!, // Required but may be undefined at runtime - handled by optional chaining
       conversationManager: config.conversationManager,
       progressTracker: config.progressTracker,
       interactivePrompts: config.interactivePrompts,
+      patterns: config.patterns || [],
+      observations: config.observations || [],
+      testResults: config.testResults || [],
       maxIterations: config.maxIterations || 5,
       autoApprove: config.autoApprove || false,
       askPrePhaseQuestions: config.askPrePhaseQuestions !== false, // Default to true
@@ -123,7 +127,7 @@ export class AIRefinementOrchestrator {
       askPostPhaseQuestions: config.askPostPhaseQuestions !== false, // Default to true
       showCodebaseInsights: config.showCodebaseInsights !== false, // Default to true
       debug: config.debug || false,
-    };
+    } as typeof this.config;
     this.debug = this.config.debug;
 
     // Initialize refinement services

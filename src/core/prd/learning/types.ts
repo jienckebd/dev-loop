@@ -141,4 +141,5 @@ export interface ObservationFilterOptions extends LearningFileFilterOptions {
 export interface TestResultsFilterOptions extends LearningFileFilterOptions {
   status?: ('passing' | 'failing' | 'flaky')[]; // Optional, filter by status
   prdStatus?: ('done' | 'failed' | 'cancelled' | 'running' | 'pending')[]; // Optional, filter by PRD status
+  testFramework?: string; // Optional, filter by test framework (e.g., 'playwright', 'cypress')
 }

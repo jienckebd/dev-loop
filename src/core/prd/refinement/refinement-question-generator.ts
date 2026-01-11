@@ -340,8 +340,8 @@ export class RefinementQuestionGenerator {
 
     // Extract code quality tools, tech debt indicators, recommendation patterns
     // CRITICAL: For CompositePlugin, if configured framework type is set, try to get tools from that specific plugin
-    let codeQualityTools: CodeQualityTool[] = [];
-    let techDebtIndicators: TechDebtIndicator[] = [];
+    let codeQualityTools: any[] = [];
+    let techDebtIndicators: any[] = [];
     let recommendationPatterns: any[] = [];
     
     // If CompositePlugin detected but framework type is configured, try to get tools from the configured framework's plugin
@@ -353,7 +353,7 @@ export class RefinementQuestionGenerator {
           // Get child plugin for configured framework
           if ('getChildPlugins' in frameworkPlugin && typeof frameworkPlugin.getChildPlugins === 'function') {
             const childPlugins = frameworkPlugin.getChildPlugins();
-            const configuredPlugin = childPlugins.find(p => p.name === configuredFrameworkType);
+            const configuredPlugin = childPlugins.find((p: any) => p.name === configuredFrameworkType);
             if (configuredPlugin) {
               codeQualityTools = configuredPlugin.getCodeQualityTools?.() || [];
               techDebtIndicators = configuredPlugin.getTechDebtIndicators?.() || [];

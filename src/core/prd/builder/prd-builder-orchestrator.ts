@@ -170,6 +170,11 @@ export class PRDBuilderOrchestrator {
   async build(input: BuildInput, options: BuildOptions = {}): Promise<BuildResult> {
     logger.debug(`[PRDBuilderOrchestrator] Building PRD set with input: ${input.path || input.prompt}`);
 
+    // Set auto-approve on interactive prompts if specified
+    if (options.autoApprove !== undefined && this.interactivePrompts) {
+      this.interactivePrompts.setAutoApprove(options.autoApprove);
+    }
+
     // Load learning data if not already loaded (async, but don't block on it)
     if (this.loadedPatterns.length === 0 && this.loadedObservations.length === 0 && this.loadedTestResults.length === 0) {
       await this.loadLearningData();
@@ -355,7 +360,7 @@ export class PRDBuilderOrchestrator {
     }
 
     const projectRoot = this.config.projectRoot;
-    const filteringConfig = learningFilesConfig?.filtering || {};
+    const filteringConfig = learningFilesConfig?.filtering || {} as any;
 
     // Initialize PatternLoader
     const patternsPath = path.resolve(projectRoot, learningFilesConfig?.patterns || '.devloop/patterns.json');
@@ -400,7 +405,7 @@ export class PRDBuilderOrchestrator {
         retentionDays: filteringConfig.testResultsRetentionDays || 180,
         relevanceThreshold: filteringConfig.relevanceThreshold || 0.5,
         framework: this.config.config.framework?.type, // Filter by configured framework
-        testFramework: this.config.config.testGeneration?.framework, // Filter by configured test framework
+        testFramework: (this.config.config as any)?.testGeneration?.framework || (this.config.config as any)?.metrics?.testGeneration?.framework || (this.config.config as any)?.autonomous?.testGeneration?.framework, // Filter by configured test framework
         prdStatus: ['done', 'failed', 'cancelled'], // Only load results for completed PRDs (exclude running/pending)
         excludeExpired: true,
         autoPrune: filteringConfig.autoPrune !== false,

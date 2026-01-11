@@ -61,12 +61,39 @@ export class PrdManifestParser {
     // Extract child PRDs from relationships.dependedOnBy
     const childPrds: PrdSetManifest['childPrds'] = [];
     const dependedOnBy = parentMetadata.relationships?.dependedOnBy || [];
+    
+    // Also check requirements.phases[].file for phase file references
+    const phaseFiles = new Map<string, string>(); // prdId -> filename
+    if (parentMetadata.requirements?.phases) {
+      for (const phase of parentMetadata.requirements.phases) {
+        if (phase.file && dependedOnBy.some(dep => {
+          const depPrdId = typeof dep === 'string' ? dep : dep.prd;
+          return depPrdId === `${parentId}_phase${phase.id}`;
+        })) {
+          const prdId = `${parentId}_phase${phase.id}`;
+          phaseFiles.set(prdId, phase.file);
+        }
+      }
+    }
 
     for (const dep of dependedOnBy) {
-      const childPrdId = dep.prd;
+      const childPrdId = typeof dep === 'string' ? dep : dep.prd;
 
       // Try to find child PRD file in same directory
-      const childPrdPath = await this.findChildPrdFile(indexDir, childPrdId);
+      // First check if we have a file reference from requirements.phases
+      let childPrdPath: string | null = null;
+      if (phaseFiles.has(childPrdId)) {
+        const filename = phaseFiles.get(childPrdId)!;
+        const filePath = path.join(indexDir, filename);
+        if (await fs.pathExists(filePath)) {
+          childPrdPath = filePath;
+        }
+      }
+      
+      // If not found via file reference, try pattern matching
+      if (!childPrdPath) {
+        childPrdPath = await this.findChildPrdFile(indexDir, childPrdId);
+      }
 
       if (!childPrdPath) {
         if (this.debug) {

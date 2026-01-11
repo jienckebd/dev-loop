@@ -82,6 +82,57 @@ Archives preserve the original file structure:
 - `.taskmaster/config.json`
 - `.taskmaster/tasks/*.json`
 
+## Learning Files Preservation
+
+Learning files are preserved during archiving to maintain historical data for PRD building:
+
+**Preserved Files:**
+- `.devloop/patterns.json` - Code patterns learned from past executions
+- `.devloop/observations.json` - System observations and insights
+- `.devloop/test-results.json/test-results.json` - Test execution history
+- `.devloop/prd-set-state.json` - PRD set execution state
+
+**Why Preserve:**
+
+These files are used by `build-prd-set` to:
+- Generate context-aware refinement questions
+- Learn from past patterns and outcomes
+- Improve PRD quality through historical insights
+
+**Filtering:**
+
+Learning files use versioning and filtering to prevent interference:
+- Old entries are filtered by relevance threshold
+- Entries older than retention period are pruned
+- Only relevant, recent data is used for refinement
+
+**Configuration:**
+
+Configure preservation in `devloop.config.js`:
+
+```javascript
+module.exports = {
+  archive: {
+    enabled: true,
+    defaultPath: '.devloop/archive',
+    compress: false,
+    preserveStructure: true,
+    pruning: {
+      enabled: true,
+      preserveLearningFiles: true,  // Don't archive learning files
+      learningFilePaths: [
+        '.devloop/patterns.json',
+        '.devloop/observations.json',
+        '.devloop/test-results.json',
+        '.devloop/prd-set-state.json',
+      ],
+    },
+  },
+};
+```
+
+When `preserveLearningFiles: true`, these files remain in `.devloop/` and are not moved to the archive. They continue to be used by `build-prd-set` for context-aware refinement.
+
 ## Configuration
 
 Configure archive settings in `devloop.config.js`:

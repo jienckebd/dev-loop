@@ -163,7 +163,7 @@ export class TestResultsLoader {
       // Filter by timestamp (only load recent test results)
       const timestamp = new Date(execution.timestamp);
       const daysSinceExecution = (now.getTime() - timestamp.getTime()) / (1000 * 60 * 60 * 24);
-      if (daysSinceExecution > filterOpts.retentionDays) {
+      if (daysSinceExecution > (filterOpts.retentionDays ?? 180)) {
         return false; // Too old
       }
 
@@ -220,7 +220,7 @@ export class TestResultsLoader {
    */
   private async pruneOldEntries(executions: TestResultExecution[], data: TestResultsFile): Promise<TestResultExecution[]> {
     const now = new Date();
-    const retentionDays = this.config.filterOptions.retentionDays;
+    const retentionDays = this.config.filterOptions.retentionDays ?? 180;
 
     return executions.filter(execution => {
       const timestamp = new Date(execution.timestamp);

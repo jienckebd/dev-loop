@@ -152,7 +152,7 @@ export class PrdSetGenerator {
           status: phase.status || 'pending',
           checkpoint: phase.checkpoint || false,
           file: parsedDoc.phases.length > 1
-            ? `phase${phase.id}_${this.slugify(phase.name)}.md`
+            ? `phase${phase.id}_${this.slugify(phase.name)}.md.yml`
             : undefined,
           config: phase.config,
           tasks: phase.tasks?.map(task => ({
@@ -179,9 +179,10 @@ export class PrdSetGenerator {
     // Add relationships for split PRDs
     if (parsedDoc.phases.length > 1) {
       manifest.relationships = {
-        dependedOnBy: parsedDoc.phases.map(phase =>
-          `${setId}_phase${phase.id}`
-        ),
+        dependedOnBy: parsedDoc.phases.map(phase => ({
+          prd: `${setId}_phase${phase.id}`,
+          features: [phase.name.toLowerCase().replace(/\s+/g, '_')],
+        })),
       };
     }
 
@@ -212,7 +213,8 @@ export class PrdSetGenerator {
     setId: string
   ): GeneratedFile {
     const prdId = `${setId}_phase${phase.id}`;
-    const filename = `phase${phase.id}_${this.slugify(phase.name)}.md`;
+    // Use .md.yml extension to match dev-loop PRD schema format
+    const filename = `phase${phase.id}_${this.slugify(phase.name)}.md.yml`;
 
     const frontmatter: Record<string, any> = {
       prd: {
@@ -231,6 +233,15 @@ export class PrdSetGenerator {
           id: 1,
           name: phase.name,
           parallel: phase.parallel || false,
+          tasks: phase.tasks?.map(task => ({
+            id: task.id,
+            title: task.title,
+            description: task.description,
+            testStrategy: task.testStrategy,
+            validationChecklist: task.validationChecklist,
+            dependencies: task.dependencies,
+            files: task.files,
+          })),
         }],
       },
       testing: parsedDoc.testing || {

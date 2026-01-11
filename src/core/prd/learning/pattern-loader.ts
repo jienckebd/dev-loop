@@ -156,21 +156,21 @@ export class PatternLoader {
       }
 
       // Filter by relevance score
-      if (pattern.relevanceScore < filterOpts.relevanceThreshold) {
+      if (pattern.relevanceScore < (filterOpts.relevanceThreshold ?? 0.5)) {
         return false; // Below threshold
       }
 
       // Filter by lastUsedAt (only load recently used patterns)
       const lastUsedAt = new Date(pattern.lastUsedAt);
       const daysSinceLastUse = (now.getTime() - lastUsedAt.getTime()) / (1000 * 60 * 60 * 24);
-      if (daysSinceLastUse > filterOpts.lastUsedDays) {
+      if (daysSinceLastUse > (filterOpts.lastUsedDays ?? 90)) {
         return false; // Not used recently enough
       }
 
       // Filter by retention days (based on createdAt)
       const createdAt = new Date(pattern.createdAt);
       const daysSinceCreation = (now.getTime() - createdAt.getTime()) / (1000 * 60 * 60 * 24);
-      if (daysSinceCreation > filterOpts.retentionDays) {
+      if (daysSinceCreation > (filterOpts.retentionDays ?? 180)) {
         return false; // Too old
       }
 
@@ -207,8 +207,9 @@ export class PatternLoader {
       // Keep if used recently OR if created recently (might be new)
       const createdAt = new Date(pattern.createdAt);
       const daysSinceCreation = (now.getTime() - createdAt.getTime()) / (1000 * 60 * 60 * 24);
+      const retentionDaysValue = retentionDays ?? 180;
       
-      return daysSinceLastUse <= retentionDays || daysSinceCreation <= 30; // Keep if used recently OR created in last 30 days
+      return daysSinceLastUse <= retentionDaysValue || daysSinceCreation <= 30; // Keep if used recently OR created in last 30 days
     });
   }
 
