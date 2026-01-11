@@ -435,6 +435,8 @@ The shared JSON parser (`cursor-json-parser.ts`) handles various edge cases auto
 - Prefix stripping ("Here is the JSON:", etc.)
 - Detailed error logging for debugging
 
+For detailed JSON response format requirements and additional troubleshooting guidance, see [`docs/troubleshooting/json-parsing.md`](../troubleshooting/json-parsing.md).
+
 ### Background Agent Hanging
 
 If background agents hang:

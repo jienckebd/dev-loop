@@ -24,6 +24,10 @@ Complete user guide for dev-loop - the autonomous development orchestrator that 
 - [MCP Integration](#mcp-integration)
 - [Architecture](#architecture)
 - [Framework Plugins](#framework-plugins)
+- [Cursor Integration](#cursor-integration)
+- [MCP Integration](#mcp-integration)
+- [AI-Enhanced Pattern Detection](#ai-enhanced-pattern-detection)
+- [Code Quality Scanning](#code-quality-scanning)
 - [Contribution Mode](#contribution-mode)
 - [Best Practices](#best-practices)
 - [Troubleshooting](#troubleshooting)
@@ -76,7 +80,7 @@ Create `devloop.config.js`:
 ```javascript
 module.exports = {
   ai: {
-    provider: 'anthropic',              // 'anthropic' | 'openai' | 'gemini' | 'ollama'
+    provider: 'anthropic',              // 'anthropic' | 'openai' | 'gemini' | 'ollama' | 'cursor'
     model: 'claude-sonnet-4-20250514',
     fallback: 'openai:gpt-4o',
   },
@@ -90,6 +94,26 @@ module.exports = {
   },
   taskMaster: {
     tasksPath: '.taskmaster/tasks/tasks.json',
+  },
+  cursor: {
+    requestsPath: 'files-private/cursor',
+    agentName: 'DevLoopCodeGen',
+    model: 'auto',
+    agents: {
+      enabled: true,
+      autoGenerate: true,
+      autoProcess: true,
+      watchMode: true,
+      processInterval: 2000,
+      useBackgroundAgent: true,
+      agentOutputFormat: 'json',
+      sessionManagement: {
+        enabled: true,
+        maxSessionAge: 3600000,
+        maxHistoryItems: 50,
+        sessionsPath: '.devloop/cursor-sessions.json',
+      },
+    },
   },
   debug: false,
   metrics: {
@@ -118,6 +142,13 @@ module.exports = {
   patternLearning: { enabled: true, patternsPath: '.devloop/patterns.json' },
 };
 ```
+
+**Advanced Configuration:**
+
+- **AI Pattern Detection** — See [AI-Enhanced Pattern Detection](#ai-enhanced-pattern-detection) for `aiPatterns` config
+- **Code Quality Scanning** — See [Code Quality Scanning](#code-quality-scanning) for `scan` config
+- **Framework Plugins** — See [Framework Plugins](#framework-plugins) for `framework` config
+- **Cursor Integration** — See [Cursor Integration](#cursor-integration) for `cursor.agents` config
 
 ## CLI Reference
 
@@ -165,9 +196,9 @@ module.exports = {
 | `dev-loop report [--prd <id>] [--prd-set <id>] [--phase <prdId:phaseId>]` | Generate execution reports |
 | `dev-loop report --latest` | Generate report for most recent PRD |
 | `dev-loop report --all` | Generate reports for all PRDs |
-| `dev-loop archive [--prd-name <name>] [--compress]` | Archive state files |
+| `dev-loop archive [--prd-name <name>] [--compress]` | Archive state files (see [ARCHIVE.md](./ARCHIVE.md) for details) |
 
-See [METRICS.md](./METRICS.md) for detailed metrics guide, [REPORTS.md](./REPORTS.md) for report generation, and [ARCHIVE.md](./ARCHIVE.md) for archiving.
+See [METRICS.md](./METRICS.md) for detailed metrics guide and [REPORTS.md](./REPORTS.md) for report generation.
 
 ### Code Quality & AI Commands
 
@@ -186,6 +217,35 @@ See [METRICS.md](./METRICS.md) for detailed metrics guide, [REPORTS.md](./REPORT
 | `dev-loop contribution stop` | Stop contribution mode |
 | `dev-loop contribution validate` | Validate contribution mode boundaries |
 | `dev-loop contribution boundaries` | List active boundaries |
+
+## Cursor Integration
+
+Dev-loop uses Cursor background agents (headless execution via `cursor agent --print`) as the primary method for autonomous code generation. This enables:
+
+- **Background agent execution** - Headless, autonomous code generation using `cursor agent --print` mode
+- **Session persistence** - Context and conversation history maintained across tasks
+- **100% automated execution** - No manual intervention required
+- **Parallel execution support** - Multiple PRD sets and phases execute simultaneously with isolated sessions
+- **Reliability features** - Timeout handling, retry logic, enhanced JSON parsing
+
+**Configuration:**
+```javascript
+cursor: {
+  agents: {
+    enabled: true,
+    autoProcess: true,
+    useBackgroundAgent: true,
+    sessionManagement: {
+      enabled: true,
+      maxSessionAge: 3600000,
+      maxHistoryItems: 50,
+      sessionsPath: '.devloop/cursor-sessions.json',
+    },
+  },
+}
+```
+
+See [`../CURSOR_INTEGRATION.md`](../CURSOR_INTEGRATION.md) for complete Cursor integration guide including session management, timeout handling, retry logic, and parallel execution.
 
 ## MCP Integration
 
@@ -218,10 +278,14 @@ Create `.cursor/mcp.json`:
 - `parse_prd`, `add_task`, `list_tasks`, `next_task`, `get_task`, `set_status`, `expand_task`
 
 **Dev-Loop MCP** (workflow orchestration):
-- Core: `devloop_run`, `devloop_status`, `devloop_prd`, `devloop_list_tasks`
-- Debug: `devloop_diagnose`, `devloop_trace`, `devloop_logs`, `devloop_metrics`
-- Control: `devloop_pause`, `devloop_resume`, `devloop_reset`, `devloop_validate`
-- Contribution: `devloop_contribution_start`, `devloop_contribution_status`, `devloop_contribution_stop`, `devloop_contribution_validate`, `devloop_contribution_boundaries`
+- **Core**: `devloop_run`, `devloop_status`, `devloop_prd`, `devloop_list_tasks`
+- **Debug**: `devloop_diagnose`, `devloop_trace`, `devloop_logs`, `devloop_metrics`
+- **Control**: `devloop_pause`, `devloop_resume`, `devloop_reset`, `devloop_validate`
+- **Contribution**: `devloop_contribution_start`, `devloop_contribution_status`, `devloop_contribution_stop`, `devloop_contribution_validate`, `devloop_contribution_boundaries`
+- **Events**: `devloop_events_poll`, `devloop_events_latest`, `devloop_blocked_tasks`, `devloop_filtered_files`, `devloop_issues`
+- **Event Monitoring**: `devloop_event_monitor_start`, `devloop_event_monitor_stop`, `devloop_event_monitor_status`, `devloop_event_monitor_configure`, `devloop_event_monitor_interventions`
+- **Observation**: `devloop_pattern_detection`, `devloop_codebase_health`, `devloop_session_analysis`, `devloop_context_gap_detection`, `devloop_dependency_graph`
+- **Background Agents**: `devloop_background_agent_status` (via Cursor integration)
 
 ### Common Workflows
 
@@ -239,6 +303,15 @@ Create `.cursor/mcp.json`:
 2. devloop_logs(analyze: true)
 3. devloop_trace(taskId: "123")
 ```
+
+**Monitor events (Contribution Mode):**
+```
+1. devloop_event_monitor_start() — start proactive monitoring
+2. devloop_events_poll() — poll for events
+3. devloop_event_monitor_interventions() — view interventions
+```
+
+See [`../contributing/EVENT_STREAMING.md`](../contributing/EVENT_STREAMING.md) for event streaming guide and [`../contributing/PROACTIVE_MONITORING.md`](../contributing/PROACTIVE_MONITORING.md) for proactive monitoring guide.
 
 ## Architecture
 
@@ -366,14 +439,172 @@ Publish an npm package `@dev-loop/framework-{name}` that exports a `FrameworkPlu
 
 See `src/frameworks/interface.ts` for full interface definition.
 
+## AI-Enhanced Pattern Detection
+
+Dev-loop includes AI-powered pattern detection for identifying abstraction opportunities and code quality improvements.
+
+### Features
+
+- **Semantic Code Analysis**: Uses embeddings to find functionally similar code blocks
+- **Pattern Clustering**: Groups similar patterns across files for abstraction recommendations
+- **LLM Analysis**: Deep analysis of patterns for implementation suggestions
+- **Feedback Learning**: Learns from user feedback to improve future recommendations
+- **Framework-Specific**: Tailored recommendations for Drupal, Django, React, and Browser Extensions
+
+### Configuration
+
+> **Note:** Pattern detection uses `aiPatterns` config (separate from code generation `ai` config).
+
+```javascript
+// devloop.config.js
+module.exports = {
+  // AI for code generation (separate from pattern detection)
+  ai: {
+    provider: 'anthropic',
+    model: 'claude-sonnet-4-20250514',
+  },
+
+  // AI for pattern detection and abstraction recommendations
+  aiPatterns: {
+    enabled: true,
+    provider: 'auto',  // 'anthropic' | 'openai' | 'ollama' | 'auto'
+    providers: {
+      anthropic: { apiKey: process.env.ANTHROPIC_API_KEY },
+      openai: { apiKey: process.env.OPENAI_API_KEY },
+      ollama: { baseUrl: 'http://localhost:11434' },
+    },
+    analysis: {
+      mode: 'hybrid',           // 'embeddings-only' | 'llm-only' | 'hybrid'
+      similarityThreshold: 0.85,
+      minOccurrences: 3,
+    },
+    costs: {
+      maxTokensPerScan: 100000,
+      maxRequestsPerScan: 50,
+      enableCaching: true,
+      batchSize: 10,
+    },
+    learning: {
+      enabled: true,
+      feedbackFile: '.devloop/ai-feedback.json',
+    },
+  },
+};
+```
+
+### Usage
+
+```bash
+# Run AI-enhanced pattern detection
+dev-loop recommend --ai
+
+# Use embeddings only (cheaper, faster)
+dev-loop recommend --ai --ai-mode embeddings-only
+
+# Full LLM analysis (more accurate, higher cost)
+dev-loop recommend --ai --ai-mode llm-only
+
+# Incremental scan (only changed files)
+dev-loop recommend --ai --incremental
+
+# Provide feedback on a recommendation
+dev-loop feedback rec-123 --accept
+dev-loop feedback rec-456 --reject --notes "Pattern is intentional"
+```
+
+### Abstraction Types
+
+| Framework | Recommended Abstractions |
+|-----------|-------------------------|
+| **Drupal** | Plugins, config schemas, entity types, fields, services |
+| **Django** | Base serializers, viewsets, abstract models, services |
+| **React** | Custom hooks, HOCs, context providers, utility functions |
+| **Browser Extension** | Message handlers, content script utilities, background services |
+
+### Cost Controls
+
+- **Token limits**: Set maximum tokens per scan
+- **Caching**: Embeddings cached in `.devloop/embeddings.json`
+- **Batching**: Efficient API calls with configurable batch sizes
+- **Incremental scans**: Only analyze changed files
+
+## Code Quality Scanning
+
+Dev-loop includes framework-aware code quality scanning for static analysis, security, and tech debt detection.
+
+### Configuration
+
+```javascript
+// devloop.config.js
+module.exports = {
+  scan: {
+    enabled: true,
+    schedule: 'manual',           // 'manual' | 'pre-commit' | 'nightly'
+    tools: {
+      staticAnalysis: true,
+      duplicateDetection: true,
+      security: true,
+      complexity: false,
+      techDebt: true,
+    },
+    thresholds: {
+      maxDuplicateLines: 10,
+      maxComplexity: 15,
+      failOnSecurityVulnerability: true,
+    },
+    output: {
+      path: '.devloop/scan-results',
+      formats: ['json', 'markdown'],  // Also supports 'sarif'
+    },
+    taskCreation: {
+      enabled: false,             // Auto-create tasks from findings
+      minSeverity: 'warning',     // 'info' | 'warning' | 'error'
+      groupBy: 'rule',            // 'file' | 'rule' | 'severity'
+    },
+  },
+};
+```
+
+### Usage
+
+```bash
+# Run all enabled scans
+dev-loop scan
+
+# Run specific scan type
+dev-loop scan --type static-analysis
+dev-loop scan --type security
+dev-loop scan --type tech-debt
+
+# Output to specific format
+dev-loop scan --format sarif
+```
+
+### Framework-Specific Tools
+
+Each framework plugin provides its own code quality tools:
+
+| Framework | Static Analysis | Security | Duplicate Detection |
+|-----------|-----------------|----------|---------------------|
+| **Drupal** | PHPStan, PHPCS | Security Advisories | PHPCPD |
+| **Django** | mypy, pylint | Bandit, Safety | - |
+| **React** | ESLint, TypeScript | npm audit | jscpd |
+| **Browser Extension** | ESLint, TypeScript | CSP validation | jscpd |
+
 ## Contribution Mode
 
-Activated by human operator: "Enter contribution mode for dev-loop"
+Contribution mode enables two-agent architecture for contributing to dev-loop itself. The outer agent enhances dev-loop while the inner agent implements project code.
+
+**Quick Overview:**
+- **Outer Agent (You)**: Enhances dev-loop, manages tasks, monitors progress
+- **Inner Agent (Dev-Loop)**: Implements project code according to PRD requirements
+- **Execution**: Watch mode daemon executes tasks from Task Master
+- **Monitoring**: Event streaming and proactive monitoring tools available
 
 **Outer agent responsibilities:**
 1. Run `devloop_contribution_start`
 2. Create/update tasks via Task Master
-3. Monitor via `devloop_contribution_status`
+3. Monitor via `devloop_contribution_status` or event streaming
 4. If inner agent stuck: enhance `node_modules/dev-loop/` code
 5. Build, commit, push dev-loop changes
 6. Validate improvements via metrics
@@ -391,6 +622,8 @@ Activated by human operator: "Enter contribution mode for dev-loop"
 - `devloop.config.js` — Hooks, log sources
 - `.taskmaster/templates/` — PRD templates
 - Project rules (CLAUDE.md, .cursorrules) — Injected into prompts
+
+See [`../contributing/README.md`](../contributing/README.md) and [`../contributing/CONTRIBUTION_MODE.md`](../contributing/CONTRIBUTION_MODE.md) for complete contribution mode guide.
 
 ## File Structure
 
@@ -442,13 +675,11 @@ Dev-loop collects comprehensive metrics at multiple hierarchical levels (PRD Set
 - **Test Results**: Track test pass/fail rates and identify flaky tests
 - **Error Analysis**: Categorize errors and identify common patterns
 - **Reports**: Generate comprehensive reports in JSON, Markdown, or HTML formats
-- **Archive**: Archive state files for long-term storage
 
 ### Documentation
 
 - **[METRICS.md](./METRICS.md)** - Comprehensive metrics guide with CLI commands
 - **[REPORTS.md](./REPORTS.md)** - Report generation guide
-- **[ARCHIVE.md](./ARCHIVE.md)** - Archive command guide
 
 ## See Also
 
