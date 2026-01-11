@@ -15,6 +15,7 @@ import { CursorChatOpener } from './cursor-chat-opener';
 import { extractCodeChanges, parseCodeChangesFromText, JsonParsingContext, extractCodeChangesWithAiFallback, shouldUseAiFallback } from './json-parser';
 import { ObservationTracker } from "../../core/tracking/observation-tracker";
 import * as path from 'path';
+import * as fs from 'fs-extra';
 
 /**
  * Custom error class for JSON parsing failures that should halt execution
@@ -134,10 +135,30 @@ export class CursorProvider implements AIProvider {
               return codeChanges;
             }
             
-            // For code generation tasks, empty files array should trigger retry
+            // For code generation tasks, empty files array might mean "already exists"
             if (!isAnalysisTask && codeChanges.files.length === 0) {
-              logger.warn(`[CursorProvider] Code generation task returned empty files array, will retry`);
-              // Fall through to retry logic below
+              // Check if summary indicates files already exist
+              const summary = (codeChanges.summary || '').toLowerCase();
+              const indicatesAlreadyExists = summary.includes('already exists') || 
+                                            summary.includes('already complete') ||
+                                            summary.includes('meets all requirements') ||
+                                            summary.includes('no changes needed') ||
+                                            summary.includes('no changes required');
+              
+              if (indicatesAlreadyExists) {
+                // Verify target files actually exist before accepting
+                const targetFiles = await this.verifyTargetFilesExist(context, codeChanges.summary);
+                if (targetFiles.allExist) {
+                  logger.info(`[CursorProvider] Code generation task: files already exist (verified). Summary: ${codeChanges.summary?.substring(0, 100) || 'no summary'}`);
+                  return codeChanges;
+                } else {
+                  logger.warn(`[CursorProvider] AI said files exist but verification failed. Missing: ${targetFiles.missing.join(', ')}. Will retry.`);
+                  // Fall through to retry logic
+                }
+              } else {
+                logger.warn(`[CursorProvider] Code generation task returned empty files array, will retry`);
+                // Fall through to retry logic below
+              }
             } else {
               // Task has files - success
               logger.info(`[CursorProvider] Successfully received code changes from background agent: ${codeChanges.files.length} files`);
@@ -656,6 +677,74 @@ Provide a JSON response with:
       responseSample,
       debugInfo
     );
+  }
+
+  /**
+   * Verify target files exist when AI says "already exists"
+   * Returns object with allExist flag and missing files list
+   */
+  private async verifyTargetFilesExist(
+    context: TaskContext,
+    summary?: string
+  ): Promise<{ allExist: boolean; missing: string[] }> {
+    const taskDetails = (context.task as any).details || '';
+    const taskText = `${context.task.title} ${context.task.description} ${taskDetails}`;
+    
+    // Extract file paths from task text (similar to workflow engine logic)
+    const filePathPattern = /(?:Target Files?|file exists at|File exists at|path|Path)[:\s]*`?([^\s`\n]+\.(?:php|yml|yaml|ts|js|json|md|twig|css|scss))`?/gi;
+    const matches = [...taskText.matchAll(filePathPattern)];
+    const targetFiles: string[] = [];
+    
+    for (const match of matches) {
+      if (match[1]) {
+        let filePath = match[1].replace(/`/g, '').trim();
+        // Normalize paths
+        if (!filePath.startsWith('docroot/') && !filePath.startsWith('config/') && !filePath.startsWith('./')) {
+          // Assume it's relative to docroot/modules/share/ if it starts with src/ or similar
+          if (filePath.startsWith('src/') || filePath.startsWith('config/')) {
+            // Try to infer module name from context
+            const moduleMatch = taskText.match(/bd_[\w]+/);
+            if (moduleMatch) {
+              filePath = `docroot/modules/share/${moduleMatch[0]}/${filePath}`;
+            }
+          }
+        }
+        if (filePath && !targetFiles.includes(filePath)) {
+          targetFiles.push(filePath);
+        }
+      }
+    }
+    
+    // Also try extracting from acceptance criteria
+    const acceptancePattern = /(?:File exists at|file exists at|exists at)[:\s]*`([^`]+)`/gi;
+    const acceptanceMatches = [...taskText.matchAll(acceptancePattern)];
+    for (const match of acceptanceMatches) {
+      if (match[1]) {
+        const filePath = match[1].trim();
+        if (filePath && !targetFiles.includes(filePath)) {
+          targetFiles.push(filePath);
+        }
+      }
+    }
+    
+    if (targetFiles.length === 0) {
+      // No target files found - can't verify, assume retry needed
+      return { allExist: false, missing: ['unknown'] };
+    }
+    
+    // Check if files exist
+    const missing: string[] = [];
+    for (const filePath of targetFiles) {
+      const fullPath = path.resolve(process.cwd(), filePath);
+      if (!await fs.pathExists(fullPath)) {
+        missing.push(filePath);
+      }
+    }
+    
+    return {
+      allExist: missing.length === 0,
+      missing,
+    };
   }
 
   /**
