@@ -373,6 +373,18 @@ export class TaskMasterBridge {
       return null;
     }
 
+    // Check if a fix task already exists for this original task
+    const existingTasks = await this.loadTasks();
+    const existingFixTask = existingTasks.find(t => 
+      t.id.startsWith(`fix-${originalTaskId}-`) && 
+      (t.status === 'pending' || t.status === 'in-progress')
+    );
+    
+    if (existingFixTask) {
+      console.log(`[TaskBridge] Fix task already exists for ${originalTaskId}: ${existingFixTask.id}, skipping duplicate creation`);
+      return existingFixTask;
+    }
+
     console.log(`[TaskBridge] Creating fix task for ${originalTaskId} (attempt ${retryCount}/${this.maxRetries})`);
 
     // Extract line numbers from error messages for better context
