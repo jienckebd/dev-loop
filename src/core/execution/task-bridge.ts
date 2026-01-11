@@ -744,20 +744,56 @@ export class TaskMasterBridge {
     };
 
     // Atomic write: write to temp file first, then rename (unique per process/time to avoid conflicts)
-    const tempPath = `${this.tasksPath}.${process.pid}.${Date.now()}.tmp`;
-    try {
-      await fs.writeJson(tempPath, output, { spaces: 2 });
-      // Verify the JSON is valid before replacing original
-      const verification = await fs.readJson(tempPath);
-      if (!verification?.master?.tasks) {
-        throw new Error('Written JSON is invalid - missing master.tasks');
+    // Use crypto.randomUUID for better uniqueness in concurrent scenarios
+    const crypto = require('crypto');
+    let retries = 3;
+    let lastError: Error | null = null;
+    
+    while (retries > 0) {
+      const tempPath = `${this.tasksPath}.${process.pid}.${Date.now()}.${crypto.randomUUID().substring(0, 8)}.tmp`;
+      try {
+        // Validate JSON before writing
+        const jsonString = JSON.stringify(output, null, 2);
+        JSON.parse(jsonString); // Validate it's valid JSON
+        
+        await fs.writeFile(tempPath, jsonString, 'utf-8');
+        
+        // Retry rename with exponential backoff if file was deleted by another process
+        let renameRetries = 3;
+        while (renameRetries > 0) {
+          try {
+            await fs.rename(tempPath, this.tasksPath);
+            return; // Success
+          } catch (renameError: any) {
+            if (renameError.code === 'ENOENT' && renameRetries > 1) {
+              // File was deleted/renamed by another process, wait and retry
+              await new Promise(resolve => setTimeout(resolve, 50 * (4 - renameRetries)));
+              renameRetries--;
+              continue;
+            }
+            throw renameError;
+          }
+        }
+      } catch (error: any) {
+        lastError = error;
+        retries--;
+        // Clean up temp file if it exists
+        try {
+          if (await fs.pathExists(tempPath)) {
+            await fs.remove(tempPath);
+          }
+        } catch {
+          // Ignore cleanup errors
+        }
+        if (retries > 0) {
+          // Wait before retry (exponential backoff)
+          await new Promise(resolve => setTimeout(resolve, 100 * (4 - retries)));
+        }
       }
-      await fs.rename(tempPath, this.tasksPath);
-    } catch (writeError) {
-      // Clean up temp file if it exists
-      try { await fs.remove(tempPath); } catch {}
-      throw new Error(`Failed to save tasks atomically: ${writeError instanceof Error ? writeError.message : String(writeError)}`);
     }
+    
+    // All retries failed
+    throw new Error(`Failed to save tasks atomically after 3 retries: ${lastError instanceof Error ? lastError.message : String(lastError)}`);
   }
 
   async initializeTaskMaster(): Promise<void> {
