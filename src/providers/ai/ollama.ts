@@ -1,5 +1,6 @@
 import { AIProvider, AIProviderConfig } from './interface';
 import { CodeChanges, TaskContext, LogAnalysis } from '../../types';
+import { extractCodeChanges, JsonParsingContext } from './json-parser';
 
 export class OllamaProvider implements AIProvider {
   public name = 'ollama';
@@ -52,14 +53,16 @@ ${prompt}`;
       const data = await response.json() as { response?: string };
       const text = data.response || '';
 
-      // Try to extract JSON from the response
-      const jsonMatch = text.match(/\{[\s\S]*\}/);
-      if (jsonMatch) {
-        try {
-          return JSON.parse(jsonMatch[0]) as CodeChanges;
-        } catch {
-          // Fallback
-        }
+      // Use shared JSON parser for consistent extraction
+      const parsingContext: JsonParsingContext = {
+        providerName: 'ollama',
+        taskId: context.task.id,
+        prdId: context.prdId,
+        phaseId: context.phaseId ?? undefined,
+      };
+      const codeChanges = extractCodeChanges(text, undefined, parsingContext);
+      if (codeChanges) {
+        return codeChanges;
       }
 
       // Fallback: create a single file
@@ -76,6 +79,36 @@ ${prompt}`;
     } catch (error) {
       throw new Error(`Ollama API error: ${error instanceof Error ? error.message : String(error)}`);
     }
+  }
+
+  /**
+   * Generate text without expecting JSON CodeChanges format
+   * Used for PRD building (schemas, test plans, etc.) where plain text output is expected
+   */
+  async generateText(prompt: string, options?: { maxTokens?: number; temperature?: number; systemPrompt?: string }): Promise<string> {
+    const maxTokens = options?.maxTokens || this.config.maxTokens || 4000;
+    const temperature = options?.temperature ?? 0.7;
+    const systemPrompt = options?.systemPrompt || '';
+
+    const fullPrompt = systemPrompt ? `${systemPrompt}\n\n${prompt}` : prompt;
+
+    const response = await fetch(`${this.baseUrl}/api/generate`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        model: this.config.model,
+        prompt: fullPrompt,
+        stream: false,
+        options: { temperature, num_predict: maxTokens },
+      }),
+    });
+
+    if (!response.ok) {
+      throw new Error(`Ollama API error: ${response.statusText}`);
+    }
+
+    const data = await response.json() as { response?: string };
+    return data.response || '';
   }
 
   async analyzeError(error: string, context: TaskContext): Promise<LogAnalysis> {

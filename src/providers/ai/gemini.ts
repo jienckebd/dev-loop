@@ -1,6 +1,7 @@
 import { GoogleGenerativeAI } from '@google/generative-ai';
 import { AIProvider, AIProviderConfig } from './interface';
 import { CodeChanges, TaskContext, LogAnalysis } from '../../types';
+import { extractCodeChanges, JsonParsingContext } from './json-parser';
 
 export class GeminiProvider implements AIProvider {
   public name = 'gemini';
@@ -41,14 +42,16 @@ ${prompt}`;
       const response = result.response;
       const text = response.text();
 
-      // Try to extract JSON from the response
-      const jsonMatch = text.match(/\{[\s\S]*\}/);
-      if (jsonMatch) {
-        try {
-          return JSON.parse(jsonMatch[0]) as CodeChanges;
-        } catch {
-          // Fallback
-        }
+      // Use shared JSON parser for consistent extraction
+      const parsingContext: JsonParsingContext = {
+        providerName: 'gemini',
+        taskId: context.task.id,
+        prdId: context.prdId,
+        phaseId: context.phaseId ?? undefined,
+      };
+      const codeChanges = extractCodeChanges(text, undefined, parsingContext);
+      if (codeChanges) {
+        return codeChanges;
       }
 
       // Fallback: create a single file
@@ -65,6 +68,24 @@ ${prompt}`;
     } catch (error) {
       throw new Error(`Gemini API error: ${error instanceof Error ? error.message : String(error)}`);
     }
+  }
+
+  /**
+   * Generate text without expecting JSON CodeChanges format
+   * Used for PRD building (schemas, test plans, etc.) where plain text output is expected
+   */
+  async generateText(prompt: string, options?: { maxTokens?: number; temperature?: number; systemPrompt?: string }): Promise<string> {
+    const maxTokens = options?.maxTokens || this.config.maxTokens || 4000;
+    const temperature = options?.temperature ?? 0.7;
+    const systemPrompt = options?.systemPrompt || '';
+
+    const fullPrompt = systemPrompt ? `${systemPrompt}\n\n${prompt}` : prompt;
+    const result = await this.model.generateContent({
+      contents: [{ role: 'user', parts: [{ text: fullPrompt }] }],
+      generationConfig: { maxOutputTokens: maxTokens, temperature },
+    });
+
+    return result.response.text();
   }
 
   async analyzeError(error: string, context: TaskContext): Promise<LogAnalysis> {

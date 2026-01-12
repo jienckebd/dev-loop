@@ -7,7 +7,7 @@
 
 import * as fs from 'fs';
 import * as path from 'path';
-import { spawn, execSync, exec } from 'child_process';
+import { spawn, execSync, exec, ChildProcess } from 'child_process';
 import { promisify } from 'util';
 import { logger } from "../../core/utils/logger";
 import { ChatRequest, Config, CodeChanges } from '../../types';
@@ -19,6 +19,25 @@ import { getParallelMetricsTracker } from "../../core/metrics/parallel";
 import { AgentIPCServer, IPCMessage } from '../../core/utils/agent-ipc';
 
 const execAsync = promisify(exec);
+
+// Module-level Set to track all active child processes
+const activeChildProcesses = new Set<ChildProcess>();
+
+// Export cleanup function to kill all tracked child processes
+export function killAllChildProcesses(signal: NodeJS.Signals = 'SIGTERM'): void {
+  for (const child of activeChildProcesses) {
+    try {
+      if (!child.killed && child.pid) {
+        // Use SIGKILL for immediate termination (no cleanup, but ensures exit)
+        // SIGTERM allows graceful shutdown but child might not exit in time
+        child.kill('SIGKILL');
+      }
+    } catch (error) {
+      // Ignore errors when killing (process may already be dead)
+    }
+  }
+  activeChildProcesses.clear();
+}
 
 export type OpenStrategy = 'auto' | 'cli' | 'agent' | 'file' | 'ide' | 'manual';
 export type PromptFileFormat = 'markdown' | 'plain';
@@ -205,6 +224,8 @@ export class CursorChatOpener {
         detached: true,
         stdio: 'ignore',
       });
+      // Register child process for cleanup
+      activeChildProcesses.add(child);
       child.unref();
 
       // Try keyboard automation if enabled (macOS only)
@@ -621,6 +642,8 @@ export class CursorChatOpener {
         cwd: workspacePath,
       });
 
+      // Register child process for cleanup
+      activeChildProcesses.add(child);
       child.unref();
 
       logger.info(`[CursorChatOpener] Started Cursor agent for chat ${createResult.chatId}`);
@@ -761,6 +784,9 @@ export class CursorChatOpener {
             env: childEnv,
           });
 
+          // Register child process for cleanup
+          activeChildProcesses.add(child);
+
           let stdout = '';
           let stderr = '';
 
@@ -795,6 +821,8 @@ export class CursorChatOpener {
           }, timeoutMs);
 
           child.on('close', async (code) => {
+            // Unregister child process
+            activeChildProcesses.delete(child);
             clearTimeout(timeoutHandle);
           if (code !== 0 && stderr) {
             logger.warn(`[CursorChatOpener] Background agent exited with code ${code}: ${stderr.substring(0, 200)}`);
@@ -1119,6 +1147,8 @@ export class CursorChatOpener {
         stdio: 'ignore',
       });
 
+      // Register child process for cleanup
+      activeChildProcesses.add(child);
       child.unref();
 
       logger.info(`[CursorChatOpener] Opened instruction file in Cursor: ${path.basename(filePath)}`);
@@ -1280,6 +1310,8 @@ export class CursorChatOpener {
         stdio: 'ignore',
       });
 
+      // Register child process for cleanup
+      activeChildProcesses.add(child);
       child.unref();
 
       logger.info(`[CursorChatOpener] Opened file: ${filePath}`);
@@ -1326,6 +1358,8 @@ export class CursorChatOpener {
         stdio: 'ignore',
       });
 
+      // Register child process for cleanup
+      activeChildProcesses.add(child);
       child.unref();
 
       logger.info(`[CursorChatOpener] Started agent with prompt: ${prompt.substring(0, 50)}...`);
@@ -1350,6 +1384,8 @@ export class CursorChatOpener {
         stdio: 'ignore',
       });
 
+      // Register child process for cleanup
+      activeChildProcesses.add(child);
       child.unref();
 
       logger.info('[CursorChatOpener] Resumed latest chat session');

@@ -93,7 +93,8 @@ export class RefinementQuestionGenerator {
     prd: ParsedPlanningDoc,
     codebaseAnalysis: CodebaseAnalysisResult,
     insights: CodebaseInsight[] = [],
-    existingEnhancements?: any
+    existingEnhancements?: any,
+    validationGaps?: ExecutabilityValidationResult
   ): Promise<RefinementQuestion[]> {
     logger.debug(`[RefinementQuestionGenerator] Generating pre-phase questions for ${phase}`);
 

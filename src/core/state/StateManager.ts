@@ -298,7 +298,7 @@ export class UnifiedStateManager {
   async updateMetrics(producer: (draft: any) => void): Promise<void> {
     await this.initialize();
     const current = await this.getMetrics();
-    const updated = produce(current, (draft) => {
+    const updated = produce(current, (draft: any) => {
       producer(draft);
       draft.updatedAt = new Date().toISOString();
     });

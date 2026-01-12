@@ -6,6 +6,8 @@
  */
 
 import * as path from 'path';
+import * as fs from 'fs-extra';
+import * as crypto from 'crypto';
 import fg from 'fast-glob';
 import { SemanticFileDiscovery, DiscoveryQuery } from './code/semantic-file-discovery';
 import { CodeContextProvider, FileContext } from './code/context-provider';
@@ -40,6 +42,15 @@ export interface CodebaseAnalysisResult {
     structure: string;
     examples: string[];
   }>;
+}
+
+/**
+ * Cached Analysis Interface
+ */
+interface CachedAnalysis {
+  hash: string;
+  result: CodebaseAnalysisResult;
+  timestamp: number;
 }
 
 /**
@@ -115,7 +126,7 @@ export class CodebaseAnalyzer {
   }
 
   /**
-   * Analyze codebase for PRD building context
+   * Analyze codebase for PRD building context (with caching)
    */
   async analyze(
     mode: BuildMode,
@@ -125,6 +136,14 @@ export class CodebaseAnalyzer {
     if (this.config.skipAnalysis) {
       logger.debug('[CodebaseAnalyzer] Skipping analysis (skipAnalysis=true)');
       return this.getEmptyResult();
+    }
+
+    // Check cache first
+    const cacheKey = `${mode}-${query || 'default'}-${targetModule || 'all'}`;
+    const cached = await this.loadCache(cacheKey);
+    if (cached && await this.isValidCache(cached)) {
+      logger.info('[CodebaseAnalyzer] Using cached analysis');
+      return cached.result;
     }
 
     logger.debug(`[CodebaseAnalyzer] Starting codebase analysis (mode: ${mode})`);
@@ -219,7 +238,7 @@ export class CodebaseAnalyzer {
     const schemaPatterns = this.extractSchemaPatterns(fileContexts, frameworkPlugin);
     const testPatterns = this.extractTestPatterns(fileContexts, frameworkPlugin);
 
-    return {
+    const result: CodebaseAnalysisResult = {
       projectRoot: this.config.projectRoot,
       framework,
       frameworkPlugin,
@@ -231,6 +250,151 @@ export class CodebaseAnalyzer {
       schemaPatterns,
       testPatterns,
     };
+
+    // Save to cache
+    await this.saveCache(cacheKey, result);
+
+    return result;
+  }
+
+  /**
+   * Load cached analysis
+   */
+  private async loadCache(cacheKey: string): Promise<CachedAnalysis | null> {
+    try {
+      const cacheFile = path.join(this.config.projectRoot, '.devloop', 'cache', 'analysis.json');
+      if (await fs.pathExists(cacheFile)) {
+        const cacheData = await fs.readJson(cacheFile);
+        const cached = cacheData[cacheKey];
+        if (cached) {
+          // Reconstruct Map from serialized array/object
+          cached.result = this.deserializeAnalysisResult(cached.result);
+          return cached;
+        }
+      }
+    } catch (error) {
+      logger.debug(`[CodebaseAnalyzer] Failed to load cache: ${error}`);
+    }
+    return null;
+  }
+
+  /**
+   * Deserialize analysis result, reconstructing Map objects from JSON
+   */
+  private deserializeAnalysisResult(result: any): CodebaseAnalysisResult {
+    // Reconstruct fileContexts Map from serialized data
+    let fileContexts: Map<string, FileContext>;
+    
+    if (result.fileContexts instanceof Map) {
+      // Already a Map (shouldn't happen from JSON, but handle it)
+      fileContexts = result.fileContexts;
+    } else if (Array.isArray(result.fileContexts)) {
+      // Serialized as array of [key, value] pairs
+      fileContexts = new Map(result.fileContexts);
+    } else if (result.fileContexts && typeof result.fileContexts === 'object') {
+      // Serialized as plain object
+      fileContexts = new Map(Object.entries(result.fileContexts));
+    } else {
+      // Fallback to empty Map
+      fileContexts = new Map();
+    }
+
+    return {
+      ...result,
+      fileContexts,
+    };
+  }
+
+  /**
+   * Serialize analysis result for JSON storage, converting Map to array
+   */
+  private serializeAnalysisResult(result: CodebaseAnalysisResult): any {
+    return {
+      ...result,
+      // Convert Map to array of [key, value] pairs for JSON serialization
+      fileContexts: Array.from(result.fileContexts.entries()),
+    };
+  }
+
+  /**
+   * Save analysis to cache
+   */
+  private async saveCache(cacheKey: string, result: CodebaseAnalysisResult): Promise<void> {
+    try {
+      const cacheFile = path.join(this.config.projectRoot, '.devloop', 'cache', 'analysis.json');
+      await fs.ensureDir(path.dirname(cacheFile));
+      
+      const currentHash = await this.computeSourceHash();
+      const cached: CachedAnalysis = {
+        hash: currentHash,
+        result: this.serializeAnalysisResult(result) as CodebaseAnalysisResult,
+        timestamp: Date.now(),
+      };
+
+      // Load existing cache and update
+      let cacheData: Record<string, CachedAnalysis> = {};
+      if (await fs.pathExists(cacheFile)) {
+        try {
+          cacheData = await fs.readJson(cacheFile);
+        } catch {
+          // If cache file is corrupted, start fresh
+          cacheData = {};
+        }
+      }
+
+      cacheData[cacheKey] = cached;
+      await fs.writeJson(cacheFile, cacheData, { spaces: 2 });
+    } catch (error) {
+      logger.debug(`[CodebaseAnalyzer] Failed to save cache: ${error}`);
+      // Don't throw - caching is optional
+    }
+  }
+
+  /**
+   * Check if cached analysis is still valid
+   */
+  private async isValidCache(cached: CachedAnalysis): Promise<boolean> {
+    // Cache valid for 1 hour or until source files change
+    const age = Date.now() - cached.timestamp;
+    if (age > 3600000) {
+      return false; // Cache expired (1 hour)
+    }
+
+    const currentHash = await this.computeSourceHash();
+    return currentHash === cached.hash;
+  }
+
+  /**
+   * Compute hash of relevant source files for cache invalidation
+   */
+  private async computeSourceHash(): Promise<string> {
+    try {
+      // Hash key source files (config, package.json, etc.)
+      const hashFiles = [
+        path.join(this.config.projectRoot, 'devloop.config.js'),
+        path.join(this.config.projectRoot, 'package.json'),
+        path.join(this.config.projectRoot, 'tsconfig.json'),
+      ];
+
+      const hasher = crypto.createHash('sha256');
+      
+      for (const file of hashFiles) {
+        if (await fs.pathExists(file)) {
+          const content = await fs.readFile(file, 'utf-8');
+          hasher.update(content);
+        }
+      }
+
+      // Also include framework type from config
+      const frameworkType = this.config.projectConfig?.framework?.type || '';
+      hasher.update(frameworkType);
+
+      return hasher.digest('hex');
+    } catch (error) {
+      logger.debug(`[CodebaseAnalyzer] Failed to compute source hash: ${error}`);
+      // Return a default hash if computation fails
+      return crypto.createHash('sha256').update('default').digest('hex');
+    }
   }
 
   /**

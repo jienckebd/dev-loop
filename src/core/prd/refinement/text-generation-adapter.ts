@@ -46,7 +46,14 @@ export class TextGenerationAdapter {
     const systemPrompt = options.systemPrompt || 'You are a helpful assistant that generates structured documents.';
 
     try {
-      // Use underlying SDK based on provider type
+      // Primary: Use provider's native generateText method if available
+      if ('generateText' in this.provider && typeof this.provider.generateText === 'function') {
+        logger.debug(`[TextGenerationAdapter] Using provider.generateText() for ${this.providerName}`);
+        return await this.provider.generateText(prompt, { maxTokens, temperature, systemPrompt });
+      }
+
+      // Fallback: Use underlying SDK based on provider type
+      logger.debug(`[TextGenerationAdapter] Falling back to direct SDK for ${this.providerName}`);
       switch (this.providerName) {
         case 'anthropic':
           return await this.generateWithAnthropic(prompt, systemPrompt, maxTokens, temperature);
@@ -57,7 +64,8 @@ export class TextGenerationAdapter {
         case 'ollama':
           return await this.generateWithOllama(prompt, systemPrompt, maxTokens, temperature);
         default:
-          // Fallback: use generateCode and extract text from response
+          // Last resort fallback: use generateCode and extract text from response
+          logger.warn(`[TextGenerationAdapter] Unknown provider ${this.providerName}, using generateCode fallback`);
           return await this.generateWithCodeGeneration(prompt, systemPrompt);
       }
     } catch (error) {

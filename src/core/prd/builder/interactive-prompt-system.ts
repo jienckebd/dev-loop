@@ -122,12 +122,18 @@ export class InteractivePromptSystem {
       });
 
       if (typeof result === 'symbol') {
-        // User cancelled
-        throw new Error('Question cancelled by user');
+        // User cancelled (Ctrl+C) - exit immediately
+        process.stderr.write('\n\n⚠ Interrupted by user\n\n');
+        process.exit(130);
       }
 
       return result as string;
     } catch (error) {
+      // Check if this is a cancellation
+      if ((global as any).__devloop_exiting?.value) {
+        process.stderr.write('\n\n⚠ Interrupted by user\n\n');
+        process.exit(130);
+      }
       logger.error(`[InteractivePromptSystem] Failed to ask question with clack: ${error}`);
       throw error;
     }
@@ -186,12 +192,18 @@ export class InteractivePromptSystem {
       });
 
       if (typeof result === 'symbol') {
-        // User cancelled
-        throw new Error('Question cancelled by user');
+        // User cancelled (Ctrl+C) - exit immediately
+        process.stderr.write('\n\n⚠ Interrupted by user\n\n');
+        process.exit(130);
       }
 
       return result as string;
     } catch (error) {
+      // Check if this is a cancellation
+      if ((global as any).__devloop_exiting?.value) {
+        process.stderr.write('\n\n⚠ Interrupted by user\n\n');
+        process.exit(130);
+      }
       logger.error(`[InteractivePromptSystem] Failed to ask question with clack: ${error}`);
       throw error;
     }
@@ -256,12 +268,18 @@ export class InteractivePromptSystem {
       });
 
       if (typeof result === 'symbol') {
-        // User cancelled
-        throw new Error('Question cancelled by user');
+        // User cancelled (Ctrl+C) - exit immediately
+        process.stderr.write('\n\n⚠ Interrupted by user\n\n');
+        process.exit(130);
       }
 
       return result as string[];
     } catch (error) {
+      // Check if this is a cancellation
+      if ((global as any).__devloop_exiting?.value) {
+        process.stderr.write('\n\n⚠ Interrupted by user\n\n');
+        process.exit(130);
+      }
       logger.error(`[InteractivePromptSystem] Failed to ask question with clack: ${error}`);
       throw error;
     }
@@ -313,12 +331,18 @@ export class InteractivePromptSystem {
       });
 
       if (typeof result === 'symbol') {
-        // User cancelled
-        throw new Error('Question cancelled by user');
+        // User cancelled (Ctrl+C) - exit immediately
+        process.stderr.write('\n\n⚠ Interrupted by user\n\n');
+        process.exit(130);
       }
 
       return result as boolean;
     } catch (error) {
+      // Check if this is a cancellation
+      if ((global as any).__devloop_exiting?.value) {
+        process.stderr.write('\n\n⚠ Interrupted by user\n\n');
+        process.exit(130);
+      }
       logger.error(`[InteractivePromptSystem] Failed to ask question with clack: ${error}`);
       throw error;
     }
@@ -405,11 +429,18 @@ export class InteractivePromptSystem {
       });
 
       if (typeof result === 'symbol') {
-        return 'reject'; // User cancelled
+        // User cancelled (Ctrl+C) - exit immediately
+        process.stderr.write('\n\n⚠ Interrupted by user\n\n');
+        process.exit(130);
       }
 
       return result as 'approve' | 'reject' | 'edit';
     } catch (error) {
+      // Check if this is a cancellation
+      if ((global as any).__devloop_exiting?.value) {
+        process.stderr.write('\n\n⚠ Interrupted by user\n\n');
+        process.exit(130);
+      }
       logger.error(`[InteractivePromptSystem] Failed to present refinement: ${error}`);
       return 'reject';
     }
@@ -487,7 +518,9 @@ export class InteractivePromptSystem {
       });
 
       if (typeof selectedGaps === 'symbol') {
-        return { selectedGaps: [], action: 'skip' };
+        // User cancelled (Ctrl+C) - exit immediately
+        process.stderr.write('\n\n⚠ Interrupted by user\n\n');
+        process.exit(130);
       }
 
       const action = await select({
@@ -499,11 +532,22 @@ export class InteractivePromptSystem {
         initialValue: 'enhance',
       });
 
+      if (typeof action === 'symbol') {
+        // User cancelled (Ctrl+C) - exit immediately
+        process.stderr.write('\n\n⚠ Interrupted by user\n\n');
+        process.exit(130);
+      }
+
       return {
         selectedGaps: selectedGaps as string[],
-        action: (typeof action === 'symbol' ? 'skip' : action) as 'enhance' | 'skip',
+        action: action as 'enhance' | 'skip',
       };
     } catch (error) {
+      // Check if this is a cancellation
+      if ((global as any).__devloop_exiting?.value) {
+        process.stderr.write('\n\n⚠ Interrupted by user\n\n');
+        process.exit(130);
+      }
       logger.error(`[InteractivePromptSystem] Failed to present gaps: ${error}`);
       return { selectedGaps: [], action: 'skip' };
     }
@@ -661,11 +705,18 @@ export class InteractivePromptSystem {
       });
 
       if (typeof result === 'symbol') {
-        throw new Error('Mode selection cancelled by user');
+        // User cancelled (Ctrl+C) - exit immediately
+        process.stderr.write('\n\n⚠ Interrupted by user\n\n');
+        process.exit(130);
       }
 
       return result as 'convert' | 'enhance' | 'create';
     } catch (error) {
+      // Check if this is a cancellation
+      if ((global as any).__devloop_exiting?.value) {
+        process.stderr.write('\n\n⚠ Interrupted by user\n\n');
+        process.exit(130);
+      }
       logger.error(`[InteractivePromptSystem] Failed to select mode: ${error}`);
       throw error;
     }
@@ -740,11 +791,18 @@ export class InteractivePromptSystem {
       });
 
       if (typeof result === 'symbol') {
-        throw new Error('File selection cancelled by user');
+        // User cancelled (Ctrl+C) - exit immediately
+        process.stderr.write('\n\n⚠ Interrupted by user\n\n');
+        process.exit(130);
       }
 
       return result as string;
     } catch (error) {
+      // Check if this is a cancellation
+      if ((global as any).__devloop_exiting?.value) {
+        process.stderr.write('\n\n⚠ Interrupted by user\n\n');
+        process.exit(130);
+      }
       logger.error(`[InteractivePromptSystem] Failed to select file: ${error}`);
       throw error;
     }
@@ -820,11 +878,18 @@ export class InteractivePromptSystem {
       });
 
       if (typeof result === 'symbol') {
-        throw new Error('PRD set selection cancelled by user');
+        // User cancelled (Ctrl+C) - exit immediately
+        process.stderr.write('\n\n⚠ Interrupted by user\n\n');
+        process.exit(130);
       }
 
       return result as string;
     } catch (error) {
+      // Check if this is a cancellation
+      if ((global as any).__devloop_exiting?.value) {
+        process.stderr.write('\n\n⚠ Interrupted by user\n\n');
+        process.exit(130);
+      }
       logger.error(`[InteractivePromptSystem] Failed to select PRD set: ${error}`);
       throw error;
     }
@@ -937,6 +1002,12 @@ export class InteractivePromptSystem {
       log.info('');
 
       for (const question of questions) {
+        // Check if process is exiting (SIGINT received)
+        if ((global as any).__devloop_exiting?.value) {
+          process.exit(130);
+          return new Map();
+        }
+        
         let answer: any;
 
         if (question.context) {
@@ -957,10 +1028,10 @@ export class InteractivePromptSystem {
             });
 
             if (typeof selected === 'symbol') {
-              if (question.required) {
-                throw new Error(`Question ${question.id} is required but was cancelled`);
-              }
-              answer = [];
+              // User cancelled (Ctrl+C) - exit immediately
+              process.stderr.write('\n\n⚠ Interrupted by user\n\n');
+              process.exit(130);
+              return new Map();
             } else {
               answer = selected as string[];
             }
@@ -972,10 +1043,10 @@ export class InteractivePromptSystem {
             });
 
             if (typeof selected === 'symbol') {
-              if (question.required) {
-                throw new Error(`Question ${question.id} is required but was cancelled`);
-              }
-              answer = question.options[0]; // Default to first option
+              // User cancelled (Ctrl+C) - exit immediately
+              process.stderr.write('\n\n⚠ Interrupted by user\n\n');
+              process.exit(130);
+              return new Map();
             } else {
               answer = selected as string;
             }
@@ -988,13 +1059,19 @@ export class InteractivePromptSystem {
           });
 
           if (typeof input === 'symbol') {
-            if (question.required) {
-              throw new Error(`Question ${question.id} is required but was cancelled`);
-            }
-            answer = '';
+            // User cancelled (Ctrl+C) - exit immediately
+            process.stderr.write('\n\n⚠ Interrupted by user\n\n');
+            process.exit(130);
+            return new Map();
           } else {
             answer = input as string;
           }
+        }
+        
+        // Check if process is exiting (SIGINT received during prompt)
+        if ((global as any).__devloop_exiting?.value) {
+          process.exit(130);
+          return new Map();
         }
 
         answers.set(question.id, answer);
@@ -1025,6 +1102,12 @@ export class InteractivePromptSystem {
       log.info('');
 
       for (const question of questions) {
+        // Check if process is exiting (SIGINT received)
+        if ((global as any).__devloop_exiting?.value) {
+          process.exit(130);
+          return new Map();
+        }
+        
         if (question.context) {
           log.info(`  Context: ${question.context}`);
         }
@@ -1056,12 +1139,26 @@ export class InteractivePromptSystem {
         }
 
         const result = await inquirer.prompt([promptConfig]);
+        
+        // Check if process is exiting (SIGINT received during prompt)
+        if ((global as any).__devloop_exiting?.value) {
+          process.exit(130);
+          return new Map();
+        }
+        
         answers.set(question.id, result.answer);
         log.info('');
       }
 
       return answers;
     } catch (error) {
+      // User cancelled (Ctrl+C) during inquirer prompt - exit immediately
+      const errorMsg = String(error);
+      if (errorMsg.includes('cancel') || errorMsg.includes('interrupt') || 
+          errorMsg.includes('ExitPromptError') || (global as any).__devloop_exiting?.value) {
+        process.stderr.write('\n\n⚠ Interrupted by user\n\n');
+        process.exit(130);
+      }
       logger.error(`[InteractivePromptSystem] Failed to ask refinement questions: ${error}`);
       throw error;
     }
@@ -1165,7 +1262,13 @@ export class InteractivePromptSystem {
         })),
       });
 
-      const selected = typeof selectedInsights === 'symbol' ? [] : (selectedInsights as string[]);
+      if (typeof selectedInsights === 'symbol') {
+        // User cancelled (Ctrl+C) - exit immediately
+        process.stderr.write('\n\n⚠ Interrupted by user\n\n');
+        process.exit(130);
+      }
+
+      const selected = selectedInsights as string[];
 
       // Ask follow-up questions for selected insights
       for (const insightId of selected) {
@@ -1183,8 +1286,14 @@ export class InteractivePromptSystem {
             initialValue: 'use',
           });
 
+          if (typeof action === 'symbol') {
+            // User cancelled (Ctrl+C) - exit immediately
+            process.stderr.write('\n\n⚠ Interrupted by user\n\n');
+            process.exit(130);
+          }
+
           preferences.set(insightId, {
-            action: typeof action === 'symbol' ? 'use' : action,
+            action: action,
             insight,
           });
         }
@@ -1192,6 +1301,11 @@ export class InteractivePromptSystem {
 
       return { selectedInsights: selected, preferences };
     } catch (error) {
+      // Check if this is a cancellation
+      if ((global as any).__devloop_exiting?.value) {
+        process.stderr.write('\n\n⚠ Interrupted by user\n\n');
+        process.exit(130);
+      }
       logger.error(`[InteractivePromptSystem] Failed to show codebase insights: ${error}`);
       return { selectedInsights: [], preferences: new Map() };
     }
@@ -1402,7 +1516,13 @@ export class InteractivePromptSystem {
         ],
       });
 
-      const selectedItems = typeof selected === 'symbol' ? [] : (selected as string[]);
+      if (typeof selected === 'symbol') {
+        // User cancelled (Ctrl+C) - exit immediately
+        process.stderr.write('\n\n⚠ Interrupted by user\n\n');
+        process.exit(130);
+      }
+
+      const selectedItems = selected as string[];
 
       if (selectedItems.includes('_skip_all')) {
         return { refineItems: [], skipItems: refineOptions.map(o => o.value).filter(v => v !== '_skip_all') };
@@ -1419,7 +1539,13 @@ export class InteractivePromptSystem {
           ],
         });
 
-        const skipItems = typeof skipSelected === 'symbol' ? [] : (skipSelected as string[]);
+        if (typeof skipSelected === 'symbol') {
+          // User cancelled (Ctrl+C) - exit immediately
+          process.stderr.write('\n\n⚠ Interrupted by user\n\n');
+          process.exit(130);
+        }
+
+        const skipItems = skipSelected as string[];
         if (skipItems.includes('_refine_all')) {
           return { refineItems: refineOptions.map(o => o.value), skipItems: [] };
         }
@@ -1429,6 +1555,11 @@ export class InteractivePromptSystem {
 
       return { refineItems: selectedItems, skipItems: [] };
     } catch (error) {
+      // Check if this is a cancellation
+      if ((global as any).__devloop_exiting?.value) {
+        process.stderr.write('\n\n⚠ Interrupted by user\n\n');
+        process.exit(130);
+      }
       logger.error(`[InteractivePromptSystem] Failed to ask what to refine: ${error}`);
       return { refineItems: [], skipItems: [] };
     }

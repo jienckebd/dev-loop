@@ -467,5 +467,228 @@ export class PrdSetGenerator {
 
     return fixApplied;
   }
+
+  /**
+   * Fix missing PRD ID by setting it from set ID
+   * @param prdSetDir - Directory containing PRD set files
+   * @param setId - PRD set ID to use
+   * @returns true if fix was applied, false otherwise
+   */
+  async fixMissingPrdId(prdSetDir: string, setId: string): Promise<boolean> {
+    const indexPath = path.join(prdSetDir, 'index.md.yml');
+    if (!await fs.pathExists(indexPath)) return false;
+
+    const indexContent = await fs.readFile(indexPath, 'utf-8');
+    const indexMatch = indexContent.match(/^---\n([\s\S]*?)\n---/);
+    if (!indexMatch) return false;
+
+    const indexYaml = yamlParse(indexMatch[1]);
+
+    if (!indexYaml.prd?.id || indexYaml.prd.id.trim() === '') {
+      if (!indexYaml.prd) indexYaml.prd = {};
+      indexYaml.prd.id = setId;
+
+      if (this.debug) {
+        logger.debug(`[PrdSetGenerator] Fixing missing PRD ID: ${setId}`);
+      }
+
+      const updatedYaml = yamlStringify(indexYaml, { indent: 2, lineWidth: 100 });
+      await fs.writeFile(indexPath, `---\n${updatedYaml}---\n`, 'utf-8');
+      return true;
+    }
+    return false;
+  }
+
+  /**
+   * Fix missing title by generating from set ID
+   * @param prdSetDir - Directory containing PRD set files
+   * @param setId - PRD set ID to derive title from
+   * @returns true if fix was applied, false otherwise
+   */
+  async fixMissingTitle(prdSetDir: string, setId: string): Promise<boolean> {
+    const indexPath = path.join(prdSetDir, 'index.md.yml');
+    if (!await fs.pathExists(indexPath)) return false;
+
+    const indexContent = await fs.readFile(indexPath, 'utf-8');
+    const indexMatch = indexContent.match(/^---\n([\s\S]*?)\n---/);
+    if (!indexMatch) return false;
+
+    const indexYaml = yamlParse(indexMatch[1]);
+
+    if (!indexYaml.prd?.title || indexYaml.prd.title.trim() === '') {
+      if (!indexYaml.prd) indexYaml.prd = {};
+      // Convert set ID to title case: "my-module" -> "My Module"
+      indexYaml.prd.title = setId
+        .replace(/[-_]/g, ' ')
+        .replace(/\b\w/g, (c: string) => c.toUpperCase());
+
+      if (this.debug) {
+        logger.debug(`[PrdSetGenerator] Fixing missing title: ${indexYaml.prd.title}`);
+      }
+
+      const updatedYaml = yamlStringify(indexYaml, { indent: 2, lineWidth: 100 });
+      await fs.writeFile(indexPath, `---\n${updatedYaml}---\n`, 'utf-8');
+      return true;
+    }
+    return false;
+  }
+
+  /**
+   * Fix missing phase names by auto-generating "Phase N"
+   * @param prdSetDir - Directory containing PRD set files
+   * @returns true if fix was applied, false otherwise
+   */
+  async fixMissingPhaseName(prdSetDir: string): Promise<boolean> {
+    const indexPath = path.join(prdSetDir, 'index.md.yml');
+    if (!await fs.pathExists(indexPath)) return false;
+
+    const indexContent = await fs.readFile(indexPath, 'utf-8');
+    const indexMatch = indexContent.match(/^---\n([\s\S]*?)\n---/);
+    if (!indexMatch) return false;
+
+    const indexYaml = yamlParse(indexMatch[1]);
+    let fixApplied = false;
+
+    if (indexYaml.requirements?.phases) {
+      for (const phase of indexYaml.requirements.phases) {
+        if (!phase.name || phase.name.trim() === '') {
+          phase.name = `Phase ${phase.id}`;
+          fixApplied = true;
+          if (this.debug) {
+            logger.debug(`[PrdSetGenerator] Fixing missing phase name for phase ${phase.id}`);
+          }
+        }
+      }
+    }
+
+    if (fixApplied) {
+      const updatedYaml = yamlStringify(indexYaml, { indent: 2, lineWidth: 100 });
+      await fs.writeFile(indexPath, `---\n${updatedYaml}---\n`, 'utf-8');
+    }
+    return fixApplied;
+  }
+
+  /**
+   * Fix missing task titles by deriving from task ID
+   * @param prdSetDir - Directory containing PRD set files
+   * @returns true if fix was applied, false otherwise
+   */
+  async fixMissingTaskTitles(prdSetDir: string): Promise<boolean> {
+    const indexPath = path.join(prdSetDir, 'index.md.yml');
+    if (!await fs.pathExists(indexPath)) return false;
+
+    const indexContent = await fs.readFile(indexPath, 'utf-8');
+    const indexMatch = indexContent.match(/^---\n([\s\S]*?)\n---/);
+    if (!indexMatch) return false;
+
+    const indexYaml = yamlParse(indexMatch[1]);
+    let fixApplied = false;
+
+    if (indexYaml.requirements?.phases) {
+      for (const phase of indexYaml.requirements.phases) {
+        if (phase.tasks) {
+          for (const task of phase.tasks) {
+            if (!task.title || task.title.trim() === '') {
+              // Convert task ID to title: "TASK-1.1" -> "Task 1.1"
+              task.title = task.id
+                .replace(/[-_]/g, ' ')
+                .replace(/\b\w/g, (c: string) => c.toUpperCase());
+              fixApplied = true;
+              if (this.debug) {
+                logger.debug(`[PrdSetGenerator] Fixing missing task title for ${task.id}`);
+              }
+            }
+          }
+        }
+      }
+    }
+
+    if (fixApplied) {
+      const updatedYaml = yamlStringify(indexYaml, { indent: 2, lineWidth: 100 });
+      await fs.writeFile(indexPath, `---\n${updatedYaml}---\n`, 'utf-8');
+    }
+    return fixApplied;
+  }
+
+  /**
+   * Fix missing task descriptions by generating placeholder
+   * @param prdSetDir - Directory containing PRD set files
+   * @returns true if fix was applied, false otherwise
+   */
+  async fixMissingTaskDescriptions(prdSetDir: string): Promise<boolean> {
+    const indexPath = path.join(prdSetDir, 'index.md.yml');
+    if (!await fs.pathExists(indexPath)) return false;
+
+    const indexContent = await fs.readFile(indexPath, 'utf-8');
+    const indexMatch = indexContent.match(/^---\n([\s\S]*?)\n---/);
+    if (!indexMatch) return false;
+
+    const indexYaml = yamlParse(indexMatch[1]);
+    let fixApplied = false;
+
+    if (indexYaml.requirements?.phases) {
+      for (const phase of indexYaml.requirements.phases) {
+        if (phase.tasks) {
+          for (const task of phase.tasks) {
+            if (!task.description || task.description.trim() === '') {
+              task.description = `Implementation of ${task.title || task.id}`;
+              fixApplied = true;
+              if (this.debug) {
+                logger.debug(`[PrdSetGenerator] Fixing missing task description for ${task.id}`);
+              }
+            }
+          }
+        }
+      }
+    }
+
+    if (fixApplied) {
+      const updatedYaml = yamlStringify(indexYaml, { indent: 2, lineWidth: 100 });
+      await fs.writeFile(indexPath, `---\n${updatedYaml}---\n`, 'utf-8');
+    }
+    return fixApplied;
+  }
+
+  /**
+   * Fix empty phases by adding placeholder tasks
+   * @param prdSetDir - Directory containing PRD set files
+   * @returns true if fix was applied, false otherwise
+   */
+  async fixEmptyPhases(prdSetDir: string): Promise<boolean> {
+    const indexPath = path.join(prdSetDir, 'index.md.yml');
+    if (!await fs.pathExists(indexPath)) return false;
+
+    const indexContent = await fs.readFile(indexPath, 'utf-8');
+    const indexMatch = indexContent.match(/^---\n([\s\S]*?)\n---/);
+    if (!indexMatch) return false;
+
+    const indexYaml = yamlParse(indexMatch[1]);
+    const idPattern = indexYaml.requirements?.idPattern || 'TASK-{id}';
+    const prefix = idPattern.split('{id}')[0];
+    let fixApplied = false;
+
+    if (indexYaml.requirements?.phases) {
+      for (const phase of indexYaml.requirements.phases) {
+        if (!phase.tasks || phase.tasks.length === 0) {
+          phase.tasks = [{
+            id: `${prefix}${phase.id}.1`,
+            title: `${phase.name || `Phase ${phase.id}`} - Task 1`,
+            description: `Implement ${phase.name || `phase ${phase.id}`} functionality`,
+            status: 'pending',
+          }];
+          fixApplied = true;
+          if (this.debug) {
+            logger.debug(`[PrdSetGenerator] Fixing empty phase ${phase.id} with placeholder task`);
+          }
+        }
+      }
+    }
+
+    if (fixApplied) {
+      const updatedYaml = yamlStringify(indexYaml, { indent: 2, lineWidth: 100 });
+      await fs.writeFile(indexPath, `---\n${updatedYaml}---\n`, 'utf-8');
+    }
+    return fixApplied;
+  }
 }
 

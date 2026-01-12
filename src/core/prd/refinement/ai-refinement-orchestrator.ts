@@ -198,7 +198,7 @@ export class AIRefinementOrchestrator {
     const autoApprove = options?.autoApprove ?? this.config.autoApprove;
 
     logger.debug(
-      `[AIRefinementOrchestrator] Starting refinement for PRD ${prd.prdId} (max iterations: ${maxIterations})`
+      `[AIRefinementOrchestrator] Starting refinement for PRD ${prd.prdId} (max iterations: ${maxIterations}, auto-approve: ${autoApprove})`
     );
 
     let currentPrd = prd;
@@ -223,6 +223,67 @@ export class AIRefinementOrchestrator {
       });
     }
 
+    // Streamlined path for auto-approve mode
+    if (autoApprove) {
+      logger.debug(`[AIRefinementOrchestrator] Using streamlined auto-approve path`);
+      
+      // Skip all pre/mid/post phase questions and generate enhancements directly
+      // Run each enhancer once (no iteration loops)
+      // Run validation only at the very end
+      
+      schemas = await this.schemaEnhancer.enhanceSchemas(currentPrd, {
+        conversationId: context.conversationId,
+        iteration: 0,
+      });
+      
+      tests = await this.testPlanner.generateTestPlans(currentPrd, {
+        conversationId: context.conversationId,
+        iteration: 0,
+      });
+      
+      features = await this.featureEnhancer.enhanceFeatures(currentPrd, {
+        conversationId: context.conversationId,
+        iteration: 0,
+      });
+      
+      // Single validation at end instead of after each phase
+      validation = await this.executabilityValidator.validateExecutability(currentPrd, {
+        schemas,
+        tests,
+        features,
+      });
+      
+      executable = validation.executable && validation.score === 100;
+      iteration = 1; // Single iteration for streamlined path
+      
+      // Generate summary
+      const summary = this.generateSummary(schemas, tests, features, validation, executable, iteration);
+
+      // Save checkpoint
+      if (this.config.progressTracker) {
+        await this.config.progressTracker.saveCheckpoint(
+          context.conversationId,
+          context.mode,
+          executable ? 'validation' : 'refinement',
+          iteration,
+          currentPrd,
+          `Streamlined refinement complete (auto-approve mode)`
+        );
+      }
+
+      return {
+        prd: currentPrd,
+        schemas: schemas || { schemas: [], summary: '', confidence: 0 },
+        tests: tests || { testPlans: [], summary: '', coverage: { totalTasks: 0, tasksWithTests: 0, coveragePercentage: 0 } },
+        features: features || { enhancements: [], summary: '' },
+        validation,
+        executable,
+        iterations: iteration,
+        summary,
+      };
+    }
+
+    // Interactive path (original implementation)
     // Phase 1: Schema Enhancement (Interactive)
     logger.debug(`[AIRefinementOrchestrator] Phase: Schema Enhancement`);
     const schemaPhaseResult = await this.refinePhaseInteractive(
@@ -335,7 +396,17 @@ export class AIRefinementOrchestrator {
       insights = await this.insightExtractor.extractInsightsForPhase(phase, this.config.codebaseAnalysis);
     }
 
-    // Step 2: Pre-phase: Show insights and ask questions
+    // Step 2: Pre-phase: Validate current state and show insights and ask questions
+    // Validate current state to get validation gaps for dynamic question generation
+    let prePhaseValidation: ExecutabilityValidationResult | undefined;
+    if (existingEnhancements) {
+      prePhaseValidation = await this.executabilityValidator.validateExecutability(prd, {
+        schemas: phase === 'schema' ? existingEnhancements as SchemaEnhancementResult : undefined,
+        tests: phase === 'test' ? existingEnhancements as TestPlanningResult : undefined,
+        features: phase === 'feature' ? existingEnhancements as FeatureEnhancementResult : undefined,
+      });
+    }
+
     let prePhaseAnswers = new Map<string, any>();
     if (this.config.askPrePhaseQuestions && !autoApprove && this.config.interactivePrompts) {
       // Show codebase insights
@@ -351,13 +422,14 @@ export class AIRefinementOrchestrator {
         }
       }
 
-      // Generate and ask pre-phase questions
+      // Generate and ask pre-phase questions (pass validation gaps for dynamic generation)
       const prePhaseQuestions = await this.questionGenerator.generatePrePhaseQuestions(
         phase,
         prd,
         this.config.codebaseAnalysis,
         insights,
-        existingEnhancements
+        existingEnhancements,
+        prePhaseValidation // Pass validation gaps for dynamic question generation
       );
 
       if (prePhaseQuestions.length > 0) {

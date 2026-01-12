@@ -17,6 +17,7 @@ import { Answer } from '../../conversation/types';
 import { CodeContextProvider, FileContext } from '../../analysis/code/context-provider';
 import { logger } from '../../utils/logger';
 import * as path from 'path';
+import * as fs from 'fs-extra';
 
 /**
  * Test Plan Specification
@@ -90,6 +91,36 @@ export class TestPlanner {
       this.debug
     );
     this.contextProvider = new CodeContextProvider(this.debug);
+  }
+
+  /**
+   * Execute an operation with retry logic and exponential backoff
+   */
+  private async executeWithRetry<T>(
+    operation: () => Promise<T>,
+    operationName: string,
+    maxRetries: number = 3,
+    baseDelayMs: number = 1000
+  ): Promise<T | null> {
+    for (let attempt = 1; attempt <= maxRetries; attempt++) {
+      try {
+        return await operation();
+      } catch (error) {
+        const isJsonError = error instanceof Error &&
+          (error.message.includes('JSON') || error.message.includes('parse'));
+        const isRetryable = isJsonError || (error instanceof Error && error.message.includes('timeout'));
+
+        if (attempt === maxRetries || !isRetryable) {
+          logger.warn(`[TestPlanner] ${operationName} failed after ${attempt} attempts: ${error}`);
+          return null;
+        }
+
+        const delay = baseDelayMs * Math.pow(2, attempt - 1);
+        logger.debug(`[TestPlanner] ${operationName} retry ${attempt}/${maxRetries} after ${delay}ms`);
+        await new Promise(resolve => setTimeout(resolve, delay));
+      }
+    }
+    return null;
   }
 
   /**
@@ -505,6 +536,54 @@ export class TestPlanner {
       fileContexts?: Map<string, FileContext>;
     }
   ): Promise<TestPlanSpec | null> {
+    // Determine test file path first to check if it exists
+    const testFile = this.determineTestFilePath(task, phase, prd);
+    const fullPath = path.join(this.config.projectRoot, testFile);
+    
+    // Check if test file already exists and is valid (skip AI call if so)
+    if (await fs.pathExists(fullPath)) {
+      try {
+        const existingContent = await fs.readFile(fullPath, 'utf-8');
+        if (this.isValidTestFile(existingContent)) {
+          logger.info(`[TestPlanner] Skipping ${task.id} - test file already exists and is valid at ${testFile}`);
+          
+          // Determine test type based on task
+          const testType = this.determineTestType(task, phase, prd.phases.length);
+          // Determine test runner based on framework
+          const testRunner = this.determineTestRunner();
+          // Determine priority
+          const priority = this.determinePriority(task, phase);
+          
+          // Parse existing test file to extract test cases (or create minimal structure)
+          const testCases = this.parseTestCasesFromFile(existingContent) || [
+            {
+              name: `Test ${task.title}`,
+              description: `Test plan for ${task.title}`,
+              steps: ['Test already exists'],
+              expectedResult: 'Test file exists',
+            },
+          ];
+          
+          return {
+            id: `test-${task.id}`,
+            taskId: task.id,
+            phaseId: phase.id,
+            testType,
+            description: `Test plan for ${task.title} (already exists)`,
+            testCases,
+            framework: this.config.codebaseAnalysis.framework,
+            testRunner,
+            testFile,
+            priority,
+            dependencies: task.dependencies || [],
+          };
+        }
+      } catch (error) {
+        logger.debug(`[TestPlanner] Failed to read existing test file ${fullPath}: ${error}`);
+        // Continue to generate new test plan if reading fails
+      }
+    }
+
     // Determine test type based on task
     const testType = this.determineTestType(task, phase, prd.phases.length);
 
@@ -524,9 +603,6 @@ export class TestPlanner {
     if (!testCases || testCases.length === 0) {
       return null;
     }
-
-    // Determine test file path
-    const testFile = this.determineTestFilePath(task, phase, prd);
 
     // Determine priority
     const priority = this.determinePriority(task, phase);
@@ -567,21 +643,26 @@ export class TestPlanner {
     // Build prompt for test case generation with helper methods and test patterns
     const aiPrompt = this.buildTestCaseGenerationPrompt(task, phase, prd, basePrompt, testContext);
 
-    try {
-      const response = await this.textGenerator.generate(aiPrompt, {
-        maxTokens: 3000,
-        temperature: 0.4,
-        systemPrompt: 'You are an expert at generating test plans and test cases for software requirements.',
-      });
+    // Use retry logic for AI call
+    return await this.executeWithRetry(
+      async () => {
+        const response = await this.textGenerator.generate(aiPrompt, {
+          maxTokens: 3000,
+          temperature: 0.4,
+          systemPrompt: 'You are an expert at generating test plans and test cases for software requirements.',
+        });
 
-      // Parse AI response to extract test cases
-      const testCases = this.parseTestCasesResponse(response, task);
+        // Parse AI response to extract test cases
+        const testCases = this.parseTestCasesResponse(response, task);
 
-      return testCases;
-    } catch (error) {
-      logger.error(`[TestPlanner] Failed to generate test cases: ${error}`);
-      return null;
-    }
+        if (!testCases || testCases.length === 0) {
+          throw new Error('Failed to parse test cases response');
+        }
+
+        return testCases;
+      },
+      `generateTestCases(${task.id})`
+    );
   }
 
   /**
@@ -876,6 +957,78 @@ export class TestPlanner {
   /**
    * Determine priority
    */
+  /**
+   * Validate if test file content is valid
+   */
+  private isValidTestFile(content: string): boolean {
+    if (!content || content.trim().length === 0) {
+      return false;
+    }
+
+    const trimmed = content.trim();
+    
+    // Check for test-like patterns (test, describe, it, test(), etc.)
+    const testPatterns = [
+      /test\s*\(/i,
+      /describe\s*\(/i,
+      /it\s*\(/i,
+      /async\s+test\s*\(/i,
+      /function\s+test/i,
+      /def\s+test_/i,  // Python pytest
+      /@test/i,        // JUnit-style
+      /test\./i,       // Playwright test object
+    ];
+
+    for (const pattern of testPatterns) {
+      if (pattern.test(trimmed)) {
+        // Additional check: ensure it's not just a comment or minimal structure
+        const nonCommentLines = trimmed.split('\n').filter(line => {
+          const trimmedLine = line.trim();
+          return trimmedLine.length > 0 && !trimmedLine.startsWith('//') && !trimmedLine.startsWith('#');
+        });
+        return nonCommentLines.length >= 3; // At least 3 non-comment lines
+      }
+    }
+
+    // If no test pattern found but has substantial content, might be valid
+    return trimmed.length > 100;
+  }
+
+  /**
+   * Parse test cases from existing test file content
+   */
+  private parseTestCasesFromFile(content: string): TestCase[] | null {
+    try {
+      // Try to extract test case names using common patterns
+      const testCasePatterns = [
+        /test\s*\(['"`]([^'"`]+)['"`]/gi,  // test('name')
+        /it\s*\(['"`]([^'"`]+)['"`]/gi,    // it('name')
+        /describe\s*\(['"`]([^'"`]+)['"`]/gi, // describe('name')
+        /def\s+test_(\w+)/gi,              // def test_name
+        /@test\s+['"]?(\w+)/gi,            // @test name
+      ];
+
+      const testCases: TestCase[] = [];
+      
+      for (const pattern of testCasePatterns) {
+        let match;
+        while ((match = pattern.exec(content)) !== null) {
+          testCases.push({
+            name: match[1] || 'Test case',
+            description: `Extracted from existing test file`,
+            steps: ['Test already implemented'],
+            expectedResult: 'Test file exists and is valid',
+          });
+        }
+      }
+
+      return testCases.length > 0 ? testCases : null;
+    } catch (error) {
+      logger.debug(`[TestPlanner] Failed to parse test cases from file: ${error}`);
+      return null;
+    }
+  }
+
   private determinePriority(task: ParsedTask, phase: ParsedPhase): TestPlanSpec['priority'] {
     // Early phases are critical
     if (phase.id === 1) {

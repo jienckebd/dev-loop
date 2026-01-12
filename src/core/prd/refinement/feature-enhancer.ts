@@ -64,6 +64,36 @@ export class FeatureEnhancer {
   }
 
   /**
+   * Execute an operation with retry logic and exponential backoff
+   */
+  private async executeWithRetry<T>(
+    operation: () => Promise<T>,
+    operationName: string,
+    maxRetries: number = 3,
+    baseDelayMs: number = 1000
+  ): Promise<T | null> {
+    for (let attempt = 1; attempt <= maxRetries; attempt++) {
+      try {
+        return await operation();
+      } catch (error) {
+        const isJsonError = error instanceof Error &&
+          (error.message.includes('JSON') || error.message.includes('parse'));
+        const isRetryable = isJsonError || (error instanceof Error && error.message.includes('timeout'));
+
+        if (attempt === maxRetries || !isRetryable) {
+          logger.warn(`[FeatureEnhancer] ${operationName} failed after ${attempt} attempts: ${error}`);
+          return null;
+        }
+
+        const delay = baseDelayMs * Math.pow(2, attempt - 1);
+        logger.debug(`[FeatureEnhancer] ${operationName} retry ${attempt}/${maxRetries} after ${delay}ms`);
+        await new Promise(resolve => setTimeout(resolve, delay));
+      }
+    }
+    return null;
+  }
+
+  /**
    * Enhance PRD with feature configurations
    */
   async enhanceFeatures(

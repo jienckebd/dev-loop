@@ -23,7 +23,7 @@ import { Config } from '../../../config/schema/core';
 import { BuildMode } from '../../conversation/types';
 import { logger } from '../../utils/logger';
 import { PatternEntry, ObservationEntry, TestResultExecution } from '../learning/types';
-import { ExecutabilityValidator, ExecutabilityValidationResult } from '../refinement/executability-validator';
+import { ValidationAutoFixer } from './validation-auto-fixer';
 
 /**
  * Enhance Mode Options
@@ -300,56 +300,18 @@ export class EnhanceModeHandler {
           }
         );
 
-        // 8. Validate and auto-fix until executable
-        const maxFixIterations = 5;
-        let fixIteration = 0;
-        let isExecutable = false;
-        const fixesApplied: string[] = [];
+        // 8. Validate and auto-fix until executable (using shared utility)
+        const autoFixer = new ValidationAutoFixer({ debug: this.debug });
+        const fixResult = await autoFixer.validateAndAutoFix({
+          prdSetDir: prdSetPathResolved,
+          setId: discoveredSet.setId,
+          projectConfig: this.projectConfig,
+          maxIterations: 5,
+          debug: this.debug,
+        });
 
-        while (!isExecutable && fixIteration < maxFixIterations) {
-          // Reload PRD set after enhancements
-          const updatedPrdSet = await this.prdDiscovery.discoverPrdSet(prdSetPathResolved);
-          
-          // Validate executability
-          const validator = new ExecutabilityValidator({ debug: this.debug });
-          const validationResult = await validator.validateExecutability(updatedPrdSet);
-          
-          if (validationResult.executable && validationResult.score === 100) {
-            isExecutable = true;
-            break;
-          }
-          
-          // Apply auto-fixes
-          let fixApplied = false;
-          
-          // Fix ID pattern if mismatch detected
-          if (this.needsIdPatternFix(validationResult)) {
-            const fixed = await this.prdSetGenerator.fixIdPattern(prdSetPathResolved, discoveredSet.setId);
-            if (fixed) {
-              fixesApplied.push('ID pattern corrected to match task IDs');
-              fixApplied = true;
-              logger.debug(`[EnhanceModeHandler] Fixed ID pattern in PRD set`);
-            }
-          }
-          
-          // Fix testing config if needed
-          if (this.needsTestingConfigFix(validationResult)) {
-            const fixed = await this.prdSetGenerator.fixTestingConfig(prdSetPathResolved, this.projectConfig);
-            if (fixed) {
-              fixesApplied.push('Testing configuration updated from project config');
-              fixApplied = true;
-              logger.debug(`[EnhanceModeHandler] Fixed testing configuration in PRD set`);
-            }
-          }
-          
-          // If no fixes applied, break to avoid infinite loop
-          if (!fixApplied) {
-            logger.debug(`[EnhanceModeHandler] No auto-fixes available, stopping validation loop`);
-            break;
-          }
-          
-          fixIteration++;
-        }
+        const isExecutable = fixResult.isExecutable;
+        const fixesApplied = fixResult.fixesApplied;
 
         // Update executable status
         const finalExecutable = isExecutable || (refinement.executable && gaps.criticalGaps === 0);
@@ -372,53 +334,18 @@ export class EnhanceModeHandler {
       }
     }
 
-    // If no gaps to enhance, validate and auto-fix existing PRD set
-    const maxFixIterations = 5;
-    let fixIteration = 0;
-    let isExecutable = false;
-    const fixesApplied: string[] = [];
+    // If no gaps to enhance, validate and auto-fix existing PRD set (using shared utility)
+    const autoFixerNoGaps = new ValidationAutoFixer({ debug: this.debug });
+    const fixResultNoGaps = await autoFixerNoGaps.validateAndAutoFix({
+      prdSetDir: prdSetPathResolved,
+      setId: discoveredSet.setId,
+      projectConfig: this.projectConfig,
+      maxIterations: 5,
+      debug: this.debug,
+    });
 
-    while (!isExecutable && fixIteration < maxFixIterations) {
-      // Validate executability
-      const validator = new ExecutabilityValidator({ debug: this.debug });
-      const validationResult = await validator.validateExecutability(discoveredSet);
-      
-      if (validationResult.executable && validationResult.score === 100) {
-        isExecutable = true;
-        break;
-      }
-      
-      // Apply auto-fixes
-      let fixApplied = false;
-      
-      // Fix ID pattern if mismatch detected
-      if (this.needsIdPatternFix(validationResult)) {
-        const fixed = await this.prdSetGenerator.fixIdPattern(prdSetPathResolved, discoveredSet.setId);
-        if (fixed) {
-          fixesApplied.push('ID pattern corrected to match task IDs');
-          fixApplied = true;
-          logger.debug(`[EnhanceModeHandler] Fixed ID pattern in PRD set`);
-        }
-      }
-      
-      // Fix testing config if needed
-      if (this.needsTestingConfigFix(validationResult)) {
-        const fixed = await this.prdSetGenerator.fixTestingConfig(prdSetPathResolved, this.projectConfig);
-        if (fixed) {
-          fixesApplied.push('Testing configuration updated from project config');
-          fixApplied = true;
-          logger.debug(`[EnhanceModeHandler] Fixed testing configuration in PRD set`);
-        }
-      }
-      
-      // If no fixes applied, break to avoid infinite loop
-      if (!fixApplied) {
-        logger.debug(`[EnhanceModeHandler] No auto-fixes available, stopping validation loop`);
-        break;
-      }
-      
-      fixIteration++;
-    }
+    const isExecutable = fixResultNoGaps.isExecutable;
+    const fixesApplied = fixResultNoGaps.fixesApplied;
 
     // 8. Generate summary
     const summary = this.generateSummary(gaps, undefined, options, fixesApplied);
@@ -439,32 +366,6 @@ export class EnhanceModeHandler {
       summary,
     };
   }
-
-  /**
-   * Check if validation result indicates ID pattern fix is needed
-   */
-  private needsIdPatternFix(validationResult: ExecutabilityValidationResult): boolean {
-    // Check if errors mention ID pattern mismatch
-    return validationResult.errors.some(e => 
-      e.type === 'invalid-structure' && 
-      (e.message.includes('ID pattern') || e.message.includes('task ID') || e.message.includes('idPattern'))
-    );
-  }
-
-  /**
-   * Check if validation result indicates testing config fix is needed
-   */
-  private needsTestingConfigFix(validationResult: ExecutabilityValidationResult): boolean {
-    // Check if errors mention testing configuration
-    return validationResult.errors.some(e => 
-      e.type === 'invalid-config' && 
-      (e.message.includes('testing') || e.message.includes('framework') || e.message.includes('runner'))
-    ) || validationResult.warnings.some(w =>
-      w.type === 'missing-optional' && 
-      (w.message.includes('testing') || w.message.includes('framework') || w.message.includes('runner'))
-    );
-  }
-
 
   /**
    * Generate summary

@@ -73,6 +73,36 @@ export class SchemaEnhancer {
   }
 
   /**
+   * Execute an operation with retry logic and exponential backoff
+   */
+  private async executeWithRetry<T>(
+    operation: () => Promise<T>,
+    operationName: string,
+    maxRetries: number = 3,
+    baseDelayMs: number = 1000
+  ): Promise<T | null> {
+    for (let attempt = 1; attempt <= maxRetries; attempt++) {
+      try {
+        return await operation();
+      } catch (error) {
+        const isJsonError = error instanceof Error &&
+          (error.message.includes('JSON') || error.message.includes('parse'));
+        const isRetryable = isJsonError || (error instanceof Error && error.message.includes('timeout'));
+
+        if (attempt === maxRetries || !isRetryable) {
+          logger.warn(`[SchemaEnhancer] ${operationName} failed after ${attempt} attempts: ${error}`);
+          return null;
+        }
+
+        const delay = baseDelayMs * Math.pow(2, attempt - 1);
+        logger.debug(`[SchemaEnhancer] ${operationName} retry ${attempt}/${maxRetries} after ${delay}ms`);
+        await new Promise(resolve => setTimeout(resolve, delay));
+      }
+    }
+    return null;
+  }
+
+  /**
    * Enhance PRD with schema definitions
    */
   async enhanceSchemas(
@@ -534,7 +564,7 @@ export class SchemaEnhancer {
   }
 
   /**
-   * Generate schema definitions using AI
+   * Generate schema definitions using AI (with batching by type)
    */
   private async generateSchemaDefinitions(
     needs: Array<{
@@ -556,7 +586,7 @@ export class SchemaEnhancer {
     const schemas: SchemaDefinition[] = [];
 
     // Get appropriate prompt for schema generation
-    const prompt = await this.config.promptSelector.getPromptForUseCase(
+    const basePrompt = await this.config.promptSelector.getPromptForUseCase(
       'schema-enhancement',
       {
         mode: 'convert', // Default to convert mode for schema enhancement
@@ -565,28 +595,159 @@ export class SchemaEnhancer {
       }
     );
 
-    // Generate schema for each need
-    for (const need of needs) {
-      try {
-        const matchedPattern = matchedPatterns.get(need.task.id);
-        const schema = await this.generateSingleSchema(
-          need,
-          matchedPattern,
-          prompt,
-          context,
-          schemaContext
-        );
-        if (schema) {
-          schemas.push(schema);
+    // Group needs by type for batching
+    const groupedNeeds = this.groupNeedsByType(needs);
+    
+    // Process each group (batch by type)
+    for (const [type, typeNeeds] of groupedNeeds.entries()) {
+      if (typeNeeds.length === 1) {
+        // Single schema - use individual generation
+        try {
+          const need = typeNeeds[0];
+          const matchedPattern = matchedPatterns.get(need.task.id);
+          const schema = await this.generateSingleSchema(
+            need,
+            matchedPattern,
+            basePrompt,
+            context,
+            schemaContext
+          );
+          if (schema) {
+            schemas.push(schema);
+          }
+        } catch (error) {
+          logger.warn(
+            `[SchemaEnhancer] Failed to generate schema for task ${typeNeeds[0].task.id}: ${error}`
+          );
         }
-      } catch (error) {
-        logger.warn(
-          `[SchemaEnhancer] Failed to generate schema for task ${need.task.id}: ${error}`
-        );
+      } else {
+        // Multiple schemas of same type - batch them
+        try {
+          const batchSchemas = await this.generateBatchSchemas(
+            typeNeeds,
+            type,
+            matchedPatterns,
+            basePrompt,
+            context,
+            schemaContext
+          );
+          schemas.push(...batchSchemas);
+        } catch (error) {
+          logger.warn(
+            `[SchemaEnhancer] Failed to generate batch schemas for type ${type}: ${error}, falling back to individual generation`
+          );
+          // Fallback to individual generation if batch fails
+          for (const need of typeNeeds) {
+            try {
+              const matchedPattern = matchedPatterns.get(need.task.id);
+              const schema = await this.generateSingleSchema(
+                need,
+                matchedPattern,
+                basePrompt,
+                context,
+                schemaContext
+              );
+              if (schema) {
+                schemas.push(schema);
+              }
+            } catch (individualError) {
+              logger.warn(
+                `[SchemaEnhancer] Failed to generate schema for task ${need.task.id}: ${individualError}`
+              );
+            }
+          }
+        }
       }
     }
 
     return schemas;
+  }
+
+  /**
+   * Group schema needs by type
+   */
+  private groupNeedsByType(
+    needs: Array<{
+      type: string;
+      requirement: string;
+      task: ParsedTask;
+      phase: ParsedPhase;
+    }>
+  ): Map<string, Array<{
+    type: string;
+    requirement: string;
+    task: ParsedTask;
+    phase: ParsedPhase;
+  }>> {
+    const grouped = new Map<string, Array<{
+      type: string;
+      requirement: string;
+      task: ParsedTask;
+      phase: ParsedPhase;
+    }>>();
+
+    for (const need of needs) {
+      if (!grouped.has(need.type)) {
+        grouped.set(need.type, []);
+      }
+      grouped.get(need.type)!.push(need);
+    }
+
+    return grouped;
+  }
+
+  /**
+   * Generate multiple schemas of the same type in a single AI call
+   */
+  private async generateBatchSchemas(
+    needs: Array<{
+      type: string;
+      requirement: string;
+      task: ParsedTask;
+      phase: ParsedPhase;
+    }>,
+    type: string,
+    matchedPatterns: Map<string, any>,
+    basePrompt: string,
+    context?: {
+      conversationId?: string;
+      iteration?: number;
+    },
+    schemaContext?: {
+      schemaPatterns?: Array<{ pattern: string; file: string; examples: string[] }>;
+      fileContexts?: Map<string, FileContext>;
+    }
+  ): Promise<SchemaDefinition[]> {
+    logger.debug(`[SchemaEnhancer] Generating batch of ${needs.length} ${type} schema(s)`);
+
+    // Build batch prompt
+    const batchPrompt = this.buildBatchSchemaPrompt(needs, type, matchedPatterns, basePrompt, schemaContext);
+
+    try {
+      const response = await this.textGenerator.generate(batchPrompt, {
+        maxTokens: 8000, // Higher token limit for batch
+        temperature: 0.3,
+        systemPrompt: 'You are an expert at generating multiple schema definitions based on requirements and codebase patterns. Generate all schemas in the batch, separating each with clear markers.',
+      });
+
+      // Parse batch response
+      const batchSchemas = this.parseBatchSchemaResponse(response, needs, type);
+
+      // Fill in additional metadata for each schema
+      for (const schema of batchSchemas) {
+        schema.framework = this.config.codebaseAnalysis.framework;
+        schema.featureTypes = this.config.codebaseAnalysis.featureTypes as FeatureType[];
+        const matchedPattern = matchedPatterns.get(schema.id.split('_')[0]); // Extract task ID
+        if (matchedPattern?.pattern?.examples) {
+          schema.relatedSchemas = matchedPattern.pattern.examples;
+        }
+      }
+
+      return batchSchemas;
+    } catch (error) {
+      logger.error(`[SchemaEnhancer] Failed to generate batch schemas: ${error}`);
+      throw error;
+    }
   }
 
   /**
@@ -610,43 +771,69 @@ export class SchemaEnhancer {
       fileContexts?: Map<string, FileContext>;
     }
   ): Promise<SchemaDefinition | null> {
+    // Check if schema file already exists and is valid (skip AI call if so)
+    const schemaPath = this.determineSchemaPath(
+      need,
+      this.config.codebaseAnalysis.frameworkPlugin
+    );
+    const fullPath = path.join(this.config.projectRoot, schemaPath);
+    
+    if (await fs.pathExists(fullPath)) {
+      try {
+        const existingContent = await fs.readFile(fullPath, 'utf-8');
+        if (this.isValidSchema(existingContent, need.type)) {
+          logger.info(`[SchemaEnhancer] Skipping ${need.task.id} - schema already exists and is valid at ${schemaPath}`);
+          return {
+            id: this.generateSchemaId(need.task.id, need.type),
+            type: need.type as SchemaDefinition['type'],
+            path: schemaPath,
+            content: existingContent,
+            description: `Schema for ${need.task.title}`,
+            framework: this.config.codebaseAnalysis.framework,
+            featureTypes: this.config.codebaseAnalysis.featureTypes as FeatureType[],
+            relatedSchemas: matchedPattern?.pattern?.examples || [],
+          };
+        }
+      } catch (error) {
+        logger.debug(`[SchemaEnhancer] Failed to read existing schema file ${fullPath}: ${error}`);
+        // Continue to generate new schema if reading fails
+      }
+    }
+
     // Build prompt for AI with schema context (patterns and file contexts)
     const prompt = this.buildSchemaGenerationPrompt(need, matchedPattern, basePrompt, schemaContext);
 
-    try {
-      const response = await this.textGenerator.generate(prompt, {
-        maxTokens: 2000,
-        temperature: 0.3, // Lower temperature for more deterministic schema generation
-        systemPrompt: 'You are an expert at generating schema definitions based on requirements and codebase patterns.',
-      });
+    // Use retry logic for AI call
+    const result = await this.executeWithRetry(
+      async () => {
+        const response = await this.textGenerator.generate(prompt, {
+          maxTokens: 2000,
+          temperature: 0.3, // Lower temperature for more deterministic schema generation
+          systemPrompt: 'You are an expert at generating schema definitions based on requirements and codebase patterns.',
+        });
 
-      // Parse AI response to extract schema definition
-      const schemaContent = this.parseSchemaResponse(response, need);
+        // Parse AI response to extract schema definition
+        const schemaContent = this.parseSchemaResponse(response, need);
 
-      if (!schemaContent) {
-        return null;
-      }
+        if (!schemaContent) {
+          throw new Error('Failed to parse schema response');
+        }
 
-      // Determine schema path based on framework and type
-      const schemaPath = this.determineSchemaPath(
-        need,
-        this.config.codebaseAnalysis.frameworkPlugin
-      );
+        return {
+          id: this.generateSchemaId(need.task.id, need.type),
+          type: need.type as SchemaDefinition['type'],
+          path: schemaPath,
+          content: schemaContent,
+          description: `Schema for ${need.task.title}`,
+          framework: this.config.codebaseAnalysis.framework,
+          featureTypes: this.config.codebaseAnalysis.featureTypes as FeatureType[],
+          relatedSchemas: matchedPattern?.pattern?.examples || [],
+        };
+      },
+      `generateSchema(${need.task.id})`
+    );
 
-      return {
-        id: this.generateSchemaId(need.task.id, need.type),
-        type: need.type as SchemaDefinition['type'],
-        path: schemaPath,
-        content: schemaContent,
-        description: `Schema for ${need.task.title}`,
-        framework: this.config.codebaseAnalysis.framework,
-        featureTypes: this.config.codebaseAnalysis.featureTypes as FeatureType[],
-        relatedSchemas: matchedPattern?.pattern?.examples || [],
-      };
-    } catch (error) {
-      logger.error(`[SchemaEnhancer] Failed to generate schema: ${error}`);
-      return null;
-    }
+    return result;
   }
 
   /**
@@ -813,6 +1000,174 @@ export class SchemaEnhancer {
   }
 
   /**
+   * Build prompt for batch schema generation
+   */
+  private buildBatchSchemaPrompt(
+    needs: Array<{
+      type: string;
+      requirement: string;
+      task: ParsedTask;
+      phase: ParsedPhase;
+    }>,
+    type: string,
+    matchedPatterns: Map<string, any>,
+    basePrompt: string,
+    schemaContext?: {
+      schemaPatterns?: Array<{ pattern: string; file: string; examples: string[] }>;
+      fileContexts?: Map<string, FileContext>;
+    }
+  ): string {
+    const parts: string[] = [];
+
+    parts.push(basePrompt);
+    parts.push('\n---\n');
+    parts.push(`## Batch Schema Generation: ${type}`);
+    parts.push(`Generate ${needs.length} ${type} schema definition(s) in a single response.`);
+    parts.push('');
+
+    // List all requirements in the batch
+    parts.push('## Requirements to Generate');
+    for (let i = 0; i < needs.length; i++) {
+      const need = needs[i];
+      parts.push(`### Schema ${i + 1}: ${need.task.title}`);
+      parts.push(`Task ID: ${need.task.id}`);
+      parts.push(`Description: ${need.task.description}`);
+      parts.push(`Phase: ${need.phase.name}`);
+      parts.push(`Expected Schema ID: ${this.generateSchemaId(need.task.id, need.type)}`);
+      parts.push(`Expected Path: ${this.determineSchemaPath(need, this.config.codebaseAnalysis.frameworkPlugin)}`);
+      parts.push('');
+    }
+
+    // Framework context (shared across all)
+    if (this.config.codebaseAnalysis.frameworkPlugin) {
+      parts.push('## Framework');
+      parts.push(`Framework: ${this.config.codebaseAnalysis.frameworkPlugin.name}`);
+      parts.push(`Description: ${this.config.codebaseAnalysis.frameworkPlugin.description}`);
+      parts.push('');
+    }
+
+    // Extracted schema patterns
+    if (schemaContext?.schemaPatterns && schemaContext.schemaPatterns.length > 0) {
+      parts.push('## Extracted Schema Patterns (Follow These Structures)');
+      for (const extractedPattern of schemaContext.schemaPatterns.slice(0, 5)) {
+        parts.push(`- Pattern: ${extractedPattern.pattern}`);
+        parts.push(`  File: ${path.basename(extractedPattern.file)}`);
+        if (extractedPattern.examples && extractedPattern.examples.length > 0) {
+          parts.push(`  Structure: ${extractedPattern.examples[0].substring(0, 200)}${extractedPattern.examples[0].length > 200 ? '...' : ''}`);
+        }
+      }
+      parts.push('');
+    }
+
+    // Instructions
+    parts.push('## Instructions');
+    parts.push(`Generate ${needs.length} ${type} schema definition(s) for all requirements listed above.`);
+    parts.push('Return each schema in the following format:');
+    parts.push('');
+    parts.push('```yaml');
+    parts.push('# SCHEMA: <schema-id>');
+    parts.push('# TASK: <task-id>');
+    parts.push('# PATH: <expected-path>');
+    parts.push('<yaml-schema-content>');
+    parts.push('```');
+    parts.push('');
+    parts.push('Separate each schema with a clear delimiter line (e.g., `---` or `### SCHEMA END`).');
+    parts.push('Follow the framework-specific patterns and conventions for all schemas.');
+    parts.push('Ensure each schema matches its corresponding requirement.');
+
+    return parts.join('\n');
+  }
+
+  /**
+   * Parse batch schema response to extract multiple schemas
+   */
+  private parseBatchSchemaResponse(
+    response: string,
+    needs: Array<{
+      type: string;
+      requirement: string;
+      task: ParsedTask;
+      phase: ParsedPhase;
+    }>,
+    type: string
+  ): SchemaDefinition[] {
+    const schemas: SchemaDefinition[] = [];
+
+    // Try to split by schema markers
+    const schemaSections = response.split(/### SCHEMA END|# SCHEMA:|SCHEMA:/i);
+
+    for (let i = 0; i < needs.length; i++) {
+      const need = needs[i];
+      let schemaContent: string | null = null;
+      const expectedId = this.generateSchemaId(need.task.id, need.type);
+
+      // Look for schema with matching ID or task ID
+      for (const section of schemaSections) {
+        const taskIdMatch = section.match(/TASK:\s*([^\n]+)/i);
+        const schemaIdMatch = section.match(/SCHEMA:\s*([^\n]+)/i);
+        const taskId = taskIdMatch ? taskIdMatch[1].trim() : null;
+        const schemaId = schemaIdMatch ? schemaIdMatch[1].trim() : null;
+
+        if (taskId === need.task.id || schemaId === expectedId || (i === 0 && !schemaContent)) {
+          // Extract YAML content from this section
+          const yamlMatch = section.match(/```(?:yaml|yml)?\n([\s\S]*?)\n```/);
+          if (yamlMatch) {
+            schemaContent = yamlMatch[1];
+            break;
+          }
+
+          // Try to extract path if specified
+          const pathMatch = section.match(/PATH:\s*([^\n]+)/i);
+          if (pathMatch) {
+            // Use specified path
+          }
+
+          // Fallback: extract YAML-like content
+          const yamlLines = section.split('\n').filter(line => {
+            const trimmed = line.trim();
+            return trimmed.length > 0 && !trimmed.startsWith('#') && trimmed.includes(':');
+          });
+          if (yamlLines.length >= 2) {
+            schemaContent = yamlLines.join('\n');
+            break;
+          }
+        }
+      }
+
+      // If not found by ID, try sequential extraction
+      if (!schemaContent && i < schemaSections.length) {
+        const section = schemaSections[i + 1]; // Skip first section (header)
+        if (section) {
+          const yamlMatch = section.match(/```(?:yaml|yml)?\n([\s\S]*?)\n```/);
+          if (yamlMatch) {
+            schemaContent = yamlMatch[1];
+          }
+        }
+      }
+
+      // If still no content, use single schema extraction as fallback
+      if (!schemaContent) {
+        schemaContent = this.parseSchemaResponse(response, need);
+      }
+
+      if (schemaContent) {
+        const schemaPath = this.determineSchemaPath(need, this.config.codebaseAnalysis.frameworkPlugin);
+        schemas.push({
+          id: expectedId,
+          type: need.type as SchemaDefinition['type'],
+          path: schemaPath,
+          content: schemaContent,
+          description: `Schema for ${need.task.title}`,
+          framework: this.config.codebaseAnalysis.framework,
+          featureTypes: this.config.codebaseAnalysis.featureTypes as FeatureType[],
+        });
+      }
+    }
+
+    return schemas;
+  }
+
+  /**
    * Generate schema ID
    */
   private generateSchemaId(taskId: string, type: string): string {
@@ -842,6 +1197,45 @@ export class SchemaEnhancer {
     }
 
     return Math.min(totalConfidence / schemas.length, 1.0);
+  }
+
+  /**
+   * Validate if schema content is valid for the given type
+   */
+  private isValidSchema(content: string, type: string): boolean {
+    if (!content || content.trim().length === 0) {
+      return false;
+    }
+
+    // Basic validation: check if content looks like YAML or JSON schema
+    const trimmed = content.trim();
+    
+    // Check for YAML-like structure (key: value pairs)
+    const yamlPattern = /^\s*\w+:\s*.+/m;
+    if (yamlPattern.test(trimmed)) {
+      // Additional check: ensure it's not just a comment or empty structure
+      const nonCommentLines = trimmed.split('\n').filter(line => {
+        const trimmedLine = line.trim();
+        return trimmedLine.length > 0 && !trimmedLine.startsWith('#');
+      });
+      return nonCommentLines.length >= 2; // At least 2 non-comment lines
+    }
+
+    // Check for JSON-like structure
+    const jsonPattern = /^\s*[\{\[]/;
+    if (jsonPattern.test(trimmed)) {
+      try {
+        JSON.parse(trimmed);
+        return true;
+      } catch {
+        // Not valid JSON
+        return false;
+      }
+    }
+
+    // If it doesn't match YAML or JSON patterns but has substantial content, consider valid
+    // (might be framework-specific format)
+    return trimmed.length > 50;
   }
 
   /**

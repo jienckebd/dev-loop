@@ -4,6 +4,7 @@ import * as path from 'path';
 import { AIProvider, AIProviderConfig } from './interface';
 import { CodeChanges, TaskContext, LogAnalysis, FrameworkConfig } from '../../types';
 import { logger } from "../../core/utils/logger";
+import { extractCodeChanges, JsonParsingContext } from './json-parser';
 
 export class AnthropicProvider implements AIProvider {
   public name = 'anthropic';
@@ -220,7 +221,19 @@ ${prompt}`;
           console.log('[DEBUG] ===== AI RESPONSE END =====\n');
         }
 
-        // Try to extract JSON from code block first
+        // Use shared JSON parser for consistent extraction (primary method)
+        const parsingContext: JsonParsingContext = {
+          providerName: 'anthropic',
+          taskId: context.task.id,
+          prdId: context.prdId,
+          phaseId: context.phaseId ?? undefined,
+        };
+        const sharedParserResult = extractCodeChanges(text, undefined, parsingContext);
+        if (sharedParserResult) {
+          return sharedParserResult;
+        }
+
+        // Fallback to Anthropic-specific parsing for complex/truncated cases
         let jsonText: string | null = null;
 
         // Try code block with json marker - use greedy matching to get the whole JSON
@@ -485,6 +498,33 @@ ${prompt}`;
 
     // All retries exhausted
     throw new Error(`Anthropic API rate limit exceeded after ${this.maxRetries} retries: ${lastError?.message}`);
+  }
+
+  /**
+   * Generate text without expecting JSON CodeChanges format
+   * Used for PRD building (schemas, test plans, etc.) where plain text output is expected
+   */
+  async generateText(prompt: string, options?: { maxTokens?: number; temperature?: number; systemPrompt?: string }): Promise<string> {
+    const maxTokens = options?.maxTokens || this.config.maxTokens || 4000;
+    const temperature = options?.temperature ?? 0.7;
+    const systemPrompt = options?.systemPrompt || 'You are a helpful assistant.';
+
+    logger.info(`[AnthropicProvider] generateText: Generating text with ${this.config.model}`);
+
+    const response = await this.client.messages.create({
+      model: this.config.model,
+      max_tokens: maxTokens,
+      temperature,
+      system: systemPrompt,
+      messages: [{ role: 'user', content: prompt }],
+    });
+
+    const textBlock = response.content.find(block => block.type === 'text');
+    if (textBlock && 'text' in textBlock) {
+      logger.info(`[AnthropicProvider] generateText: Successfully received text response (${textBlock.text.length} chars)`);
+      return textBlock.text;
+    }
+    throw new Error('No text content in Anthropic response');
   }
 
   async analyzeError(error: string, context: TaskContext): Promise<LogAnalysis> {

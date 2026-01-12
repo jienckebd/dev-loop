@@ -22,6 +22,7 @@ import { InteractivePromptSystem } from '../../core/prd/builder/interactive-prom
 import { FileDiscoveryService } from '../../core/prd/builder/file-discovery-service';
 import { BuildMode } from '../../core/conversation/types';
 import { logger } from '../../core/utils/logger';
+import { killAllChildProcesses } from '../../providers/ai/cursor-chat-opener';
 
 interface BuildPrdSetOptions {
   convert?: string; // Planning doc path (convert mode)
@@ -155,6 +156,47 @@ async function buildPrdSet(input: string | undefined, options: BuildPrdSetOption
       debug,
     });
 
+    // Register signal handlers for immediate exit (before any async operations)
+    // These must be registered BEFORE any interactive prompts
+    // CRITICAL: Remove any existing SIGINT handlers first, then register ours
+    // This ensures prompt libraries don't interfere with immediate exit
+    // Use module-level flag so it can be checked from anywhere (including orchestrator)
+    const exitingFlag = { value: false };
+    
+    const handleExit = (signal: string, code: number) => {
+      if (exitingFlag.value) {
+        // Force exit immediately if already exiting (second Ctrl+C)
+        process.exit(code);
+        return;
+      }
+      exitingFlag.value = true;
+      
+      // Stop spinner immediately
+      if (spinner) {
+        spinner.stop();
+      }
+      
+      // Kill all child processes synchronously
+      killAllChildProcesses('SIGTERM');
+      
+      // Write directly to stderr to bypass any buffering
+      process.stderr.write('\n\n⚠ Interrupted by user\n\n');
+      
+      // Exit immediately (synchronous - don't wait for anything)
+      process.exit(code);
+    };
+
+    // Remove any existing SIGINT/SIGTERM handlers that might interfere
+    // Use prependListener to ensure our handler runs FIRST (before prompt libraries)
+    // Then register our handler to ensure immediate exit
+    process.removeAllListeners('SIGINT');
+    process.removeAllListeners('SIGTERM');
+    process.prependListener('SIGINT', () => handleExit('SIGINT', 130));
+    process.prependListener('SIGTERM', () => handleExit('SIGTERM', 143));
+    
+    // Export exiting flag so orchestrator can check it
+    (global as any).__devloop_exiting = exitingFlag;
+
     spinner.succeed('Services initialized');
 
     // Load config and get paths
@@ -176,6 +218,11 @@ async function buildPrdSet(input: string | undefined, options: BuildPrdSetOption
         mode = await interactivePrompts.selectMode();
         spinner.start('Processing selection');
       } catch (error) {
+        // Check if we're already exiting (signal handler was called)
+        if (exitingFlag.value) {
+          process.exit(130);
+          return;
+        }
         spinner.fail('Mode selection cancelled');
         console.error(chalk.red('Operation cancelled by user.'));
         process.exit(0);
@@ -213,6 +260,11 @@ async function buildPrdSet(input: string | undefined, options: BuildPrdSetOption
         );
         spinner.start('Processing selected file');
       } catch (error) {
+        // Check if we're already exiting (signal handler was called)
+        if (exitingFlag.value) {
+          process.exit(130);
+          return;
+        }
         spinner.fail('File selection cancelled');
         console.error(chalk.red('Operation cancelled by user.'));
         process.exit(0);
@@ -247,6 +299,11 @@ async function buildPrdSet(input: string | undefined, options: BuildPrdSetOption
         );
         spinner.start('Processing selected PRD set');
       } catch (error) {
+        // Check if we're already exiting (signal handler was called)
+        if (exitingFlag.value) {
+          process.exit(130);
+          return;
+        }
         spinner.fail('PRD set selection cancelled');
         console.error(chalk.red('Operation cancelled by user.'));
         process.exit(0);

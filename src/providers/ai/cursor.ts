@@ -672,6 +672,63 @@ export class CursorProvider implements AIProvider {
     }
   }
 
+  /**
+   * Generate text without expecting JSON CodeChanges format
+   * Used for PRD building (schemas, test plans, etc.) where plain text output is expected
+   */
+  async generateText(prompt: string, options?: { maxTokens?: number; temperature?: number; systemPrompt?: string }): Promise<string> {
+    const model = (this.config as any).model || 'auto';
+    const cursorConfig = (this.config as any).cursor || {};
+    const agentsConfig = cursorConfig.agents || {};
+    const workspacePath = (this.config as any).workspacePath || process.cwd();
+    const sessionConfig = agentsConfig?.sessionManagement;
+
+    const fullPrompt = options?.systemPrompt
+      ? `${options.systemPrompt}\n\n${prompt}`
+      : prompt;
+
+    const chatOpener = new CursorChatOpener({
+      useBackgroundAgent: true,
+      agentOutputFormat: 'text',  // Request text output, not JSON
+      openStrategy: 'agent',
+      workspacePath,
+      sessionManagement: sessionConfig,
+    });
+
+    const chatRequest = {
+      id: `req-${Date.now()}-${Math.random().toString(36).substring(7)}`,
+      agentName: 'TextGeneration',
+      question: fullPrompt,  // No JSON schema appended
+      model,
+      mode: 'Ask' as const,
+      status: 'pending' as const,
+      createdAt: new Date().toISOString(),
+      context: { taskId: 'text-generation' },
+    };
+
+    logger.info(`[CursorProvider] generateText: Using background agent for text generation`);
+
+    const result = await chatOpener.openChat(chatRequest);
+
+    if (result.success && result.response) {
+      // Extract text from response
+      let text: string;
+      if (typeof result.response === 'string') {
+        text = result.response;
+      } else if (result.response.text) {
+        text = result.response.text;
+      } else if (result.response.result) {
+        text = typeof result.response.result === 'string' ? result.response.result : JSON.stringify(result.response.result);
+      } else {
+        text = JSON.stringify(result.response);
+      }
+      logger.info(`[CursorProvider] generateText: Successfully received text response (${text.length} chars)`);
+      return text;
+    }
+
+    throw new Error(`Text generation failed: ${result.message || 'No response'}`);
+  }
+
   async analyzeError(error: string, context: TaskContext): Promise<LogAnalysis> {
     // For error analysis, use the same approach
     const prompt = `Analyze this error and provide recommendations:

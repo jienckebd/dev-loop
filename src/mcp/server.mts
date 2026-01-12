@@ -376,7 +376,7 @@ addLoggedTool({
       let persistedRetryCounts: Record<string, number> = {};
       try {
         // Dynamic import since this is ESM
-        const { UnifiedStateManager } = await import('../core/state/StateManager');
+        const { UnifiedStateManager } = await import('../core/state/StateManager.js');
         const stateManager = new UnifiedStateManager(process.cwd());
         await stateManager.initialize();
         const state = await stateManager.getExecutionState();

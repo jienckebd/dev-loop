@@ -17,8 +17,23 @@ export * from './phase';
 export * from './validation';
 export * from './runtime';
 export * from './metrics';
-export * from './execution-state';
+// Export metadata first (its prdSetStateSchema takes precedence)
 export * from './metadata';
+// Export execution-state but exclude prdSetStateSchema (already exported from metadata)
+export {
+  workflowStateSchema,
+  prdStatusSchema,
+  activeContextSchema,
+  fileCreationTrackingSchema,
+  investigationTrackingSchema,
+  phaseStateSchema,
+  prdStateSchema,
+  executionStateFileSchema,
+  type PRDSetState,
+  type PRDState,
+  type PhaseState,
+  type ExecutionState,
+} from './execution-state';
 export * from './generator';
 
 // Main exports (maintains backward compatibility with old schema.ts)
