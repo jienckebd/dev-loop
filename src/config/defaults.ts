@@ -32,6 +32,7 @@ export const defaultConfig: Partial<Config> = {
   autonomous: {
     enabled: true,
     skipInvestigation: false,
+    skipPrerequisiteValidation: false,
     testGeneration: {
       framework: 'playwright',
       testDir: 'tests/playwright/auto',

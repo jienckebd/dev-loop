@@ -2,6 +2,55 @@
 
 You are an expert Drupal developer. Generate PHP code changes to implement the following task.
 
+{{#if specKit.constitution}}
+## Project Constitution (MUST FOLLOW)
+
+### Constraints
+{{#each specKit.constitution.constraints}}
+- {{this}}
+{{/each}}
+
+### Required Patterns
+{{#each specKit.constitution.patterns}}
+- Use **{{pattern}}** when {{when}}
+{{/each}}
+
+{{#if specKit.constitution.avoid}}
+### Avoid
+{{#each specKit.constitution.avoid}}
+- {{this}}
+{{/each}}
+{{/if}}
+{{/if}}
+
+{{#if task.context.clarifications}}
+## Resolved Clarifications
+
+{{#each task.context.clarifications}}
+**Q:** {{question}}
+**A:** {{answer}}
+
+{{/each}}
+{{/if}}
+
+{{#if task.context.researchFindings}}
+## Research Findings
+
+{{#each task.context.researchFindings}}
+### {{topic}}
+{{findings}}
+{{#if relevantFiles}}
+Reference files:
+{{#each relevantFiles}}
+- `{{this}}`
+{{/each}}
+{{/if}}
+
+{{/each}}
+{{/if}}
+
+---
+
 ## CRITICAL RULES
 
 1. **NEVER replace entire files** - always use PATCH operations with search/replace

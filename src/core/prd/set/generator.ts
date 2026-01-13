@@ -1,7 +1,7 @@
 import { stringify as yamlStringify, parse as yamlParse } from 'yaml';
 import * as fs from 'fs-extra';
 import * as path from 'path';
-import { ParsedPlanningDoc, ParsedPhase } from '../parser/planning-doc-parser';
+import { ParsedPlanningDoc, ParsedPhase, ParsedTask, SpecKitBlock } from '../parser/planning-doc-parser';
 import { DiscoveredPrdSet } from './discovery';
 import { BuildMode } from '../../conversation/types';
 import { logger } from '../../utils/logger';
@@ -145,27 +145,38 @@ export class PrdSetGenerator {
       dependencies: parsedDoc.dependencies || {},
       requirements: {
         idPattern: 'TASK-{id}',
-        phases: parsedDoc.phases.map(phase => ({
-          id: phase.id,
-          name: phase.name,
-          parallel: phase.parallel || false,
-          dependsOn: phase.dependsOn,
-          status: phase.status || 'pending',
-          checkpoint: phase.checkpoint || false,
-          file: parsedDoc.phases.length > 1
-            ? `phase${phase.id}_${this.slugify(phase.name)}.md.yml`
-            : undefined,
-          config: phase.config,
-          tasks: phase.tasks?.map(task => ({
-            id: task.id,
-            title: task.title,
-            description: task.description,
-            testStrategy: task.testStrategy,
-            validationChecklist: task.validationChecklist,
-            dependencies: task.dependencies,
-            files: task.files,
-          })),
-        })),
+        phases: parsedDoc.phases.map(phase => {
+          const phaseData: Record<string, any> = {
+            id: phase.id,
+            name: phase.name,
+            parallel: phase.parallel || false,
+            dependsOn: phase.dependsOn,
+            status: phase.status || 'pending',
+            checkpoint: phase.checkpoint || false,
+          };
+
+          // Multi-phase: include file reference, tasks live in phase file (not duplicated here)
+          if (parsedDoc.phases.length > 1) {
+            phaseData.file = `phase${phase.id}_${this.slugify(phase.name)}.md.yml`;
+            // Tasks NOT included - they live in the phase file to keep index slim
+          } else {
+            // Single phase: include tasks inline (no separate file)
+            if (phase.config) {
+              phaseData.config = phase.config;
+            }
+            phaseData.tasks = phase.tasks?.map(task => ({
+              id: task.id,
+              title: task.title,
+              description: task.description,
+              testStrategy: task.testStrategy,
+              validationChecklist: task.validationChecklist,
+              dependencies: task.dependencies,
+              files: task.files,
+            }));
+          }
+
+          return phaseData;
+        }),
       },
       testing: parsedDoc.testing || {
         directory: 'tests/playwright/',
@@ -184,6 +195,16 @@ export class PrdSetGenerator {
           prd: `${setId}_phase${phase.id}`,
           features: [phase.name.toLowerCase().replace(/\s+/g, '_')],
         })),
+      };
+    }
+
+    // Add specKit block if present (spec-kit integration)
+    if (parsedDoc.specKit) {
+      manifest.specKit = {
+        constitutionPath: parsedDoc.specKit.constitutionPath,
+        clarifications: parsedDoc.specKit.clarifications,
+        research: parsedDoc.specKit.research,
+        techStack: parsedDoc.specKit.techStack,
       };
     }
 
@@ -217,6 +238,11 @@ export class PrdSetGenerator {
     // Use .md.yml extension to match dev-loop PRD schema format
     const filename = `phase${phase.id}_${this.slugify(phase.name)}.md.yml`;
 
+    // Format tasks with clean structure (no duplication)
+    const formattedTasks = (phase.tasks || []).map(task => 
+      this.formatTaskClean(task, parsedDoc.specKit)
+    );
+
     const frontmatter: Record<string, any> = {
       prd: {
         id: prdId,
@@ -234,15 +260,7 @@ export class PrdSetGenerator {
           id: 1,
           name: phase.name,
           parallel: phase.parallel || false,
-          tasks: phase.tasks?.map(task => ({
-            id: task.id,
-            title: task.title,
-            description: task.description,
-            testStrategy: task.testStrategy,
-            validationChecklist: task.validationChecklist,
-            dependencies: task.dependencies,
-            files: task.files,
-          })),
+          tasks: formattedTasks,
         }],
       },
       testing: parsedDoc.testing || {
@@ -428,6 +446,9 @@ export class PrdSetGenerator {
                     (projectConfig as any).testing?.directory ||
                     'tests/playwright/';
 
+    // Get test command from config.testing.command
+    const testCommand = (projectConfig as any).testing?.command || 'npx playwright test';
+
     // Initialize testing section if missing
     if (!indexYaml.testing) {
       indexYaml.testing = {};
@@ -450,6 +471,12 @@ export class PrdSetGenerator {
       fixApplied = true;
     }
 
+    // Add command if missing (required for executability validation)
+    if (!indexYaml.testing.command) {
+      indexYaml.testing.command = testCommand;
+      fixApplied = true;
+    }
+
     // Remove incorrect 'runner' field if it exists at wrong level
     if ((indexYaml as any).runner) {
       delete (indexYaml as any).runner;
@@ -458,7 +485,7 @@ export class PrdSetGenerator {
 
     if (fixApplied) {
       if (this.debug) {
-        logger.debug(`[PrdSetGenerator] Fixing testing config: framework=${framework}, runner=${runner}, directory=${testDir}`);
+        logger.debug(`[PrdSetGenerator] Fixing testing config: framework=${framework}, runner=${runner}, directory=${testDir}, command=${testCommand}`);
       }
       const updatedIndexYaml = yamlStringify(indexYaml, { indent: 2, lineWidth: 100 });
       const updatedIndexContent = `---\n${updatedIndexYaml}---${indexContent.substring(indexMatch[0].length)}`;
@@ -689,6 +716,142 @@ export class PrdSetGenerator {
       await fs.writeFile(indexPath, `---\n${updatedYaml}---\n`, 'utf-8');
     }
     return fixApplied;
+  }
+
+  // ========== SPEC-KIT TASK FORMATTING ==========
+
+  /**
+   * Format task with clean structure (no title/description duplication)
+   */
+  private formatTaskClean(
+    task: ParsedTask,
+    specKit?: SpecKitBlock
+  ): Record<string, any> {
+    // Extract structured fields from description if not already parsed
+    const { title, priority, type, description, acceptanceCriteria, targetFiles, validation } =
+      this.parseTaskFields(task);
+
+    // Find relevant research for this task
+    const relevantResearch = specKit?.research?.filter(r =>
+      r.relevantFiles?.some(f => targetFiles.includes(f)) ||
+      description.toLowerCase().includes(r.topic.toLowerCase())
+    ) || [];
+
+    // Find relevant constitution rules
+    const relevantRules = specKit?.constitution?.patterns?.filter(p =>
+      description.toLowerCase().includes(p.pattern.toLowerCase())
+    ) || [];
+
+    const formatted: Record<string, any> = {
+      id: task.id,
+      title,                    // Short title only
+      priority,
+      type,
+      description,              // Clean description (no embedded metadata)
+      acceptanceCriteria,       // Structured array
+      targetFiles,              // Clean file paths
+      validation: {
+        commands: validation.commands || task.validationChecklist,
+        expectedOutcome: validation.expectedOutcome || 'All commands succeed',
+      },
+    };
+
+    // Add context if we have relevant research or rules
+    if (relevantResearch.length > 0 || relevantRules.length > 0) {
+      formatted.context = {
+        constitutionRules: relevantRules.map(r => `Use ${r.pattern} when ${r.when}`),
+        researchFindings: relevantResearch,
+        // Include relevant clarifications if any
+        clarifications: specKit?.clarifications?.filter(c =>
+          c.category === 'implementation' ||
+          description.toLowerCase().includes(c.question.toLowerCase().split(' ')[0])
+        ),
+      };
+    }
+
+    // Keep backward compatibility with old fields
+    if (task.testStrategy) {
+      formatted.testStrategy = task.testStrategy;
+    }
+    if (task.dependencies?.length) {
+      formatted.dependencies = task.dependencies;
+    }
+    if (task.files?.length && !targetFiles.length) {
+      formatted.files = task.files;
+    }
+
+    return formatted;
+  }
+
+  /**
+   * Parse structured fields from task description
+   */
+  private parseTaskFields(task: ParsedTask): {
+    title: string;
+    priority: string;
+    type: string;
+    description: string;
+    acceptanceCriteria: string[];
+    targetFiles: string[];
+    validation: { commands?: string[]; expectedOutcome?: string };
+  } {
+    // If already structured, use existing fields
+    if (task.acceptanceCriteria?.length || task.priority) {
+      return {
+        title: task.title.split('\n')[0].trim(),  // First line only
+        priority: task.priority || 'should',
+        type: task.type || 'functional',
+        description: task.description,
+        acceptanceCriteria: task.acceptanceCriteria || [],
+        targetFiles: task.targetFiles || task.files || [],
+        validation: task.validation || {},
+      };
+    }
+
+    // Parse from description if embedded (legacy format)
+    const lines = task.description.split('\n');
+    const title = task.title.split('\n')[0].replace(/^#+\s*/, '').trim();
+
+    // Extract priority
+    const priorityMatch = task.description.match(/\*\*Priority\*\*:\s*(\w+)/i);
+    const priority = priorityMatch?.[1]?.toLowerCase() || 'should';
+
+    // Extract type
+    const typeMatch = task.description.match(/\*\*Type\*\*:\s*(\w+)/i);
+    const type = typeMatch?.[1]?.toLowerCase() || 'functional';
+
+    // Extract acceptance criteria
+    const acMatch = task.description.match(/\*\*Acceptance Criteria\*\*:\s*\n((?:[-*]\s+[^\n]+\n?)+)/i);
+    const acceptanceCriteria = acMatch
+      ? acMatch[1].split('\n').filter(l => l.trim()).map(l => l.replace(/^[-*]\s+/, '').trim())
+      : [];
+
+    // Extract target files
+    const filesMatch = task.description.match(/\*\*Target Files\*\*:\s*\n((?:[-*]\s+[^\n]+\n?)+)/i);
+    const targetFiles = filesMatch
+      ? filesMatch[1].split('\n').filter(l => l.trim()).map(l => l.replace(/^[-*]\s+/, '').replace(/`/g, '').trim())
+      : task.files || [];
+
+    // Extract description (between **Description**: and next **)
+    const descMatch = task.description.match(/\*\*Description\*\*:\s*([^*]+)/i);
+    const cleanDescription = descMatch?.[1]?.trim() || 
+      task.description.split('\n').slice(1).join(' ').substring(0, 500).trim();
+
+    // Extract validation commands
+    const validMatch = task.description.match(/\*\*Validation\*\*:\s*\n```(?:bash)?\n([\s\S]+?)```/i);
+    const commands = validMatch
+      ? validMatch[1].split('\n').filter(l => l.trim())
+      : task.validationChecklist || [];
+
+    return {
+      title,
+      priority,
+      type,
+      description: cleanDescription || task.description.substring(0, 500),
+      acceptanceCriteria,
+      targetFiles,
+      validation: { commands },
+    };
   }
 }
 

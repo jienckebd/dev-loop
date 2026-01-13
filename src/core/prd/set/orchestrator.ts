@@ -15,6 +15,8 @@ import { logger } from '../../utils/logger';
 import * as fs from 'fs-extra';
 import * as path from 'path';
 import { TaskMasterBridge } from '../../execution/task-bridge';
+import { SpecKitContext, ResolvedClarification, ResearchFinding, ConstitutionRules } from '../parser/planning-doc-parser';
+import { emitEvent } from '../../utils/event-stream';
 
 export interface PrdSetMetadata {
   setId: string;
@@ -82,6 +84,55 @@ export class PrdSetOrchestrator {
    */
   getEffectiveConfig(): Config {
     return this.configContext.effectiveConfig;
+  }
+
+  /**
+   * Load spec-kit context from PRD set .speckit/ folder
+   * Emits events and tracks metrics for observability
+   */
+  private async loadSpecKitContext(prdSetPath: string): Promise<SpecKitContext | null> {
+    const specKitDir = path.join(prdSetPath, '.speckit');
+    const startTime = Date.now();
+
+    if (!await fs.pathExists(specKitDir)) {
+      if (this.debug) {
+        logger.debug(`[PrdSetOrchestrator] No .speckit/ folder found at ${prdSetPath}`);
+      }
+      return null;
+    }
+
+    try {
+      const [clarifications, research, constitution] = await Promise.all([
+        fs.readJson(path.join(specKitDir, 'clarifications.json')).catch(() => [] as ResolvedClarification[]),
+        fs.readJson(path.join(specKitDir, 'research.json')).catch(() => [] as ResearchFinding[]),
+        fs.readJson(path.join(specKitDir, 'constitution.json')).catch(() => null as ConstitutionRules | null),
+      ]);
+
+      const loadTimeMs = Date.now() - startTime;
+
+      // Emit event for observability
+      emitEvent('speckit:context_loaded', {
+        prdSetPath,
+        setId: path.basename(prdSetPath),
+        clarificationsCount: clarifications.length,
+        researchCount: research.length,
+        hasConstitution: !!constitution,
+        loadTimeMs,
+      }, { severity: 'info' });
+
+      logger.info(`[PrdSetOrchestrator] Loaded spec-kit context: ${clarifications.length} clarifications, ${research.length} research findings (${loadTimeMs}ms)`);
+
+      return { clarifications, research, constitution };
+    } catch (error) {
+      emitEvent('speckit:load_failed', {
+        prdSetPath,
+        setId: path.basename(prdSetPath),
+        error: error instanceof Error ? error.message : String(error),
+      }, { severity: 'warn' });
+
+      logger.warn(`[PrdSetOrchestrator] Failed to load spec-kit context: ${error}`);
+      return null;
+    }
   }
 
   /**
@@ -164,6 +215,12 @@ export class PrdSetOrchestrator {
       // For now, we store the effective config for use by individual PRD executions
     }
 
+    // Load and inject spec-kit context if available
+    const specKitContext = await this.loadSpecKitContext(discoveredSet.directory);
+    if (specKitContext) {
+      this.workflowEngine.setSpecKitContext(specKitContext);
+    }
+
     // Initialize PRD set coordination
     await this.coordinator.coordinatePrdSet(discoveredSet.prdSet);
 
@@ -221,29 +278,34 @@ export class PrdSetOrchestrator {
       progressReport.startTime = startTime;
       await this.progressTracker.saveMetrics(progressReport);
 
-      // Validate prerequisites for all PRDs in this level
-      for (const prdId of level.prds) {
-        const prd = discoveredSet.prdSet.prds.find(p => p.id === prdId);
-        if (!prd) {
-          result.errors.push(`PRD not found: ${prdId}`);
-          result.failedPrds.push(prdId);
-          continue;
-        }
+      // Validate prerequisites for all PRDs in this level (unless skipped in config)
+      const skipPrerequisiteValidation = this.baseConfig.autonomous?.skipPrerequisiteValidation;
+      if (!skipPrerequisiteValidation) {
+        for (const prdId of level.prds) {
+          const prd = discoveredSet.prdSet.prds.find(p => p.id === prdId);
+          if (!prd) {
+            result.errors.push(`PRD not found: ${prdId}`);
+            result.failedPrds.push(prdId);
+            continue;
+          }
 
-        try {
-          const prereqResult = await this.prerequisiteValidator.validatePrerequisites(prd.metadata);
-          if (!prereqResult.success) {
-            result.errors.push(`Prerequisites failed for PRD ${prdId}: ${prereqResult.errors.join(', ')}`);
+          try {
+            const prereqResult = await this.prerequisiteValidator.validatePrerequisites(prd.metadata);
+            if (!prereqResult.success) {
+              result.errors.push(`Prerequisites failed for PRD ${prdId}: ${prereqResult.errors.join(', ')}`);
+              result.failedPrds.push(prdId);
+              await this.coordinator.updatePrdState(prdId, { status: 'blocked' });
+              continue;
+            }
+          } catch (error: any) {
+            result.errors.push(`Prerequisite validation error for PRD ${prdId}: ${error.message}`);
             result.failedPrds.push(prdId);
             await this.coordinator.updatePrdState(prdId, { status: 'blocked' });
             continue;
           }
-        } catch (error: any) {
-          result.errors.push(`Prerequisite validation error for PRD ${prdId}: ${error.message}`);
-          result.failedPrds.push(prdId);
-          await this.coordinator.updatePrdState(prdId, { status: 'blocked' });
-          continue;
         }
+      } else if (this.debug) {
+        logger.debug('[PrdSetOrchestrator] Skipping prerequisite validation (config: skipPrerequisiteValidation=true)');
       }
 
       // Collect PRDs eligible for execution in this level
@@ -389,7 +451,7 @@ export class PrdSetOrchestrator {
 
     // Auto-generate report after completion
     try {
-      const { PrdReportGenerator } = require('./prd-report-generator');
+      const { PrdReportGenerator } = require('../../reporting/prd-report-generator');
       const reportPath = await PrdReportGenerator.autoGenerateReport(discoveredSet.setId);
       if (reportPath && this.debug) {
         logger.debug(`[PrdSetOrchestrator] Auto-generated report: ${reportPath}`);

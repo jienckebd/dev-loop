@@ -53,7 +53,7 @@ export class ObservationLoader {
     this.validator = new SchemaValidator({
       autoFix: true,
       autoMigrate: true,
-      backup: true,
+      backup: false, // Disabled: backup files should never be created
       debug: this.debug,
     });
   }

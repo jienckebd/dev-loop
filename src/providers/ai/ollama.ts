@@ -1,13 +1,58 @@
 import { AIProvider, AIProviderConfig } from './interface';
 import { CodeChanges, TaskContext, LogAnalysis } from '../../types';
 import { extractCodeChanges, JsonParsingContext } from './json-parser';
+import { GenericSessionManager } from './generic-session-manager';
+import { Session, SessionContext } from './session-manager';
+import { logger } from '../../core/utils/logger';
 
 export class OllamaProvider implements AIProvider {
   public name = 'ollama';
   private baseUrl: string;
+  private lastTokens: { input?: number; output?: number } = {};
+  private sessionManager: GenericSessionManager | null = null;
 
   constructor(private config: AIProviderConfig) {
     this.baseUrl = process.env.OLLAMA_BASE_URL || 'http://localhost:11434';
+
+    // Initialize session manager if enabled
+    const sessionConfig = (config as any).sessionManagement;
+    if (sessionConfig?.enabled !== false) {
+      this.sessionManager = new GenericSessionManager({
+        providerName: 'ollama',
+        maxSessionAge: sessionConfig?.maxSessionAge,
+        maxHistoryItems: sessionConfig?.maxHistoryItems,
+        enabled: sessionConfig?.enabled,
+      });
+      logger.debug('[OllamaProvider] Session management initialized');
+    }
+  }
+
+  /**
+   * Get last token usage from the most recent API call
+   */
+  public getLastTokens(): { input?: number; output?: number } {
+    return { ...this.lastTokens };
+  }
+
+  /**
+   * Get session by ID
+   */
+  getSession(sessionId: string): Session | null {
+    return this.sessionManager?.getSession(sessionId) || null;
+  }
+
+  /**
+   * Get or create session for a given context
+   */
+  getOrCreateSession(context: SessionContext): Session | null {
+    return this.sessionManager?.getOrCreateSession(context) || null;
+  }
+
+  /**
+   * Check if provider supports sessions
+   */
+  supportsSessions(): boolean {
+    return this.sessionManager !== null;
   }
 
   async generateCode(prompt: string, context: TaskContext): Promise<CodeChanges> {
@@ -50,8 +95,20 @@ ${prompt}`;
         throw new Error(`Ollama API error: ${response.statusText}`);
       }
 
-      const data = await response.json() as { response?: string };
+      const data = await response.json() as { 
+        response?: string;
+        prompt_eval_count?: number;
+        eval_count?: number;
+      };
       const text = data.response || '';
+
+      // Track token usage if available
+      if (data.prompt_eval_count !== undefined || data.eval_count !== undefined) {
+        this.lastTokens = {
+          input: data.prompt_eval_count,
+          output: data.eval_count,
+        };
+      }
 
       // Use shared JSON parser for consistent extraction
       const parsingContext: JsonParsingContext = {

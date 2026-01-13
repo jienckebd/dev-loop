@@ -17,6 +17,7 @@ import { CodebaseInsightExtractor, CodebaseInsight } from './codebase-insight-ex
 import { ConversationManager } from '../../conversation/conversation-manager';
 import { PRDBuildingProgressTracker } from '../../tracking/prd-building-progress-tracker';
 import { InteractivePromptSystem } from '../builder/interactive-prompt-system';
+import { filterAndAutoApply } from '../builder/speckit-utils';
 import { PromptSelector } from '../../../prompts/code-generation/prompt-selector';
 import { AIProvider, AIProviderConfig } from '../../../providers/ai/interface';
 import { BuildMode } from '../../conversation/types';
@@ -227,31 +228,46 @@ export class AIRefinementOrchestrator {
     if (autoApprove) {
       logger.debug(`[AIRefinementOrchestrator] Using streamlined auto-approve path`);
       
+      // Import build metrics for timing instrumentation
+      const { getBuildMetrics } = await import('../../metrics/build');
+      const buildMetrics = getBuildMetrics();
+      
       // Skip all pre/mid/post phase questions and generate enhancements directly
       // Run each enhancer once (no iteration loops)
       // Run validation only at the very end
       
+      // Schema Enhancement with timing
+      const schemaStart = Date.now();
       schemas = await this.schemaEnhancer.enhanceSchemas(currentPrd, {
         conversationId: context.conversationId,
         iteration: 0,
       });
+      buildMetrics.recordTiming('schemaEnhancementMs', Date.now() - schemaStart);
       
+      // Test Planning with timing
+      const testStart = Date.now();
       tests = await this.testPlanner.generateTestPlans(currentPrd, {
         conversationId: context.conversationId,
         iteration: 0,
       });
+      buildMetrics.recordTiming('testPlanningMs', Date.now() - testStart);
       
+      // Feature Enhancement with timing
+      const featureStart = Date.now();
       features = await this.featureEnhancer.enhanceFeatures(currentPrd, {
         conversationId: context.conversationId,
         iteration: 0,
       });
+      buildMetrics.recordTiming('featureEnhancementMs', Date.now() - featureStart);
       
-      // Single validation at end instead of after each phase
+      // Single validation at end instead of after each phase with timing
+      const validationStart = Date.now();
       validation = await this.executabilityValidator.validateExecutability(currentPrd, {
         schemas,
         tests,
         features,
       });
+      buildMetrics.recordTiming('validationMs', Date.now() - validationStart);
       
       executable = validation.executable && validation.score === 100;
       iteration = 1; // Single iteration for streamlined path
@@ -433,11 +449,27 @@ export class AIRefinementOrchestrator {
       );
 
       if (prePhaseQuestions.length > 0) {
-        const answers = await this.config.interactivePrompts.askRefinementQuestions(
+        // Use spec-kit utility to filter and auto-apply high-confidence answers
+        const specKitConfig = this.config.projectConfig?.prdBuilding?.specKit;
+        const { autoApplied, needsPrompt, answers: autoAnswers } = filterAndAutoApply(
           prePhaseQuestions,
-          phase
+          specKitConfig,
+          `[Refinement:${phase}]`
         );
-        prePhaseAnswers = new Map([...prePhaseAnswers, ...answers]);
+
+        // Merge auto-applied answers into prePhaseAnswers
+        for (const [id, answer] of autoAnswers) {
+          prePhaseAnswers.set(id, answer);
+        }
+
+        // Only prompt for low-confidence questions
+        if (needsPrompt.length > 0) {
+          const userAnswers = await this.config.interactivePrompts.askRefinementQuestions(
+            needsPrompt,
+            phase
+          );
+          prePhaseAnswers = new Map([...prePhaseAnswers, ...userAnswers]);
+        }
       }
     }
 
@@ -496,10 +528,24 @@ export class AIRefinementOrchestrator {
       );
 
       if (midPhaseQuestions.length > 0) {
-        const midPhaseAnswers = await this.config.interactivePrompts.askRefinementQuestions(
+        // Use spec-kit utility to filter and auto-apply high-confidence answers
+        const specKitConfig = this.config.projectConfig?.prdBuilding?.specKit;
+        const { needsPrompt, answers: autoAnswers } = filterAndAutoApply(
           midPhaseQuestions,
-          phase
+          specKitConfig,
+          `[Refinement:${phase}:mid]`
         );
+
+        let midPhaseAnswers = new Map<string, any>(autoAnswers);
+
+        // Only prompt for low-confidence questions
+        if (needsPrompt.length > 0) {
+          const userAnswers = await this.config.interactivePrompts.askRefinementQuestions(
+            needsPrompt,
+            phase
+          );
+          midPhaseAnswers = new Map([...midPhaseAnswers, ...userAnswers]);
+        }
 
         // Use mid-phase answers to refine enhancements
         if (phase === 'schema' && midPhaseAnswers.has('mid-schema-low-confidence')) {
@@ -539,10 +585,24 @@ export class AIRefinementOrchestrator {
       );
 
       if (postPhaseQuestions.length > 0) {
-        const postPhaseAnswers = await this.config.interactivePrompts.askRefinementQuestions(
+        // Use spec-kit utility to filter and auto-apply high-confidence answers
+        const specKitConfig = this.config.projectConfig?.prdBuilding?.specKit;
+        const { needsPrompt, answers: autoAnswers } = filterAndAutoApply(
           postPhaseQuestions,
-          phase
+          specKitConfig,
+          `[Refinement:${phase}:post]`
         );
+
+        let postPhaseAnswers = new Map<string, any>(autoAnswers);
+
+        // Only prompt for low-confidence questions
+        if (needsPrompt.length > 0) {
+          const userAnswers = await this.config.interactivePrompts.askRefinementQuestions(
+            needsPrompt,
+            phase
+          );
+          postPhaseAnswers = new Map([...postPhaseAnswers, ...userAnswers]);
+        }
 
         // Extract refine items from answers
         if (postPhaseAnswers.has(`post-${phase}-errors`)) {

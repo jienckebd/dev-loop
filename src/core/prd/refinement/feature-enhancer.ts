@@ -293,12 +293,13 @@ export class FeatureEnhancer {
 
     if (enhancement.type === 'framework-config' && codebaseAnalysis.frameworkPlugin) {
       // Enhance framework config with more specific patterns
+      const fp = codebaseAnalysis.frameworkPlugin;
       const enhancedConfig = {
         ...enhancement.config,
         framework: {
           ...enhancement.config.framework,
-          searchDirs: codebaseAnalysis.frameworkPlugin.getSearchDirs(),
-          excludeDirs: codebaseAnalysis.frameworkPlugin.getExcludeDirs(),
+          ...(typeof fp.getSearchDirs === 'function' && { searchDirs: fp.getSearchDirs() }),
+          ...(typeof fp.getExcludeDirs === 'function' && { excludeDirs: fp.getExcludeDirs() }),
         },
       };
 
@@ -328,7 +329,7 @@ export class FeatureEnhancer {
     const errorGuidance: Record<string, string> = {};
 
     // Get framework-specific error patterns
-    if (frameworkPlugin) {
+    if (frameworkPlugin && typeof frameworkPlugin.getErrorPatterns === 'function') {
       const frameworkPatterns = frameworkPlugin.getErrorPatterns();
       Object.assign(errorGuidance, frameworkPatterns);
     }
@@ -539,8 +540,10 @@ export class FeatureEnhancer {
       return null;
     }
 
-    // Get framework default config
-    const frameworkDefaultConfig = frameworkPlugin.getDefaultConfig();
+    // Get framework default config (with guard for method existence)
+    const frameworkDefaultConfig = typeof frameworkPlugin.getDefaultConfig === 'function'
+      ? frameworkPlugin.getDefaultConfig()
+      : {};
 
     // Build framework-specific enhancement config
     const frameworkConfig: Record<string, any> = {

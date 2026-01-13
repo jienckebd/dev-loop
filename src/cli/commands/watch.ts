@@ -231,6 +231,7 @@ export async function watchCommand(options: {
     let iteration = 0;
     let shouldContinue = true;
     let consecutiveNoTasks = 0;
+    let consecutiveStuckIterations = 0;
 
     const shutdown = async () => {
       shouldContinue = false;
@@ -266,6 +267,7 @@ export async function watchCommand(options: {
 
         if (result.completed) {
           consecutiveNoTasks = 0;
+          consecutiveStuckIterations = 0;  // Reset stuck counter when progress is made
           statusSpinner.succeed(`Iteration ${iteration}: Task completed`);
           console.log(chalk.green(`  ✓ Task: ${result.taskId || 'N/A'}`));
         } else if (result.noTasks) {
@@ -338,8 +340,18 @@ export async function watchCommand(options: {
               process.exit(0);
             } else {
               const status = await prdTracker.getCompletionStatus();
+              consecutiveStuckIterations = (consecutiveStuckIterations || 0) + 1;
               console.log(chalk.yellow(`  Tasks complete, but tests not passing or blocked tasks exist.`));
               console.log(chalk.yellow(`  Pending: ${status.pendingTasks}, Blocked: ${status.blockedTasks}, Tests: ${status.testsPassing ? 'Passing' : 'Failing'}`));
+              console.log(chalk.yellow(`  Stuck iterations: ${consecutiveStuckIterations}/10`));
+
+              // Exit if stuck for too long (tasks pending but filtered by retry limit)
+              if (consecutiveStuckIterations >= 10) {
+                console.log(chalk.red(`  Stuck for ${consecutiveStuckIterations} iterations - exiting to prevent infinite loop.`));
+                console.log(chalk.yellow(`  Consider increasing maxTaskRetries in devloop.config.js or manually completing blocked tasks.`));
+                await removePidFile();
+                process.exit(1);
+              }
 
               // Wait a bit longer before checking again when tests are failing
               await new Promise((resolve) => setTimeout(resolve, 10000));

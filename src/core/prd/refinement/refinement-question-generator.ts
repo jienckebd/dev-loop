@@ -9,7 +9,7 @@ import { ParsedPlanningDoc } from '../parser/planning-doc-parser';
 import { CodebaseAnalysisResult } from '../../analysis/codebase-analyzer';
 import { ExecutabilityValidationResult } from './executability-validator';
 import { CodebaseInsight } from './codebase-insight-extractor';
-import { Question, QuestionType, Answer } from '../../conversation/types';
+import { Question, QuestionType, Answer, ClarificationCategory } from '../../conversation/types';
 import { logger } from '../../utils/logger';
 import { TextGenerationAdapter, TextGenerationOptions } from './text-generation-adapter';
 import { AIProvider, AIProviderConfig } from '../../../providers/ai/interface';
@@ -19,17 +19,26 @@ import { Config } from '../../../config/schema/core';
 import { PatternEntry, ObservationEntry } from '../learning/types';
 
 /**
- * Refinement Question
+ * Refinement question type (different from QuestionType which is the UI control type)
  */
-export interface RefinementQuestion {
-  id: string;
-  type: 'clarifying' | 'codebase-focused' | 'prioritization';
-  phase: 'schema' | 'test' | 'feature';
-  text: string;
-  options?: string[]; // For multiple-choice
-  required: boolean;
-  context?: string; // Codebase context that triggered this question
-  hint?: string; // Additional guidance
+export type RefinementQuestionType = 'clarifying' | 'codebase-focused' | 'prioritization';
+
+/**
+ * Refinement phase
+ */
+export type RefinementPhase = 'schema' | 'test' | 'feature';
+
+/**
+ * Refinement Question - extends base Question with refinement-specific fields.
+ * Inherits spec-kit fields: confidence, inferredAnswer, inferenceSource, category
+ */
+export interface RefinementQuestion extends Question {
+  /** Refinement-specific question type (different from Question.type which is QuestionType) */
+  refinementType: RefinementQuestionType;
+  /** Which refinement phase this question applies to */
+  phase: RefinementPhase;
+  /** Additional guidance for the user */
+  hint?: string;
 }
 
 /**
@@ -125,7 +134,8 @@ export class RefinementQuestionGenerator {
       logger.debug(`[RefinementQuestionGenerator] No framework plugin detected but framework.type='${configuredFrameworkType}' is configured. Generating questions for configured framework.`);
       questions.push({
         id: `configured-framework-${phase}`,
-        type: 'codebase-focused',
+        refinementType: 'codebase-focused',
+        type: 'multiple-choice',
         phase,
         text: `The project is configured to use ${configuredFrameworkType} framework. Should I generate ${configuredFrameworkType}-specific ${phase} configurations?`,
         options: [
@@ -210,7 +220,8 @@ export class RefinementQuestionGenerator {
       if (lowConfidenceSchemas.length > 0) {
         questions.push({
           id: `mid-${phase}-low-confidence`,
-          type: 'codebase-focused',
+          refinementType: 'codebase-focused',
+          type: 'multiple-choice',
           phase,
           text: `Found ${lowConfidenceSchemas.length} schema(s) with low confidence. Should I refine them using codebase patterns?`,
           options: ['Yes, refine using patterns', 'No, generate from scratch', 'Show me the patterns first'],
@@ -227,7 +238,8 @@ export class RefinementQuestionGenerator {
       if (lowCoverageTasks.length > 0) {
         questions.push({
           id: `mid-${phase}-low-coverage`,
-          type: 'clarifying',
+          refinementType: 'clarifying',
+          type: 'multiple-choice',
           phase,
           text: `Found ${lowCoverageTasks.length} task(s) with minimal test coverage. Should I add more test cases?`,
           options: ['Yes, add more cases', 'No, keep minimal', 'Show me existing test patterns'],
@@ -264,7 +276,8 @@ export class RefinementQuestionGenerator {
       if (phaseErrors.length > 0) {
         questions.push({
           id: `post-${phase}-errors`,
-          type: 'prioritization',
+          refinementType: 'prioritization',
+          type: 'multi-select',
           phase,
           text: `Found ${phaseErrors.length} issue(s) in ${phase} enhancement. Which should be refined?`,
           options: phaseErrors.map(e => `${e.severity}: ${e.message}`),
@@ -283,7 +296,8 @@ export class RefinementQuestionGenerator {
       if (incompleteSchemas.length > 0) {
         questions.push({
           id: `post-${phase}-incomplete`,
-          type: 'prioritization',
+          refinementType: 'prioritization',
+          type: 'multi-select',
           phase,
           text: `Found ${incompleteSchemas.length} incomplete schema(s). Should I refine them?`,
           options: incompleteSchemas.map((s: any) => s.id),
@@ -300,7 +314,8 @@ export class RefinementQuestionGenerator {
       if (incompletePlans.length > 0) {
         questions.push({
           id: `post-${phase}-incomplete`,
-          type: 'prioritization',
+          refinementType: 'prioritization',
+          type: 'multi-select',
           phase,
           text: `Found ${incompletePlans.length} test plan(s) without test cases. Should I generate test cases for them?`,
           options: incompletePlans.map((tp: any) => `${tp.taskId}: ${tp.description}`),
@@ -380,7 +395,8 @@ export class RefinementQuestionGenerator {
         if (schemaTools.length > 0) {
           questions.push({
             id: 'schema-quality-tools',
-            type: 'codebase-focused',
+            refinementType: 'codebase-focused',
+            type: 'multiple-choice',
             phase: 'schema',
             text: configuredFrameworkType && configuredFrameworkType !== 'composite'
               ? `${configuredFrameworkType} framework provides ${schemaTools.length} code quality tool(s) (${schemaTools.map(t => t.name).join(', ')}). Should I use these to validate generated schemas?`
@@ -390,6 +406,11 @@ export class RefinementQuestionGenerator {
             context: configuredFrameworkType && configuredFrameworkType !== 'composite'
               ? `Configured framework: ${configuredFrameworkType}, Available tools: ${schemaTools.map(t => `${t.name} (${t.purpose})`).join(', ')}`
               : `Framework: ${frameworkName}, Available tools: ${schemaTools.map(t => `${t.name} (${t.purpose})`).join(', ')}`,
+            // SPEC-KIT FIELDS - auto-apply: framework provides tools, always use them
+            confidence: 0.95,
+            inferredAnswer: 'Yes, validate with tools',
+            inferenceSource: 'Framework provides code quality tools - always use them',
+            category: 'implementation',
           });
         }
       }
@@ -400,7 +421,8 @@ export class RefinementQuestionGenerator {
         if (schemaDebt.length > 0) {
           questions.push({
             id: 'schema-tech-debt',
-            type: 'codebase-focused',
+            refinementType: 'codebase-focused',
+            type: 'confirm',
             phase: 'schema',
             text: configuredFrameworkType && configuredFrameworkType !== 'composite'
               ? `${configuredFrameworkType} framework has ${schemaDebt.length} tech debt indicator(s) for deprecated patterns. Should I avoid these patterns in generated schemas?`
@@ -410,6 +432,11 @@ export class RefinementQuestionGenerator {
             context: configuredFrameworkType && configuredFrameworkType !== 'composite'
               ? `Configured framework: ${configuredFrameworkType}, Deprecated patterns: ${schemaDebt.map(t => t.description).join('; ')}`
               : `Framework: ${frameworkName}, Deprecated patterns: ${schemaDebt.map(t => t.description).join('; ')}`,
+            // SPEC-KIT FIELDS - auto-apply: always avoid deprecated APIs
+            confidence: 0.99,
+            inferredAnswer: 'Yes, avoid deprecated patterns',
+            inferenceSource: 'Best practice: always avoid deprecated APIs and obsolete patterns',
+            category: 'implementation',
           });
         }
       }
@@ -426,7 +453,8 @@ export class RefinementQuestionGenerator {
       if (testTools.length > 0 || frameworkPlugin.getTestTemplate || (configuredFrameworkType && configuredFrameworkType !== 'composite')) {
         questions.push({
           id: 'test-framework-template',
-          type: 'codebase-focused',
+          refinementType: 'codebase-focused',
+          type: 'multiple-choice',
           phase: 'test',
           text: configuredFrameworkType && configuredFrameworkType !== 'composite' && configuredTestFramework
             ? `${configuredFrameworkType} project uses ${configuredTestFramework} for testing. Should I generate ${configuredTestFramework} E2E test plans following ${configuredFrameworkType} patterns?`
@@ -447,6 +475,15 @@ export class RefinementQuestionGenerator {
           hint: configuredFrameworkType && configuredFrameworkType !== 'composite' && configuredTestFramework
             ? `${configuredFrameworkType} + ${configuredTestFramework} is configured in project config - recommended for this project`
             : undefined,
+          // SPEC-KIT FIELDS - auto-apply if framework is configured
+          confidence: configuredFrameworkType && configuredFrameworkType !== 'composite' ? 0.9 : 0.7,
+          inferredAnswer: configuredFrameworkType && configuredFrameworkType !== 'composite' && configuredTestFramework
+            ? `Yes, generate ${configuredTestFramework} E2E tests for ${configuredFrameworkType} (recommended)`
+            : 'Yes, use framework patterns',
+          inferenceSource: configuredFrameworkType && configuredFrameworkType !== 'composite'
+            ? `Framework ${configuredFrameworkType} is explicitly configured - use its patterns`
+            : 'Framework detected - using framework-specific patterns',
+          category: 'implementation',
         });
       }
     }
@@ -458,7 +495,8 @@ export class RefinementQuestionGenerator {
         if (featureRecommendations.length > 0) {
           questions.push({
             id: 'feature-recommendations',
-            type: 'codebase-focused',
+            refinementType: 'codebase-focused',
+            type: 'multiple-choice',
             phase: 'feature',
             text: configuredFrameworkType && configuredFrameworkType !== 'composite'
               ? `${configuredFrameworkType} framework suggests ${featureRecommendations.length} pattern(s) for new features. Should I follow these recommendations?`
@@ -468,6 +506,11 @@ export class RefinementQuestionGenerator {
             context: configuredFrameworkType && configuredFrameworkType !== 'composite'
               ? `Configured framework: ${configuredFrameworkType}, Recommendations: ${featureRecommendations.map(r => r.description).join('; ')}`
               : `Framework: ${frameworkName}, Recommendations: ${featureRecommendations.map(r => r.description).join('; ')}`,
+            // SPEC-KIT FIELDS - auto-apply: follow framework recommendations
+            confidence: 0.85,
+            inferredAnswer: 'Yes, use recommendations',
+            inferenceSource: 'Framework provides recommendations - best practice to follow them',
+            category: 'implementation',
           });
         }
       }
@@ -519,9 +562,13 @@ export class RefinementQuestionGenerator {
 
     // CRITICAL: Framework and directory question - prioritize configured Playwright framework
     if (testFramework && testDir) {
+      const defaultOption = Object.keys(helperMethods).length > 0
+        ? `Use ${Object.keys(helperMethods)[0]} helper method from wizard-helper.ts`
+        : `Generate ${testFramework} E2E tests following project patterns`;
       questions.push({
         id: 'test-framework-pattern',
-        type: 'codebase-focused',
+        refinementType: 'codebase-focused',
+        type: 'multiple-choice',
         phase: 'test',
         text: `The project uses ${testFramework} tests in ${testDir}. Should I generate ${testFramework} E2E test plans following the project's test patterns?`,
         options: Object.keys(helperMethods).length > 0
@@ -539,6 +586,11 @@ export class RefinementQuestionGenerator {
         hint: Object.keys(helperMethods).length > 0
           ? `Available helper methods from wizard-helper.ts: ${Object.keys(helperMethods).slice(0, 3).join(', ')}${Object.keys(helperMethods).length > 3 ? '...' : ''}`
           : `Tests should be placed in ${testDir} using ${testFramework} framework`,
+        // SPEC-KIT FIELDS - auto-apply: use configured test framework
+        confidence: 0.9,
+        inferredAnswer: defaultOption,
+        inferenceSource: `Test framework ${testFramework} is configured - use project patterns`,
+        category: 'implementation',
       });
     }
 
@@ -546,7 +598,8 @@ export class RefinementQuestionGenerator {
     if (isolationRules.length > 0) {
       questions.push({
         id: 'test-isolation',
-        type: 'codebase-focused',
+        refinementType: 'codebase-focused',
+        type: 'multiple-choice',
         phase: 'test',
         text: `CRITICAL: The project has ${isolationRules.length} test isolation rule(s) to prevent test pollution. Should I enforce these rules in generated test plans?`,
         options: [
@@ -557,6 +610,11 @@ export class RefinementQuestionGenerator {
         required: true,
         context: `Test isolation is CRITICAL for ${testFramework} tests - prevents test pollution and site breakage`,
         hint: `First rule: ${isolationRules[0]?.substring(0, 100)}${isolationRules[0]?.length > 100 ? '...' : ''}`,
+        // SPEC-KIT FIELDS - auto-apply: always enforce isolation rules
+        confidence: 0.95,
+        inferredAnswer: 'Yes, enforce all isolation rules (recommended)',
+        inferenceSource: 'Test isolation rules are configured - always enforce them',
+        category: 'testing',
       });
     }
 
@@ -580,25 +638,37 @@ export class RefinementQuestionGenerator {
       if (schemaFiles > 0) {
         questions.push({
           id: 'schema-pattern-follow',
-          type: 'codebase-focused',
+          refinementType: 'codebase-focused',
+          type: 'multiple-choice',
           phase: 'schema',
           text: `I found ${schemaFiles} existing schema file(s) in the codebase. Should I follow these patterns when generating new schemas?`,
           options: ['Yes, use existing patterns', 'No, create new patterns', 'Show me the existing schemas first'],
           required: false,
           context: `Found ${schemaFiles} schema-related files`,
+          // SPEC-KIT FIELDS - auto-apply: follow existing patterns
+          confidence: 0.9,
+          inferredAnswer: 'Yes, use existing patterns',
+          inferenceSource: 'Existing schema patterns found - follow codebase conventions',
+          category: 'implementation',
         });
       }
 
       if (codebaseAnalysis.schemaPatterns && codebaseAnalysis.schemaPatterns.length > 0) {
         questions.push({
           id: 'schema-pattern-type',
-          type: 'codebase-focused',
+          refinementType: 'codebase-focused',
+          type: 'multiple-choice',
           phase: 'schema',
           text: `I detected schema pattern: ${codebaseAnalysis.schemaPatterns[0].type}. Should I use this pattern?`,
           options: ['Yes, use this pattern', 'No, use different pattern', 'Ask for each schema'],
           required: false,
           context: `Pattern: ${codebaseAnalysis.schemaPatterns[0].pattern}`,
           hint: codebaseAnalysis.schemaPatterns[0].examples?.[0],
+          // SPEC-KIT FIELDS - auto-apply: use detected patterns
+          confidence: 0.85,
+          inferredAnswer: 'Yes, use this pattern',
+          inferenceSource: 'Schema pattern detected in codebase - follow existing conventions',
+          category: 'implementation',
         });
       }
 
@@ -608,12 +678,18 @@ export class RefinementQuestionGenerator {
         if (schemaScenarios.patterns && schemaScenarios.patterns.length > 0) {
           questions.push({
             id: 'schema-framework-patterns',
-            type: 'codebase-focused',
+            refinementType: 'codebase-focused',
+            type: 'multiple-choice',
             phase: 'schema',
             text: `Framework provides ${schemaScenarios.patterns.length} schema pattern(s): ${schemaScenarios.patterns.slice(0, 2).join(', ')}${schemaScenarios.patterns.length > 2 ? '...' : ''}. Should I use these patterns?`,
             options: ['Yes, use framework patterns', 'No, use codebase patterns', 'Show all patterns'],
             required: false,
             context: `Framework patterns: ${schemaScenarios.patterns.join(', ')}`,
+            // SPEC-KIT FIELDS - auto-apply: use framework patterns
+            confidence: 0.9,
+            inferredAnswer: 'Yes, use framework patterns',
+            inferenceSource: 'Framework provides schema patterns - use them',
+            category: 'implementation',
           });
         }
       }
@@ -628,12 +704,18 @@ export class RefinementQuestionGenerator {
       if (testFiles > 0) {
         questions.push({
           id: 'test-pattern-follow',
-          type: 'codebase-focused',
+          refinementType: 'codebase-focused',
+          type: 'multiple-choice',
           phase: 'test',
           text: `I found ${testFiles} existing test file(s). Should I follow the same test structure and patterns?`,
           options: ['Yes, use existing patterns', 'No, create new structure', 'Show me test examples'],
           required: false,
           context: `Found ${testFiles} test files`,
+          // SPEC-KIT FIELDS - auto-apply: follow existing test patterns
+          confidence: 0.9,
+          inferredAnswer: 'Yes, use existing patterns',
+          inferenceSource: 'Existing test patterns found - follow codebase conventions',
+          category: 'testing',
         });
       }
 
@@ -647,10 +729,14 @@ export class RefinementQuestionGenerator {
         const detectedTestFramework = codebaseAnalysis.testPatterns[0].framework;
         // Use configured framework if available, otherwise use detected
         const testFramework = configuredTestFramework || detectedTestFramework;
+        const defaultAnswer = configuredTestFramework
+          ? `Yes, generate ${configuredTestFramework} E2E tests (recommended)`
+          : 'Yes, use ' + detectedTestFramework;
         
         questions.push({
           id: 'test-framework',
-          type: 'codebase-focused',
+          refinementType: 'codebase-focused',
+          type: 'multiple-choice',
           phase: 'test',
           text: configuredTestFramework
             ? `The project is configured to use ${configuredTestFramework} tests in ${configuredTestDir || 'tests/'}. Should I generate ${configuredTestFramework} E2E test plans?`
@@ -669,12 +755,20 @@ export class RefinementQuestionGenerator {
           hint: configuredTestFramework
             ? `${configuredTestFramework} is configured in testGeneration config - recommended for this project`
             : undefined,
+          // SPEC-KIT FIELDS - auto-apply: use configured/detected test framework
+          confidence: configuredTestFramework ? 0.95 : 0.85,
+          inferredAnswer: defaultAnswer,
+          inferenceSource: configuredTestFramework
+            ? `Test framework ${configuredTestFramework} is configured - use it`
+            : `Test framework ${detectedTestFramework} detected - follow codebase conventions`,
+          category: 'testing',
         });
       } else if (configuredTestFramework && configuredTestDir) {
         // No detected patterns but config specifies framework - ask about configured framework
         questions.push({
           id: 'test-framework-configured',
-          type: 'codebase-focused',
+          refinementType: 'codebase-focused',
+          type: 'multiple-choice',
           phase: 'test',
           text: `The project is configured to use ${configuredTestFramework} tests in ${configuredTestDir}. Should I generate ${configuredTestFramework} E2E test plans following project patterns?`,
           options: [
@@ -685,6 +779,11 @@ export class RefinementQuestionGenerator {
           required: true,
           context: `Configured test framework: ${configuredTestFramework}, Test directory: ${configuredTestDir}, Application framework: ${codebaseAnalysis.framework || 'Drupal'}`,
           hint: `${configuredTestFramework} is configured in testGeneration config - this matches the project's test setup`,
+          // SPEC-KIT FIELDS - auto-apply: use configured test framework
+          confidence: 0.95,
+          inferredAnswer: `Yes, generate ${configuredTestFramework} E2E tests (recommended)`,
+          inferenceSource: `Test framework ${configuredTestFramework} is explicitly configured`,
+          category: 'testing',
         });
       }
     }
@@ -694,12 +793,18 @@ export class RefinementQuestionGenerator {
       if (codebaseAnalysis.featureTypes && codebaseAnalysis.featureTypes.length > 0) {
         questions.push({
           id: 'feature-types',
-          type: 'codebase-focused',
+          refinementType: 'codebase-focused',
+          type: 'multiple-choice',
           phase: 'feature',
           text: `I detected these feature types in the codebase: ${codebaseAnalysis.featureTypes.join(', ')}. Should I generate configurations for these types?`,
           options: ['Yes, generate for all', 'No, only for PRD requirements', 'Let me select'],
           required: false,
           context: `Detected types: ${codebaseAnalysis.featureTypes.join(', ')}`,
+          // SPEC-KIT FIELDS - moderate confidence, scope decision
+          confidence: 0.7,
+          inferredAnswer: 'No, only for PRD requirements',
+          inferenceSource: 'Scope should be limited to PRD requirements by default',
+          category: 'scope',
         });
       }
 
@@ -709,9 +814,13 @@ export class RefinementQuestionGenerator {
       const frameworkName = configuredFrameworkType || detectedFrameworkName || codebaseAnalysis.framework;
       
       if (frameworkName && frameworkName !== 'generic' && frameworkName !== 'composite') {
+        const defaultAnswer = configuredFrameworkType
+          ? `Yes, use ${configuredFrameworkType} framework config (recommended)`
+          : 'Yes, use framework config';
         questions.push({
           id: 'feature-framework-config',
-          type: 'codebase-focused',
+          refinementType: 'codebase-focused',
+          type: 'multiple-choice',
           phase: 'feature',
           text: configuredFrameworkType
             ? `The project is configured to use ${configuredFrameworkType} framework. Should I generate ${configuredFrameworkType}-specific configurations following project patterns?`
@@ -730,12 +839,20 @@ export class RefinementQuestionGenerator {
           hint: configuredFrameworkType
             ? `${configuredFrameworkType} framework is explicitly configured in project config - use framework-specific patterns`
             : undefined,
+          // SPEC-KIT FIELDS - auto-apply: use framework config
+          confidence: configuredFrameworkType ? 0.95 : 0.85,
+          inferredAnswer: defaultAnswer,
+          inferenceSource: configuredFrameworkType
+            ? `Framework ${configuredFrameworkType} is explicitly configured`
+            : `Framework ${detectedFrameworkName} detected - use framework-specific config`,
+          category: 'implementation',
         });
       } else if (configuredFrameworkType && configuredFrameworkType !== 'composite') {
         // Framework is configured but not detected as plugin - still ask about it
         questions.push({
           id: 'feature-framework-configured',
-          type: 'codebase-focused',
+          refinementType: 'codebase-focused',
+          type: 'multiple-choice',
           phase: 'feature',
           text: `The project is configured to use ${configuredFrameworkType} framework. Should I generate ${configuredFrameworkType}-specific configurations?`,
           options: [
@@ -746,6 +863,11 @@ export class RefinementQuestionGenerator {
           required: false,
           context: `Configured framework: ${configuredFrameworkType} (from devloop.config.js framework.type), Current framework: ${codebaseAnalysis.framework || 'auto-detected'}`,
           hint: `${configuredFrameworkType} framework is explicitly configured in project config`,
+          // SPEC-KIT FIELDS - auto-apply: use configured framework
+          confidence: 0.95,
+          inferredAnswer: `Yes, use ${configuredFrameworkType} framework config (recommended)`,
+          inferenceSource: `Framework ${configuredFrameworkType} is explicitly configured`,
+          category: 'implementation',
         });
       }
     }
@@ -764,43 +886,94 @@ export class RefinementQuestionGenerator {
     const questions: RefinementQuestion[] = [];
 
     if (phase === 'schema') {
-      // Count entity types mentioned in PRD
-      const entityTypes = this.extractEntityTypesFromPrd(prd);
-      if (entityTypes.length > 1) {
+      // Use framework plugin for PRD concept inference if available
+      const frameworkPlugin = codebaseAnalysis.frameworkPlugin;
+      if (frameworkPlugin?.inferFromPrd && frameworkPlugin?.getPrdConcepts) {
+        // Framework-agnostic: use plugin to extract concepts
+        const inference = frameworkPlugin.inferFromPrd(prd);
+        const concepts = frameworkPlugin.getPrdConcepts();
+
+        for (const inferred of inference.concepts) {
+          const conceptDef = concepts.find((c: any) => c.name === inferred.type);
+          if (!conceptDef || inferred.items.length <= 1) continue;
+
+          // Schema generation question for this concept type
+          if (conceptDef.schemaQuestion) {
+            questions.push({
+              id: `${inferred.type}-generate`,
+              refinementType: 'clarifying',
+              type: 'confirm',
+              phase: 'schema',
+              text: conceptDef.schemaQuestion.replace('{count}', String(inferred.items.length)),
+              options: [`Yes, all ${inferred.items.length}`, 'Select specific ones', 'None'],
+              required: false,
+              context: `${conceptDef.label}: ${inferred.items.join(', ')}`,
+              // SPEC-KIT FIELDS:
+              confidence: inferred.confidence,
+              inferredAnswer: `Yes, all ${inferred.items.length}`,
+              inferenceSource: `Extracted ${conceptDef.label.toLowerCase()} from PRD`,
+              category: 'scope',
+            });
+          }
+        }
+
+        // Schema type question if framework provides it
+        if (inference.schemaType) {
+          const schemaTypeOptions = this.getSchemaTypeOptions(frameworkPlugin.name);
+          questions.push({
+            id: 'schema-type-preference',
+            refinementType: 'clarifying',
+            type: 'multiple-choice',
+            phase: 'schema',
+            text: `What type of ${frameworkPlugin.name} schemas should I generate?`,
+            options: schemaTypeOptions,
+            required: false,
+            hint: 'Config schemas are for module settings, other schemas are for framework-specific entities',
+            // SPEC-KIT FIELDS:
+            confidence: inference.schemaType.confidence,
+            inferredAnswer: this.mapSchemaTypeToOption(inference.schemaType.value, schemaTypeOptions),
+            inferenceSource: 'Inferred from PRD content analysis',
+            category: 'scope',
+          });
+        }
+      } else {
+        // Fallback: generic schema type question (no framework-specific inference)
         questions.push({
-          id: 'schema-entity-types',
-          type: 'clarifying',
+          id: 'schema-type-preference',
+          refinementType: 'clarifying',
+          type: 'multiple-choice',
           phase: 'schema',
-          text: `I found ${entityTypes.length} entity types mentioned in the PRD. Should I generate schemas for all of them?`,
-          options: ['Yes, all entity types', 'No, only specified ones', 'Let me select'],
+          text: 'What type of schemas should I generate?',
+          options: ['Config schemas only', 'All schemas'],
           required: false,
-          context: `Entity types: ${entityTypes.join(', ')}`,
+          hint: 'Config schemas are for module/application settings',
+          // SPEC-KIT FIELDS - moderate confidence
+          confidence: 0.7,
+          inferredAnswer: 'All schemas',
+          inferenceSource: 'Default: generate all required schemas',
+          category: 'scope',
         });
       }
-
-      questions.push({
-        id: 'schema-type-preference',
-        type: 'clarifying',
-        phase: 'schema',
-        text: 'What type of schemas should I generate?',
-        options: ['Config schemas only', 'Entity type schemas only', 'Both config and entity type schemas'],
-        required: false,
-        hint: 'Config schemas are for module settings, entity type schemas are for content entities',
-      });
     }
 
     if (phase === 'test') {
       // Count tasks in PRD
-      const totalTasks = prd.phases.reduce((sum, phase) => sum + (phase.tasks?.length || 0), 0);
+      const totalTasks = prd.phases.reduce((sum, p) => sum + (p.tasks?.length || 0), 0);
       if (totalTasks > 5) {
         questions.push({
           id: 'test-coverage-level',
-          type: 'clarifying',
+          refinementType: 'clarifying',
+          type: 'multiple-choice',
           phase: 'test',
           text: `I found ${totalTasks} tasks in the PRD. What test coverage level do you want?`,
           options: ['High - Test all tasks', 'Medium - Test critical tasks', 'Low - Test key tasks only'],
           required: false,
           context: `Total tasks: ${totalTasks}`,
+          // SPEC-KIT FIELDS - moderate confidence, coverage is a genuine question
+          confidence: 0.7,
+          inferredAnswer: 'Medium - Test critical tasks',
+          inferenceSource: 'Balanced coverage: test critical tasks thoroughly',
+          category: 'testing',
         });
       }
 
@@ -812,10 +985,14 @@ export class RefinementQuestionGenerator {
       const preferredTestType = configuredTestFramework === 'playwright' 
         ? 'E2E tests (Playwright)' 
         : 'E2E tests';
+      const defaultAnswer = configuredTestFramework === 'playwright'
+        ? 'Yes, generate Playwright E2E tests (recommended)'
+        : 'E2E tests';
       
       questions.push({
         id: 'test-type-preference',
-        type: 'clarifying',
+        refinementType: 'clarifying',
+        type: 'multiple-choice',
         phase: 'test',
         text: configuredTestFramework === 'playwright'
           ? `The project uses Playwright for E2E testing. Should I generate Playwright E2E test plans?`
@@ -833,24 +1010,72 @@ export class RefinementQuestionGenerator {
           ? `Test framework: ${configuredTestFramework}, Test directory: ${configuredTestDir || 'tests/'}`
           : undefined,
         hint: configuredTestFramework === 'playwright'
-          ? 'Playwright E2E tests verify full user workflows and UI behavior - recommended for Drupal projects'
+          ? 'Playwright E2E tests verify full user workflows and UI behavior'
           : 'E2E tests verify full workflows, integration tests verify modules work together, unit tests are fast',
+        // SPEC-KIT FIELDS - auto-apply if framework configured
+        confidence: configuredTestFramework === 'playwright' ? 0.95 : 0.75,
+        inferredAnswer: defaultAnswer,
+        inferenceSource: configuredTestFramework === 'playwright'
+          ? 'Playwright is configured - use E2E tests'
+          : 'E2E tests provide best coverage for user workflows',
+        category: 'testing',
       });
     }
 
     if (phase === 'feature') {
       questions.push({
         id: 'feature-enhancement-types',
-        type: 'clarifying',
+        refinementType: 'clarifying',
+        type: 'multiple-choice',
         phase: 'feature',
         text: 'What types of feature enhancements should I generate?',
         options: ['Error guidance only', 'Log patterns only', 'Framework config only', 'All enhancement types'],
         required: false,
         hint: 'Error guidance helps with debugging, log patterns help with monitoring, framework config helps with integration',
+        // SPEC-KIT FIELDS - auto-apply: generate all enhancements
+        confidence: 0.85,
+        inferredAnswer: 'All enhancement types',
+        inferenceSource: 'Complete feature enhancements provide best developer experience',
+        category: 'scope',
       });
     }
 
     return questions;
+  }
+
+  /**
+   * Get schema type options for a specific framework
+   */
+  private getSchemaTypeOptions(framework: string): string[] {
+    switch (framework) {
+      case 'drupal':
+        return ['Config schemas only', 'Entity type schemas only', 'Both config and entity schemas'];
+      case 'django':
+        return ['Model schemas only', 'Serializer schemas only', 'Both'];
+      case 'laravel':
+        return ['Migration schemas only', 'Eloquent model schemas only', 'Both'];
+      case 'react':
+      case 'nextjs':
+        return ['TypeScript interfaces only', 'Zod schemas only', 'Both'];
+      default:
+        return ['Config schemas only', 'All schemas'];
+    }
+  }
+
+  /**
+   * Map a schema type value to its corresponding option string
+   */
+  private mapSchemaTypeToOption(value: string, options: string[]): string {
+    const valueMap: Record<string, string[]> = {
+      'config': ['Config schemas only', 'Config schemas', 'TypeScript interfaces only'],
+      'entity': ['Entity type schemas only', 'Model schemas only', 'Migration schemas only'],
+      'both': ['Both config and entity schemas', 'Both', 'All schemas'],
+    };
+    const candidates = valueMap[value] || [];
+    for (const candidate of candidates) {
+      if (options.includes(candidate)) return candidate;
+    }
+    return options[options.length - 1]; // Default to last option (usually "All" or "Both")
   }
 
   /**
@@ -864,32 +1089,58 @@ export class RefinementQuestionGenerator {
     const questions: RefinementQuestion[] = [];
 
     if (phase === 'schema') {
-      const entityTypes = this.extractEntityTypesFromPrd(prd);
-      if (entityTypes.length > 3) {
-        questions.push({
-          id: 'schema-priority',
-          type: 'prioritization',
-          phase: 'schema',
-          text: `Which entity types should I prioritize for schema generation? (${entityTypes.length} found)`,
-          options: entityTypes,
-          required: false,
-          hint: 'Select the most important entity types to generate schemas first',
-        });
+      // Use framework plugin for PRD concept inference if available
+      const frameworkPlugin = codebaseAnalysis.frameworkPlugin;
+      if (frameworkPlugin?.inferFromPrd && frameworkPlugin?.getPrdConcepts) {
+        const inference = frameworkPlugin.inferFromPrd(prd);
+        const concepts = frameworkPlugin.getPrdConcepts();
+
+        for (const inferred of inference.concepts) {
+          const conceptDef = concepts.find((c: any) => c.name === inferred.type);
+          if (!conceptDef || inferred.items.length <= 3) continue;
+
+          // Priority question for this concept type (only if > 3 items)
+          if (conceptDef.priorityQuestion) {
+            questions.push({
+              id: `${inferred.type}-priority`,
+              refinementType: 'prioritization',
+              type: 'multi-select',
+              phase: 'schema',
+              text: conceptDef.priorityQuestion.replace('{count}', String(inferred.items.length)),
+              options: inferred.items,
+              required: false,
+              hint: `Select the most important ${conceptDef.label.toLowerCase()} to generate first`,
+              // SPEC-KIT FIELDS:
+              confidence: inferred.confidence,
+              inferredAnswer: inferred.priorities.join(', '),
+              inferenceSource: 'First items in PRD phase order',
+              category: 'scope',
+            });
+          }
+        }
       }
     }
 
     if (phase === 'test') {
-      const tasks = prd.phases.flatMap(phase => phase.tasks || []);
+      const tasks = prd.phases.flatMap(p => p.tasks || []);
       if (tasks.length > 5) {
         const taskTitles = tasks.slice(0, 10).map(t => `${t.id}: ${t.title}`);
+        // Auto-select first 3 tasks as priority
+        const priorityTasks = taskTitles.slice(0, 3).join(', ');
         questions.push({
           id: 'test-priority',
-          type: 'prioritization',
+          refinementType: 'prioritization',
+          type: 'multi-select',
           phase: 'test',
           text: `Which tasks should I prioritize for test planning? (${tasks.length} total tasks)`,
           options: taskTitles,
           required: false,
           hint: 'Select the most critical tasks to generate test plans first',
+          // SPEC-KIT FIELDS - use phase order for priority
+          confidence: 0.8,
+          inferredAnswer: priorityTasks,
+          inferenceSource: 'First tasks in PRD phase order are typically highest priority',
+          category: 'scope',
         });
       }
     }
@@ -1041,13 +1292,18 @@ export class RefinementQuestionGenerator {
             if (q.text && q.type) {
               questions.push({
                 id: q.id || `ai-${phase}-${questions.length + 1}`,
-                type: q.type as 'clarifying' | 'codebase-focused' | 'prioritization',
+                refinementType: q.type as RefinementQuestionType,
+                type: q.options && q.options.length > 0 ? 'multiple-choice' : 'open-ended',
                 phase,
                 text: q.text,
                 options: q.options,
                 required: q.required || false,
                 context: q.context,
                 hint: q.hint,
+                // AI-generated questions get moderate confidence
+                confidence: 0.6,
+                inferredAnswer: q.options?.[0],
+                inferenceSource: 'AI-generated question',
               });
             }
           }
@@ -1123,7 +1379,8 @@ export class RefinementQuestionGenerator {
       if (topPatterns.length > 0) {
         questions.push({
           id: `pattern-based-${phase}`,
-          type: 'codebase-focused',
+          refinementType: 'codebase-focused',
+          type: 'multiple-choice',
           phase,
           text: `I found ${topPatterns.length} relevant pattern(s) from past PRD sets. Should I apply these patterns to this PRD set?`,
           options: [
@@ -1134,6 +1391,11 @@ export class RefinementQuestionGenerator {
           required: false,
           context: `Top patterns: ${topPatterns.slice(0, 3).map(p => p.pattern.substring(0, 50) + (p.pattern.length > 50 ? '...' : '')).join('; ')}`,
           hint: `Patterns learned from ${topPatterns[0].prdId || 'previous'} PRD execution${topPatterns.length > 1 ? `s` : ''}`,
+          // SPEC-KIT FIELDS - auto-apply: use learned patterns
+          confidence: 0.9,
+          inferredAnswer: 'Yes, apply relevant patterns (recommended)',
+          inferenceSource: 'Learned patterns from successful past PRD executions',
+          category: 'implementation',
         });
       }
     }
@@ -1148,7 +1410,8 @@ export class RefinementQuestionGenerator {
       if (errorObservations.length > 0 && phase === 'test') {
         questions.push({
           id: `observation-errors-${phase}`,
-          type: 'codebase-focused',
+          refinementType: 'codebase-focused',
+          type: 'multiple-choice',
           phase,
           text: `I found ${errorObservations.length} observation(s) about common test issues in past PRD sets. Should I avoid these patterns?`,
           options: [
@@ -1159,13 +1422,19 @@ export class RefinementQuestionGenerator {
           required: false,
           context: `Common issues: ${errorObservations.slice(0, 3).map(o => o.observation.substring(0, 50) + (o.observation.length > 50 ? '...' : '')).join('; ')}`,
           hint: `Based on observations from ${errorObservations[0].prdId || 'previous'} PRD execution${errorObservations.length > 1 ? `s` : ''}`,
+          // SPEC-KIT FIELDS - auto-apply: avoid known issues
+          confidence: 0.95,
+          inferredAnswer: 'Yes, avoid known issues (recommended)',
+          inferenceSource: 'Learned from past test failures - avoid repeating mistakes',
+          category: 'testing',
         });
       }
 
       if (successObservations.length > 0) {
         questions.push({
           id: `observation-success-${phase}`,
-          type: 'codebase-focused',
+          refinementType: 'codebase-focused',
+          type: 'multiple-choice',
           phase,
           text: `I found ${successObservations.length} observation(s) about successful patterns in past PRD sets. Should I apply these patterns?`,
           options: [
@@ -1176,6 +1445,11 @@ export class RefinementQuestionGenerator {
           required: false,
           context: `Successful patterns: ${successObservations.slice(0, 3).map(o => o.observation.substring(0, 50) + (o.observation.length > 50 ? '...' : '')).join('; ')}`,
           hint: `Based on observations from ${successObservations[0].prdId || 'previous'} PRD execution${successObservations.length > 1 ? `s` : ''}`,
+          // SPEC-KIT FIELDS - auto-apply: use successful patterns
+          confidence: 0.9,
+          inferredAnswer: 'Yes, apply successful patterns (recommended)',
+          inferenceSource: 'Learned from past successes - replicate what works',
+          category: 'implementation',
         });
       }
     }
@@ -1183,42 +1457,8 @@ export class RefinementQuestionGenerator {
     return questions;
   }
 
-  /**
-   * Extract entity types mentioned in PRD
-   */
-  private extractEntityTypesFromPrd(prd: ParsedPlanningDoc): string[] {
-    const entityTypes: string[] = [];
-    const content = prd.rawContent || prd.title || '';
-
-    // Look for entity type mentions (basic pattern matching)
-    const entityMatches = content.match(/\b(entity\s+type|entity_type|entity)[\s:]+([a-z_]+)/gi);
-    if (entityMatches) {
-      for (const match of entityMatches) {
-        const parts = match.split(/:|\s+/);
-        if (parts.length > 1) {
-          const type = parts[parts.length - 1].trim();
-          if (type && !entityTypes.includes(type)) {
-            entityTypes.push(type);
-          }
-        }
-      }
-    }
-
-    // Also check task descriptions
-    for (const phase of prd.phases) {
-      for (const task of phase.tasks || []) {
-        const taskContent = `${task.title} ${task.description || ''}`;
-        const matches = taskContent.match(/\b([a-z_]+_entity|entity_type_[a-z_]+)\b/gi);
-        if (matches) {
-          for (const match of matches) {
-            if (!entityTypes.includes(match.toLowerCase())) {
-              entityTypes.push(match.toLowerCase());
-            }
-          }
-        }
-      }
-    }
-
-    return entityTypes;
-  }
+  // NOTE: extractEntityTypesFromPrd() was removed as it was Drupal-specific.
+  // PRD concept extraction is now handled by FrameworkPlugin.inferFromPrd()
+  // which each framework implements with its own patterns.
+  // See: DrupalPlugin.getPrdConcepts() and DrupalPlugin.inferFromPrd()
 }

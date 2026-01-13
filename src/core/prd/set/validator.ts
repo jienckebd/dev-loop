@@ -432,6 +432,100 @@ export class PrdSetValidator {
 
     return false;
   }
+
+  // ========== SPEC-KIT EXECUTABILITY VALIDATION ==========
+
+  /**
+   * Validate PRD set for 100% executability (spec-kit quality checks)
+   */
+  validateExecutability(discoveredSet: DiscoveredPrdSet): {
+    isExecutable: boolean;
+    score: number;
+    errors: string[];
+    warnings: string[];
+  } {
+    const errors: string[] = [];
+    const warnings: string[] = [];
+    let score = 100;
+
+    const manifest = discoveredSet.manifest as any;
+
+    // 1. Check specKit block present
+    if (!manifest?.specKit) {
+      warnings.push('Missing specKit block - clarifications and research not captured');
+      score -= 10;
+    } else {
+      if (!manifest.specKit.clarifications?.length) {
+        warnings.push('No clarifications recorded');
+        score -= 5;
+      }
+      if (!manifest.specKit.research?.length) {
+        warnings.push('No research findings recorded');
+        score -= 5;
+      }
+      if (!manifest.specKit.constitution) {
+        warnings.push('No constitution rules loaded');
+        score -= 5;
+      }
+    }
+
+    // 2. Check task structure quality for each child PRD
+    for (const childPrd of discoveredSet.prdSet.prds) {
+      const phases = (childPrd.metadata as any)?.phases || 
+        (childPrd.metadata as any)?.requirements?.phases || [];
+      
+      for (const phase of phases) {
+        for (const task of phase.tasks || []) {
+          // Check for redundant title/description
+          if (task.title && task.description && task.title === task.description) {
+            errors.push(`Task ${task.id}: Redundant title/description (identical)`);
+            score -= 5;
+          }
+
+          // Check title is short
+          if (task.title && (task.title.includes('\n') || task.title.length > 100)) {
+            errors.push(`Task ${task.id}: Title should be short (max 100 chars, no newlines)`);
+            score -= 3;
+          }
+
+          // Check for acceptance criteria
+          if (!task.acceptanceCriteria?.length) {
+            // Also check legacy validationChecklist
+            if (!task.validationChecklist?.length) {
+              errors.push(`Task ${task.id}: Missing acceptance criteria`);
+              score -= 5;
+            }
+          }
+
+          // Check for validation commands
+          if (!task.validation?.commands?.length && !task.validationChecklist?.length) {
+            errors.push(`Task ${task.id}: Missing validation commands`);
+            score -= 5;
+          }
+
+          // Check for target files
+          if (!task.targetFiles?.length && !task.files?.length) {
+            warnings.push(`Task ${task.id}: No target files specified`);
+            score -= 2;
+          }
+        }
+      }
+    }
+
+    // Clamp score
+    score = Math.max(0, score);
+
+    if (this.debug) {
+      logger.debug(`[PrdSetValidator] Executability score: ${score}/100, ${errors.length} errors, ${warnings.length} warnings`);
+    }
+
+    return {
+      isExecutable: errors.length === 0 && score >= 70,
+      score,
+      errors,
+      warnings,
+    };
+  }
 }
 
 

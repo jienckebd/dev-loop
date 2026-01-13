@@ -65,14 +65,15 @@ export function extractCodeChanges(
   }
 
   // Primary method: Use schema-based validation (handles markdown code blocks, escaped JSON, etc.)
+  // Suppress warnings since we have fallback methods
   if (textToValidate) {
     try {
-      const validationResult = JsonSchemaValidator.extractAndValidate(textToValidate);
+      const validationResult = JsonSchemaValidator.extractAndValidate(textToValidate, true);
       if (validationResult.valid && validationResult.normalized) {
         logger.info(`[json-parser] Successfully extracted CodeChanges using JSON Schema validation`);
         return validationResult.normalized;
       } else {
-        // Log validation errors for debugging
+        // Log validation errors for debugging (at debug level only)
         if (validationResult.errors.length > 0) {
           logger.debug(`[json-parser] Schema validation failed: ${validationResult.errors.join(', ')}`);
         }
@@ -111,13 +112,14 @@ export function parseCodeChangesFromText(
   }
 
   // Use schema validator - it handles markdown code blocks, escaped JSON, etc.
+  // Suppress warnings since we have fallback methods
   try {
-    const validationResult = JsonSchemaValidator.extractAndValidate(text);
+    const validationResult = JsonSchemaValidator.extractAndValidate(text, true);
     if (validationResult.valid && validationResult.normalized) {
       logger.debug(`[json-parser] Successfully extracted CodeChanges from text using schema validation`);
       return validationResult.normalized;
     } else {
-      // Enhanced error logging
+      // Enhanced error logging (at debug level only)
       if (validationResult.errors.length > 0) {
         logger.debug(`[json-parser] Schema validation failed: ${validationResult.errors.join(', ')}`);
         if (validationResult.warnings.length > 0) {
@@ -152,9 +154,9 @@ export function parseCodeChangesFromText(
     // Enhanced error tracking with strategy information
     const extractionAttempts: string[] = [];
     
-    // Try to get strategy information from validation result
+    // Try to get strategy information from validation result (suppress warnings)
     try {
-      const validationResult = JsonSchemaValidator.extractAndValidate(text);
+      const validationResult = JsonSchemaValidator.extractAndValidate(text, true);
       if (!validationResult.valid) {
         extractionAttempts.push(`Validation errors: ${validationResult.errors.join(', ')}`);
       }
@@ -190,6 +192,350 @@ export function parseCodeChangesFromText(
 export function shouldUseAiFallback(response: any): boolean {
   // Use AI fallback if response is a string (text that might contain JSON) or has text/result fields
   return response && (typeof response === 'string' || response.text || response.result);
+}
+
+/**
+ * Generic JSON Array Extraction
+ *
+ * Extracts JSON arrays from text using multiple strategies.
+ * Handles various formats: markdown code blocks, escaped JSON, partial JSON, YAML, etc.
+ *
+ * @param text - Text containing JSON array (may include markdown formatting, prose, etc.)
+ * @param itemSchema - Optional schema description to help with extraction
+ * @returns Parsed array or null if extraction fails
+ */
+export function extractJsonArray<T = any>(
+  text: string,
+  itemSchema?: { requiredFields?: string[]; typeHint?: string }
+): T[] | null {
+  if (!text || typeof text !== 'string') {
+    return null;
+  }
+
+  const requiredFields = itemSchema?.requiredFields || [];
+  const typeHint = itemSchema?.typeHint || 'object';
+
+  // Strategy 0: Handle YAML document separator (---) format
+  if (text.includes('---')) {
+    try {
+      const yaml = require('js-yaml');
+      const documents = text.split(/^---$/m).filter(doc => doc.trim());
+      const items: any[] = [];
+      
+      for (const doc of documents) {
+        try {
+          const parsed = yaml.load(doc.trim());
+          if (parsed && typeof parsed === 'object') {
+            items.push(parsed);
+          }
+        } catch {
+          // Skip invalid YAML documents
+        }
+      }
+      
+      if (items.length > 0) {
+        const validated = validateArrayItems(items, requiredFields);
+        if (validated.length > 0) {
+          logger.debug(`[json-parser] Extracted ${validated.length} items from YAML documents`);
+          return validated as T[];
+        }
+      }
+    } catch {
+      // js-yaml not available, continue with other strategies
+    }
+  }
+
+  // Strategy 1: Extract from markdown code blocks
+  const codeBlockMatch = text.match(/```(?:json)?\s*([\s\S]*?)```/);
+  if (codeBlockMatch) {
+    const result = tryParseJsonArray<T>(codeBlockMatch[1].trim(), requiredFields);
+    if (result) {
+      logger.debug('[json-parser] Extracted JSON array from markdown code block');
+      return result;
+    }
+  }
+
+  // Strategy 2: Find JSON array bounds [ ... ]
+  const arrayStart = text.indexOf('[');
+  const arrayEnd = text.lastIndexOf(']');
+  if (arrayStart >= 0 && arrayEnd > arrayStart) {
+    const arrayText = text.substring(arrayStart, arrayEnd + 1);
+    const result = tryParseJsonArray<T>(arrayText, requiredFields);
+    if (result) {
+      logger.debug('[json-parser] Extracted JSON array from bounds detection');
+      return result;
+    }
+  }
+
+  // Strategy 3: Balance brackets extraction (handles nested arrays)
+  const balancedArrays = extractBalancedArrays(text);
+  for (const arrayText of balancedArrays) {
+    const result = tryParseJsonArray<T>(arrayText, requiredFields);
+    if (result) {
+      logger.debug('[json-parser] Extracted JSON array using balanced brackets');
+      return result;
+    }
+  }
+
+  // Strategy 4: Extract individual objects and combine into array
+  const objects = extractIndividualObjects(text, requiredFields);
+  if (objects.length > 0) {
+    logger.debug(`[json-parser] Extracted ${objects.length} individual objects into array`);
+    return objects as T[];
+  }
+
+  // Strategy 5: Try partial JSON parsing (for truncated responses)
+  let parsePartialJson: ((jsonString: string, allowPartial?: number) => any) | null = null;
+  let Allow: any = null;
+  try {
+    const partialJson = require('partial-json');
+    parsePartialJson = partialJson.parse || partialJson.parseJSON;
+    Allow = partialJson.Allow;
+  } catch {
+    // partial-json not available
+  }
+
+  if (parsePartialJson && Allow && arrayStart >= 0) {
+    try {
+      const partialText = text.substring(arrayStart);
+      const parsed = parsePartialJson(partialText, Allow.ALL);
+      if (Array.isArray(parsed) && parsed.length > 0) {
+        const validated = validateArrayItems(parsed, requiredFields);
+        if (validated.length > 0) {
+          logger.debug(`[json-parser] Extracted ${validated.length} items using partial JSON parser`);
+          return validated as T[];
+        }
+      }
+    } catch {
+      // Partial parsing failed
+    }
+  }
+
+  // Strategy 6: Try to fix common JSON errors and retry
+  const fixedText = fixCommonJsonErrors(text);
+  if (fixedText !== text) {
+    const fixedArrayStart = fixedText.indexOf('[');
+    const fixedArrayEnd = fixedText.lastIndexOf(']');
+    if (fixedArrayStart >= 0 && fixedArrayEnd > fixedArrayStart) {
+      const result = tryParseJsonArray<T>(fixedText.substring(fixedArrayStart, fixedArrayEnd + 1), requiredFields);
+      if (result) {
+        logger.debug('[json-parser] Extracted JSON array after fixing common errors');
+        return result;
+      }
+    }
+  }
+
+  // Strategy 7: Strip conversational preamble and retry
+  const strippedText = stripConversationalPreamble(text);
+  if (strippedText !== text) {
+    const strippedArrayStart = strippedText.indexOf('[');
+    const strippedArrayEnd = strippedText.lastIndexOf(']');
+    if (strippedArrayStart >= 0 && strippedArrayEnd > strippedArrayStart) {
+      const result = tryParseJsonArray<T>(strippedText.substring(strippedArrayStart, strippedArrayEnd + 1), requiredFields);
+      if (result) {
+        logger.debug('[json-parser] Extracted JSON array after stripping preamble');
+        return result;
+      }
+    }
+  }
+
+  logger.debug('[json-parser] Failed to extract JSON array using all strategies');
+  return null;
+}
+
+/**
+ * Strip conversational preamble from AI responses
+ */
+function stripConversationalPreamble(text: string): string {
+  // Common patterns where AI provides summary before JSON
+  const preamblePatterns = [
+    /^.*?(?=\[)/s, // Everything before first [
+    /^.*?Here(?:'s| is)(?: the)? (?:JSON|array|list|response|result)[:\s]*/is,
+    /^.*?(?:The |This )?(?:JSON|array|list|response|result|output)(?: is)?[:\s]*/is,
+    /^.*?(?:Returning|Generated|Created|Produced)[:\s]*/is,
+    /^.*?Summary[:\s]*\n+/is, // "Summary:" followed by newlines
+    /^.*?(?:Test (?:plans?|cases?))[:\s]*/is, // "Test plans:" prefix
+  ];
+  
+  let stripped = text;
+  for (const pattern of preamblePatterns) {
+    const match = text.match(pattern);
+    if (match && match[0].length < text.length * 0.5) { // Only strip if preamble is less than half
+      const candidate = text.substring(match[0].length);
+      if (candidate.trim().startsWith('[') || candidate.trim().startsWith('{')) {
+        stripped = candidate.trim();
+        break;
+      }
+    }
+  }
+  
+  return stripped;
+}
+
+/**
+ * Try to parse text as JSON array and validate items
+ */
+function tryParseJsonArray<T>(text: string, requiredFields: string[]): T[] | null {
+  try {
+    const parsed = JSON.parse(text);
+    if (Array.isArray(parsed) && parsed.length > 0) {
+      const validated = validateArrayItems(parsed, requiredFields);
+      if (validated.length > 0) {
+        return validated as T[];
+      }
+    }
+  } catch {
+    // Not valid JSON
+  }
+  return null;
+}
+
+/**
+ * Validate array items have required fields
+ */
+function validateArrayItems(items: any[], requiredFields: string[]): any[] {
+  if (requiredFields.length === 0) {
+    return items.filter(item => item && typeof item === 'object');
+  }
+  return items.filter(item => {
+    if (!item || typeof item !== 'object') return false;
+    return requiredFields.every(field => field in item);
+  });
+}
+
+/**
+ * Extract balanced arrays from text using bracket matching
+ */
+function extractBalancedArrays(text: string): string[] {
+  const arrays: string[] = [];
+  let depth = 0;
+  let start = -1;
+  let inString = false;
+  let escapeNext = false;
+
+  for (let i = 0; i < text.length; i++) {
+    const char = text[i];
+
+    if (escapeNext) {
+      escapeNext = false;
+      continue;
+    }
+
+    if (char === '\\') {
+      escapeNext = true;
+      continue;
+    }
+
+    if (char === '"' && !escapeNext) {
+      inString = !inString;
+      continue;
+    }
+
+    if (!inString) {
+      if (char === '[') {
+        if (depth === 0) {
+          start = i;
+        }
+        depth++;
+      } else if (char === ']') {
+        depth--;
+        if (depth === 0 && start !== -1) {
+          arrays.push(text.substring(start, i + 1));
+          start = -1;
+        }
+      }
+    }
+  }
+
+  // Sort by size (largest first) - larger arrays are more likely to be complete
+  return arrays.sort((a, b) => b.length - a.length);
+}
+
+/**
+ * Extract individual JSON objects from text
+ */
+function extractIndividualObjects(text: string, requiredFields: string[]): any[] {
+  const objects: any[] = [];
+  let depth = 0;
+  let start = -1;
+  let inString = false;
+  let escapeNext = false;
+
+  for (let i = 0; i < text.length; i++) {
+    const char = text[i];
+
+    if (escapeNext) {
+      escapeNext = false;
+      continue;
+    }
+
+    if (char === '\\') {
+      escapeNext = true;
+      continue;
+    }
+
+    if (char === '"' && !escapeNext) {
+      inString = !inString;
+      continue;
+    }
+
+    if (!inString) {
+      if (char === '{') {
+        if (depth === 0) {
+          start = i;
+        }
+        depth++;
+      } else if (char === '}') {
+        depth--;
+        if (depth === 0 && start !== -1) {
+          const candidate = text.substring(start, i + 1);
+          try {
+            const parsed = JSON.parse(candidate);
+            if (parsed && typeof parsed === 'object') {
+              // Check if it has required fields or looks like the expected type
+              if (requiredFields.length === 0 || requiredFields.some(f => f in parsed)) {
+                objects.push(parsed);
+              }
+            }
+          } catch {
+            // Not valid JSON
+          }
+          start = -1;
+        }
+      }
+    }
+  }
+
+  return objects;
+}
+
+/**
+ * Fix common JSON errors in text
+ */
+function fixCommonJsonErrors(text: string): string {
+  let fixed = text;
+
+  // Fix trailing commas before ] or }
+  fixed = fixed.replace(/,\s*([}\]])/g, '$1');
+
+  // Fix missing commas between objects
+  fixed = fixed.replace(/}\s*{/g, '},{');
+
+  // Fix unescaped quotes in strings (simple heuristic)
+  // This is a simple fix for common cases - more complex cases need partial-json
+  fixed = fixed.replace(/:\s*"([^"]*)"([^,}\]]*)"([^"]*)"([,}\]])/g, ': "$1\\"$2\\"$3"$4');
+
+  // Fix single quotes to double quotes (only for object keys/values pattern)
+  fixed = fixed.replace(/'([^']+)':/g, '"$1":');
+  fixed = fixed.replace(/:\s*'([^']*)'/g, ': "$1"');
+
+  // Remove control characters that break JSON parsing
+  fixed = fixed.replace(/[\x00-\x1f\x7f]/g, (match) => {
+    if (match === '\n' || match === '\r' || match === '\t') return match;
+    return '';
+  });
+
+  return fixed;
 }
 
 /**

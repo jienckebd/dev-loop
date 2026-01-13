@@ -15,14 +15,17 @@ import {
   createDefaultIpcMetrics,
   createDefaultFileFilteringMetrics,
   createDefaultValidationMetrics,
+  SpecKitMetrics,
 } from './types';
 import { PrdMetrics } from './prd';
 import { PhaseMetrics } from './phase';
+import { PrdSetMetrics } from './prd-set';
 import { logger } from '../utils/logger';
 
 export interface MetricUpdaterConfig {
   prdMetrics?: PrdMetrics;
   phaseMetrics?: PhaseMetrics;
+  prdSetMetrics?: PrdSetMetrics;
   enabled?: boolean;
   debug?: boolean;
 }
@@ -34,6 +37,7 @@ export interface MetricUpdaterConfig {
 export class EventMetricBridge {
   private prdMetrics?: PrdMetrics;
   private phaseMetrics?: PhaseMetrics;
+  private prdSetMetrics?: PrdSetMetrics;
   private enabled: boolean;
   private debug: boolean;
   private eventListener?: (event: DevLoopEvent) => void;
@@ -44,6 +48,7 @@ export class EventMetricBridge {
   constructor(config: MetricUpdaterConfig = {}) {
     this.prdMetrics = config.prdMetrics;
     this.phaseMetrics = config.phaseMetrics;
+    this.prdSetMetrics = config.prdSetMetrics;
     this.enabled = config.enabled !== false; // Default to enabled
     this.debug = config.debug || false;
   }
@@ -130,6 +135,12 @@ export class EventMetricBridge {
     try {
       const prdId = event.prdId;
       const phaseId = event.phaseId;
+
+      // Spec-kit events are set-level and don't require prdId
+      if (event.type.startsWith('speckit:')) {
+        this.updateSpecKitMetrics(event);
+        return;
+      }
 
       if (!prdId) {
         // No PRD context, can't update PRD/phase metrics
@@ -448,6 +459,69 @@ export class EventMetricBridge {
     // Note: We don't save immediately to avoid performance issues with frequent saves
     // Metrics will be persisted when workflow explicitly saves them
     this.pendingSaves.add(prdId);
+  }
+
+  /**
+   * Update spec-kit metrics from event
+   */
+  private updateSpecKitMetrics(event: DevLoopEvent): void {
+    if (!this.prdSetMetrics) return;
+
+    // Spec-kit events include setId in data since they're set-level
+    const setId = (event.data.setId as string) || (event.data.prdSetPath as string) || 'default';
+
+    switch (event.type) {
+      case 'speckit:context_loaded':
+        this.prdSetMetrics.updateSpecKitMetrics(setId, {
+          contextsLoaded: 1,
+          loadTimeMs: { avg: 0, total: (event.data.loadTimeMs as number) || 0 },
+        });
+        break;
+
+      case 'speckit:context_injected':
+        const clarifications = (event.data.clarificationsInjected as number) || 0;
+        const research = (event.data.researchInjected as number) || 0;
+        const constraints = (event.data.constraintsInjected as number) || 0;
+
+        this.prdSetMetrics.updateSpecKitMetrics(setId, {
+          clarificationsUsed: clarifications,
+          researchFindingsUsed: research,
+          constitutionRulesApplied: constraints,
+          contextInjections: { total: 1, byCategory: {} },
+          totalContextSizeChars: (event.data.contextSizeChars as number) || 0,
+        });
+        break;
+
+      case 'speckit:clarification_applied':
+        const category = (event.data.category as string) || 'unknown';
+        this.prdSetMetrics.updateSpecKitMetrics(setId, {
+          designDecisionsApplied: 1,
+          contextInjections: { total: 0, byCategory: { [category]: 1 } },
+        });
+        break;
+
+      case 'speckit:research_used':
+        this.prdSetMetrics.updateSpecKitMetrics(setId, {
+          researchFindingsUsed: (event.data.findingsCount as number) || 0,
+        });
+        break;
+
+      case 'speckit:constitution_enforced':
+        this.prdSetMetrics.updateSpecKitMetrics(setId, {
+          constitutionRulesApplied: (event.data.constraintsCount as number) || 0,
+        });
+        break;
+
+      case 'speckit:load_failed':
+        // Log but don't track as metric - this is an error condition
+        if (this.debug) {
+          logger.warn(`[EventMetricBridge] Spec-kit load failed: ${event.data.error}`);
+        }
+        break;
+    }
+
+    // Mark for save
+    this.pendingSaves.add(setId);
   }
 }
 

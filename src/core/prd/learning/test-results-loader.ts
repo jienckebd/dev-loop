@@ -57,7 +57,7 @@ export class TestResultsLoader {
     this.validator = new SchemaValidator({
       autoFix: true,
       autoMigrate: false, // Test results may not need migration
-      backup: true,
+      backup: false, // Disabled: backup files should never be created
       debug: this.debug,
     });
   }

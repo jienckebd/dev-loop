@@ -15,6 +15,7 @@ import { TextGenerationAdapter } from './text-generation-adapter';
 import { CodebaseInsight } from './codebase-insight-extractor';
 import { Answer } from '../../conversation/types';
 import { CodeContextProvider, FileContext } from '../../analysis/code/context-provider';
+import { extractJsonArray } from '../../../providers/ai/json-parser';
 import { logger } from '../../utils/logger';
 import * as path from 'path';
 import * as fs from 'fs-extra';
@@ -71,6 +72,18 @@ export interface TestPlannerConfig {
   promptSelector: PromptSelector;
   testGenerator?: TestGenerator; // Optional: leverage existing TestGenerator
   debug?: boolean;
+  /**
+   * Whether @codebase tag is being used for AI calls.
+   * When true, prompts will be minimal since Cursor provides indexed context.
+   * When false, full codebase context is included in prompts.
+   * 
+   * Default behavior:
+   * - For Cursor provider: true (uses Cursor's indexed codebase)
+   * - For API providers (Anthropic, OpenAI, etc.): false (include full context)
+   * 
+   * This can be explicitly set to override the default behavior.
+   */
+  useCodebaseTag?: boolean;
 }
 
 /**
@@ -125,6 +138,10 @@ export class TestPlanner {
 
   /**
    * Generate test plans for PRD
+   *
+   * Uses batch AI calls to reduce the number of AI invocations.
+   * Instead of one AI call per task (26 calls for 26 tasks),
+   * batches multiple tasks into single prompts (5-8 calls total).
    */
   async generateTestPlans(
     prd: ParsedPlanningDoc,
@@ -137,25 +154,96 @@ export class TestPlanner {
 
     const testPlans: TestPlanSpec[] = [];
 
-    // Generate test plans for each task in each phase
+    // Flatten all tasks across phases
+    const allTasks: Array<{ task: ParsedTask; phase: ParsedPhase }> = [];
     for (const phase of prd.phases) {
       if (!phase.tasks) continue;
-
       for (const task of phase.tasks) {
+        allTasks.push({ task, phase });
+      }
+    }
+
+    // Filter out tasks that already have valid test files
+    const tasksNeedingTests: Array<{ task: ParsedTask; phase: ParsedPhase }> = [];
+    for (const { task, phase } of allTasks) {
+      const testFile = this.determineTestFilePath(task, phase, prd);
+      const fullPath = path.join(this.config.projectRoot, testFile);
+
+      if (await fs.pathExists(fullPath)) {
         try {
-          const testPlan = await this.generateTestPlanForTask(
-            task,
-            phase,
-            prd,
-            context
-          );
-          if (testPlan) {
-            testPlans.push(testPlan);
+          const existingContent = await fs.readFile(fullPath, 'utf-8');
+          if (this.isValidTestFile(existingContent)) {
+            logger.debug(`[TestPlanner] Skipping ${task.id} - test file already exists`);
+            // Create test plan from existing file
+            const testType = this.determineTestType(task, phase, prd.phases.length);
+            const testRunner = this.determineTestRunner();
+            const priority = this.determinePriority(task, phase);
+            testPlans.push({
+              id: `test-${task.id}`,
+              taskId: task.id,
+              phaseId: phase.id,
+              testType,
+              description: `Test plan for ${task.title} (existing)`,
+              testCases: [], // Existing file, no need to generate
+              framework: this.config.codebaseAnalysis.framework,
+              testRunner,
+              testFile,
+              priority,
+              dependencies: task.dependencies || [],
+            });
+            continue;
           }
         } catch (error) {
-          logger.warn(
-            `[TestPlanner] Failed to generate test plan for task ${task.id}: ${error}`
-          );
+          // Continue to add to needs tests
+        }
+      }
+      tasksNeedingTests.push({ task, phase });
+    }
+
+    if (tasksNeedingTests.length === 0) {
+      logger.info(`[TestPlanner] All ${allTasks.length} tasks already have valid test files`);
+    } else {
+      // Batch size: 5 tasks per AI call (reduces 20 tasks from 20 calls to 4 calls)
+      const BATCH_SIZE = 5;
+      logger.info(`[TestPlanner] Generating test plans for ${tasksNeedingTests.length} tasks in batches of ${BATCH_SIZE}`);
+
+      // Import build metrics for batch tracking
+      let buildMetrics: any = null;
+      try {
+        const { getBuildMetrics } = await import('../../../core/metrics/build');
+        buildMetrics = getBuildMetrics();
+      } catch {
+        // Build metrics not available
+      }
+
+      for (let i = 0; i < tasksNeedingTests.length; i += BATCH_SIZE) {
+        const batch = tasksNeedingTests.slice(i, i + BATCH_SIZE);
+        logger.debug(`[TestPlanner] Processing batch ${Math.floor(i / BATCH_SIZE) + 1}: ${batch.length} tasks`);
+
+        try {
+          const batchPlans = await this.generateBatchTestPlans(batch, prd, context);
+          testPlans.push(...batchPlans);
+          // Record successful batch
+          if (buildMetrics) {
+            buildMetrics.recordBatchResult(true, batch.length, false);
+          }
+        } catch (error) {
+          logger.warn(`[TestPlanner] Batch generation failed, falling back to individual: ${error}`);
+          // Record failed batch with fallback
+          if (buildMetrics) {
+            buildMetrics.recordBatchResult(false, batch.length, true);
+          }
+          // Fallback to individual generation for this batch
+          for (const { task, phase } of batch) {
+            try {
+              const testPlan = await this.generateTestPlanForTask(task, phase, prd, context);
+              if (testPlan) {
+                testPlans.push(testPlan);
+              }
+            } catch (err) {
+              logger.warn(`[TestPlanner] Failed to generate test plan for task ${task.id}: ${err}`);
+            }
+          }
         }
       }
     }
@@ -177,6 +265,255 @@ export class TestPlanner {
         coveragePercentage,
       },
     };
+  }
+
+  /**
+   * Generate test plans for multiple tasks in a single AI call
+   * Reduces AI calls by batching tasks together
+   */
+  private async generateBatchTestPlans(
+    tasks: Array<{ task: ParsedTask; phase: ParsedPhase }>,
+    prd: ParsedPlanningDoc,
+    context?: {
+      conversationId?: string;
+      iteration?: number;
+    }
+  ): Promise<TestPlanSpec[]> {
+    // Get prompt template
+    const prompt = await this.config.promptSelector.getPromptForUseCase('test-planning', {
+      mode: 'convert',
+      framework: this.config.codebaseAnalysis.framework,
+      featureTypes: this.config.codebaseAnalysis.featureTypes as FeatureType[],
+    });
+
+    // Build batch prompt
+    const batchPrompt = this.buildBatchTestPlanPrompt(tasks, prd, prompt);
+
+    // Execute with retry
+    const batchResponse = await this.executeWithRetry(
+      async () => {
+        const response = await this.textGenerator.generate(batchPrompt, {
+          maxTokens: 6000, // More tokens for batch response
+          temperature: 0.4,
+          systemPrompt: 'You are an expert at generating test plans. Generate test cases for ALL tasks provided.',
+        });
+
+        if (!response || response.trim().length < 50) {
+          throw new Error('Empty or too short batch response');
+        }
+
+        return response;
+      },
+      `generateBatchTestPlans(${tasks.length} tasks)`
+    );
+
+    // Parse batch response
+    return this.parseBatchTestPlansResponse(batchResponse || '', tasks, prd);
+  }
+
+  /**
+   * Build prompt for batch test plan generation
+   *
+   * Uses explicit JSON format instructions to maximize parsing reliability.
+   */
+  private buildBatchTestPlanPrompt(
+    tasks: Array<{ task: ParsedTask; phase: ParsedPhase }>,
+    prd: ParsedPlanningDoc,
+    basePrompt: string
+  ): string {
+    const parts: string[] = [];
+
+    // Emphasize JSON-only output at the start
+    parts.push('**CRITICAL: Your entire response must be ONLY a valid JSON array. No explanation, no markdown, no text before or after.**');
+    parts.push('');
+    parts.push(basePrompt);
+    parts.push('\n---\n');
+    parts.push('## Batch Test Plan Generation');
+    parts.push(`Generate test plans for ${tasks.length} tasks. Output ONLY a JSON array.`);
+    parts.push('');
+
+    // Framework context (brief)
+    if (this.config.codebaseAnalysis.frameworkPlugin) {
+      parts.push(`Framework: ${this.config.codebaseAnalysis.frameworkPlugin.name}`);
+      parts.push('');
+    }
+
+    // List all tasks concisely
+    parts.push('## Tasks');
+    for (let i = 0; i < tasks.length; i++) {
+      const { task, phase } = tasks[i];
+      parts.push(`${i + 1}. **${task.id}**: ${task.title} (Phase: ${phase.name})`);
+      if (task.description.length > 100) {
+        parts.push(`   ${task.description.substring(0, 100)}...`);
+      } else {
+        parts.push(`   ${task.description}`);
+      }
+    }
+    parts.push('');
+
+    parts.push('## Required JSON Format');
+    parts.push('Output EXACTLY this format (replace placeholders with actual values):');
+    parts.push('');
+    parts.push('[');
+    for (let i = 0; i < Math.min(tasks.length, 2); i++) {
+      const { task } = tasks[i];
+      parts.push(`  {"taskId": "${task.id}", "testCases": [{"name": "test name", "description": "test desc", "steps": ["step1"], "expectedResult": "expected"}]}${i < Math.min(tasks.length, 2) - 1 ? ',' : ''}`);
+    }
+    if (tasks.length > 2) {
+      parts.push(`  // ... include all ${tasks.length} tasks`);
+    }
+    parts.push(']');
+    parts.push('');
+    parts.push('**REMINDER: Output ONLY the JSON array. No other text.**');
+
+    return parts.join('\n');
+  }
+
+  /**
+   * Parse batch test plans response
+   *
+   * Uses robust JSON extraction that handles:
+   * - Markdown code blocks
+   * - Escaped JSON
+   * - Partial/truncated JSON
+   * - Mixed text and JSON responses
+   */
+  private parseBatchTestPlansResponse(
+    response: string,
+    tasks: Array<{ task: ParsedTask; phase: ParsedPhase }>,
+    prd: ParsedPlanningDoc
+  ): TestPlanSpec[] {
+    const testPlans: TestPlanSpec[] = [];
+
+    // Use generic JSON array extraction with schema hints
+    interface BatchTestPlanItem {
+      taskId?: string;
+      task?: string;
+      testCases?: any[];
+      tests?: any[];
+      cases?: any[];
+    }
+
+    const parsed = extractJsonArray<BatchTestPlanItem>(response, {
+      requiredFields: ['taskId'], // At minimum need taskId to match
+    });
+
+    if (parsed && parsed.length > 0) {
+      logger.debug(`[TestPlanner] Successfully extracted ${parsed.length} batch items`);
+
+      for (const item of parsed) {
+        // Find matching task - try multiple matching strategies
+        const matchingTask = this.findMatchingTask(item, tasks);
+
+        if (matchingTask) {
+          const { task, phase } = matchingTask;
+          // testCases might be under different keys
+          const rawTestCases = item.testCases || item.tests || item.cases || [];
+          const testCases = this.normalizeTestCases(rawTestCases);
+
+          if (testCases.length > 0) {
+            testPlans.push({
+              id: `test-${task.id}`,
+              taskId: task.id,
+              phaseId: phase.id,
+              testType: this.determineTestType(task, phase, prd.phases.length),
+              description: `Test plan for ${task.title}`,
+              testCases,
+              framework: this.config.codebaseAnalysis.framework,
+              testRunner: this.determineTestRunner(),
+              testFile: this.determineTestFilePath(task, phase, prd),
+              priority: this.determinePriority(task, phase),
+              dependencies: task.dependencies || [],
+            });
+          }
+        } else {
+          logger.debug(`[TestPlanner] Could not match batch item to task: ${JSON.stringify(item).substring(0, 100)}`);
+        }
+      }
+    }
+
+    // If we got some results from batch parsing, return them
+    if (testPlans.length > 0) {
+      logger.debug(`[TestPlanner] Parsed ${testPlans.length} test plans from batch response`);
+      return testPlans;
+    }
+
+    // Fallback: try to extract individual task sections from text
+    logger.debug('[TestPlanner] Batch parsing yielded no results, trying text extraction fallback');
+    for (const { task, phase } of tasks) {
+      const testCases = this.parseTestCasesResponse(response, task);
+      if (testCases && testCases.length > 0) {
+        testPlans.push({
+          id: `test-${task.id}`,
+          taskId: task.id,
+          phaseId: phase.id,
+          testType: this.determineTestType(task, phase, prd.phases.length),
+          description: `Test plan for ${task.title}`,
+          testCases,
+          framework: this.config.codebaseAnalysis.framework,
+          testRunner: this.determineTestRunner(),
+          testFile: this.determineTestFilePath(task, phase, prd),
+          priority: this.determinePriority(task, phase),
+          dependencies: task.dependencies || [],
+        });
+      }
+    }
+
+    logger.debug(`[TestPlanner] Parsed ${testPlans.length} test plans from batch response (after fallback)`);
+    return testPlans;
+  }
+
+  /**
+   * Find matching task for a batch item using multiple strategies
+   */
+  private findMatchingTask(
+    item: { taskId?: string; task?: string; [key: string]: any },
+    tasks: Array<{ task: ParsedTask; phase: ParsedPhase }>
+  ): { task: ParsedTask; phase: ParsedPhase } | undefined {
+    const taskIdNeedle = (item.taskId || item.task || '').toLowerCase().trim();
+
+    // Strategy 1: Exact ID match
+    let match = tasks.find(t => t.task.id.toLowerCase() === taskIdNeedle);
+    if (match) return match;
+
+    // Strategy 2: ID contains match
+    match = tasks.find(t =>
+      t.task.id.toLowerCase().includes(taskIdNeedle) ||
+      taskIdNeedle.includes(t.task.id.toLowerCase())
+    );
+    if (match) return match;
+
+    // Strategy 3: Title contains match
+    match = tasks.find(t =>
+      t.task.title.toLowerCase().includes(taskIdNeedle) ||
+      taskIdNeedle.includes(t.task.title.toLowerCase())
+    );
+    if (match) return match;
+
+    // Strategy 4: Fuzzy number match (e.g., "Task 1" matches "REQ-1.1")
+    const numbers = taskIdNeedle.match(/\d+/g);
+    if (numbers && numbers.length > 0) {
+      const numStr = numbers.join('.');
+      match = tasks.find(t => t.task.id.includes(numStr));
+      if (match) return match;
+    }
+
+    return undefined;
+  }
+
+  /**
+   * Normalize test cases from parsed JSON
+   */
+  private normalizeTestCases(testCases: any[]): TestCase[] {
+    return testCases
+      .filter(tc => tc && (tc.name || tc.title))
+      .map(tc => ({
+        name: tc.name || tc.title || 'Unnamed test',
+        description: tc.description || '',
+        steps: Array.isArray(tc.steps) ? tc.steps : [],
+        expectedResult: tc.expectedResult || tc.expected || '',
+        validationChecklist: tc.validationChecklist || undefined,
+      }));
   }
 
   /**
@@ -703,67 +1040,94 @@ export class TestPlanner {
       parts.push('');
     }
 
-    // Framework context
+    // Determine if we should include verbose context
+    // When @codebase tag is used (Cursor provider), prompts can be minimal
+    // For API providers (Anthropic, OpenAI, etc.), always include full context
+    const isCursorProvider = this.config.aiProvider.name === 'cursor';
+    const useCodebaseTag = this.config.useCodebaseTag ?? isCursorProvider; // Default: true only for Cursor
+
+    // Framework context - always useful as a brief hint
     if (this.config.codebaseAnalysis.frameworkPlugin) {
       parts.push('## Framework');
       parts.push(`Framework: ${this.config.codebaseAnalysis.frameworkPlugin.name}`);
       parts.push('');
     }
 
-    // Helper methods from existing test files (NEW)
-    if (testContext?.helperMethods && testContext.helperMethods.length > 0) {
-      parts.push('## Available Helper Methods (Use These in Tests)');
-      for (const method of testContext.helperMethods.slice(0, 10)) {
-        parts.push(`- ${method}`);
-      }
-      if (testContext.helperMethods.length > 10) {
-        parts.push(`... and ${testContext.helperMethods.length - 10} more`);
-      }
-      parts.push('');
-      parts.push('**IMPORTANT**: Use these existing helper methods in generated test cases. Do not create duplicate helper methods.');
-      parts.push('');
-    }
-
-    // Test patterns from existing test files (NEW)
-    if (testContext?.testPatterns && testContext.testPatterns.length > 0) {
-      parts.push('## Existing Test Patterns (Follow These Structures)');
-      for (const pattern of testContext.testPatterns.slice(0, 5)) {
-        parts.push(`- ${pattern.name}`);
-        parts.push(`  Structure: ${pattern.structure}`);
-        parts.push(`  Location: Line ${pattern.lineNumber}`);
-      }
-      if (testContext.testPatterns.length > 5) {
-        parts.push(`... and ${testContext.testPatterns.length - 5} more patterns`);
-      }
-      parts.push('');
-    }
-
-    // Test patterns from codebase analysis
-    if (this.config.codebaseAnalysis.testPatterns && this.config.codebaseAnalysis.testPatterns.length > 0) {
-      parts.push('## Detected Test Framework Patterns');
-      for (const pattern of this.config.codebaseAnalysis.testPatterns.slice(0, 3)) {
-        parts.push(`- Framework: ${pattern.framework}`);
-        parts.push(`  Structure: ${pattern.structure}`);
-        if (pattern.examples && pattern.examples.length > 0) {
-          parts.push(`  Example: ${pattern.examples[0]}`);
+    if (useCodebaseTag) {
+      // Minimal context when @codebase is available
+      // Just hint at what to look for, Cursor's index provides the rest
+      if (testContext?.helperMethods && testContext.helperMethods.length > 0) {
+        parts.push('## Helper Methods');
+        parts.push('Use existing helper methods from the test suite. Key helpers:');
+        for (const method of testContext.helperMethods.slice(0, 3)) {
+          parts.push(`- ${method}`);
         }
         parts.push('');
       }
-    }
 
-    // File contexts for reference (NEW)
-    if (testContext?.fileContexts && testContext.fileContexts.size > 0) {
-      parts.push('## Example Test Files (Reference for Structure)');
-      let fileCount = 0;
-      for (const [filePath, fileContext] of testContext.fileContexts.entries()) {
-        if (fileCount >= 3) break;
-        parts.push(`- ${path.basename(filePath)}`);
-        if (fileContext.skeleton) {
-          parts.push(`  Structure: ${fileContext.skeleton.substring(0, 200)}${fileContext.skeleton.length > 200 ? '...' : ''}`);
-        }
-        fileCount++;
+      if (this.config.codebaseAnalysis.testPatterns && this.config.codebaseAnalysis.testPatterns.length > 0) {
+        parts.push('## Test Patterns');
+        parts.push('Follow existing test patterns in the codebase. Framework:');
+        parts.push(`- ${this.config.codebaseAnalysis.testPatterns[0].framework}`);
+        parts.push('');
       }
-      parts.push('');
+    } else {
+      // Full context when @codebase is not available
+      // Helper methods from existing test files
+      if (testContext?.helperMethods && testContext.helperMethods.length > 0) {
+        parts.push('## Available Helper Methods (Use These in Tests)');
+        for (const method of testContext.helperMethods.slice(0, 10)) {
+          parts.push(`- ${method}`);
+        }
+        if (testContext.helperMethods.length > 10) {
+          parts.push(`... and ${testContext.helperMethods.length - 10} more`);
+        }
+        parts.push('');
+        parts.push('**IMPORTANT**: Use these existing helper methods in generated test cases. Do not create duplicate helper methods.');
+        parts.push('');
+      }
+
+      // Test patterns from existing test files
+      if (testContext?.testPatterns && testContext.testPatterns.length > 0) {
+        parts.push('## Existing Test Patterns (Follow These Structures)');
+        for (const pattern of testContext.testPatterns.slice(0, 5)) {
+          parts.push(`- ${pattern.name}`);
+          parts.push(`  Structure: ${pattern.structure}`);
+          parts.push(`  Location: Line ${pattern.lineNumber}`);
+        }
+        if (testContext.testPatterns.length > 5) {
+          parts.push(`... and ${testContext.testPatterns.length - 5} more patterns`);
+        }
+        parts.push('');
+      }
+
+      // Test patterns from codebase analysis
+      if (this.config.codebaseAnalysis.testPatterns && this.config.codebaseAnalysis.testPatterns.length > 0) {
+        parts.push('## Detected Test Framework Patterns');
+        for (const pattern of this.config.codebaseAnalysis.testPatterns.slice(0, 3)) {
+          parts.push(`- Framework: ${pattern.framework}`);
+          parts.push(`  Structure: ${pattern.structure}`);
+          if (pattern.examples && pattern.examples.length > 0) {
+            parts.push(`  Example: ${pattern.examples[0]}`);
+          }
+          parts.push('');
+        }
+      }
+
+      // File contexts for reference
+      if (testContext?.fileContexts && testContext.fileContexts.size > 0) {
+        parts.push('## Example Test Files (Reference for Structure)');
+        let fileCount = 0;
+        for (const [filePath, fileContext] of testContext.fileContexts.entries()) {
+          if (fileCount >= 3) break;
+          parts.push(`- ${path.basename(filePath)}`);
+          if (fileContext.skeleton) {
+            parts.push(`  Structure: ${fileContext.skeleton.substring(0, 200)}${fileContext.skeleton.length > 200 ? '...' : ''}`);
+          }
+          fileCount++;
+        }
+        parts.push('');
+      }
     }
 
     // Leverage existing TestGenerator templates if available

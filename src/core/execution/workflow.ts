@@ -20,6 +20,7 @@ import { PatternLearningSystem } from '../analysis/pattern/learner';
 import { DebugMetrics } from '../metrics/debug';
 import { PrdMetrics } from '../metrics/prd';
 import { PhaseMetrics } from '../metrics/phase';
+import { PrdSetMetrics } from '../metrics/prd-set';
 import { PrdMetadata } from '../metrics/types';
 import { FeatureTracker } from '../tracking/feature-tracker';
 import { SchemaTracker } from '../tracking/schema-tracker';
@@ -43,6 +44,7 @@ import { FailureAnalyzer } from '../analysis/error/failure-analyzer';
 import { AutonomousTaskGenerator } from '../generation/autonomous-task-generator';
 import { DrupalImplementationGenerator } from '../generation/drupal-implementation-generator';
 import { FrameworkLoader, FrameworkPlugin } from '../../frameworks';
+import { SpecKitContext } from '../prd/parser/planning-doc-parser';
 
 const execAsync = promisify(exec);
 
@@ -71,6 +73,7 @@ export class WorkflowEngine {
   private debugMetrics?: DebugMetrics;
   private prdMetrics?: PrdMetrics;
   private phaseMetrics?: PhaseMetrics;
+  private prdSetMetrics?: PrdSetMetrics;
   private featureTracker?: FeatureTracker;
   private schemaTracker?: SchemaTracker;
   private observationMetrics?: ObservationMetrics;
@@ -98,6 +101,8 @@ export class WorkflowEngine {
   private investigationAttempts: Map<string, { attempts: number; firstAttempt: number; lastAttempt: number; learnings: string[]; testSignature: string }> = new Map();
   // Phase 7: Token budget tracking - track cumulative token usage per PRD execution
   private tokenUsage: Map<string, { cumulativeTokens: number; startTime: number; lastUpdated: number }> = new Map();
+  // Spec-kit context for injecting clarifications, research, and constitution into prompts
+  private specKitContext?: SpecKitContext;
 
   constructor(private config: Config) {
     this.debug = (config as any).debug || false;
@@ -204,6 +209,7 @@ export class WorkflowEngine {
       // TODO: Refactor to use UnifiedStateManager.recordMetrics() for full consolidation
       this.prdMetrics = new PrdMetrics(prdMetricsPath);
       this.phaseMetrics = new PhaseMetrics(phaseMetricsPath);
+      this.prdSetMetrics = new PrdSetMetrics();
       this.featureTracker = new FeatureTracker(featureMetricsPath);
       this.schemaTracker = new SchemaTracker(schemaMetricsPath);
       this.observationMetrics = new ObservationMetrics(observationMetricsPath);
@@ -213,9 +219,11 @@ export class WorkflowEngine {
 
       // Initialize event-to-metrics bridge
       // This automatically updates metrics when events are emitted
+      // Includes prdSetMetrics for spec-kit event tracking
       this.eventMetricBridge = initializeEventMetricBridge({
         prdMetrics: this.prdMetrics,
         phaseMetrics: this.phaseMetrics,
+        prdSetMetrics: this.prdSetMetrics,
         enabled: true,
         debug: this.debug,
       });
@@ -274,6 +282,80 @@ export class WorkflowEngine {
         console.warn('[WorkflowEngine] Could not initialize complex issue analyzers:', err);
       }
     }
+  }
+
+  /**
+   * Set spec-kit context for code generation
+   * This context will be injected into all task prompts
+   */
+  setSpecKitContext(context: SpecKitContext): void {
+    this.specKitContext = context;
+    logger.debug(`[WorkflowEngine] Spec-kit context set: ${context.clarifications?.length || 0} clarifications, ${context.research?.length || 0} research`);
+  }
+
+  /**
+   * Build spec-kit context section for task prompts
+   * Returns formatted markdown to inject into AI prompts
+   */
+  private buildSpecKitSection(): string {
+    if (!this.specKitContext) return '';
+
+    const sections: string[] = [];
+
+    // Add design decisions from clarifications
+    if (this.specKitContext.clarifications && this.specKitContext.clarifications.length > 0) {
+      sections.push('\n## Design Decisions (from PRD clarification)\n');
+      for (const c of this.specKitContext.clarifications) {
+        sections.push(`- **${c.question}**: ${c.answer}`);
+
+        // Emit event for each clarification used
+        emitEvent('speckit:clarification_applied', {
+          question: c.question,
+          answer: c.answer,
+          category: c.category,
+          autoApplied: c.autoApplied,
+        }, { severity: 'info' });
+      }
+    }
+
+    // Add constitution constraints
+    if (this.specKitContext.constitution?.constraints && this.specKitContext.constitution.constraints.length > 0) {
+      sections.push('\n## Project Constraints (from constitution)\n');
+      const constraints = this.specKitContext.constitution.constraints.slice(0, 5);
+      for (const constraint of constraints) {
+        sections.push(`- ${constraint}`);
+      }
+
+      emitEvent('speckit:constitution_enforced', {
+        constraintsCount: constraints.length,
+      }, { severity: 'info' });
+    }
+
+    // Add relevant research
+    if (this.specKitContext.research && this.specKitContext.research.length > 0) {
+      sections.push('\n## Relevant Patterns (from codebase research)\n');
+      const research = this.specKitContext.research.slice(0, 3);
+      for (const r of research) {
+        sections.push(`- **${r.topic}**: ${r.findings}`);
+      }
+
+      emitEvent('speckit:research_used', {
+        findingsCount: research.length,
+      }, { severity: 'info' });
+    }
+
+    const contextSection = sections.join('\n');
+
+    if (contextSection) {
+      emitEvent('speckit:context_injected', {
+        clarificationsInjected: this.specKitContext.clarifications?.length || 0,
+        researchInjected: Math.min(3, this.specKitContext.research?.length || 0),
+        constraintsInjected: Math.min(5, this.specKitContext.constitution?.constraints?.length || 0),
+        contextSizeChars: contextSection.length,
+      }, { severity: 'info' });
+    }
+
+    return contextSection;
   }
 
   /**
@@ -1098,7 +1180,7 @@ export class WorkflowEngine {
         this.contributionModeIssueDetector.updateContextLossTracking((this as any).currentPrdId);
       }
 
-      const template = await this.templateManager.getTaskGenerationTemplateWithContext({
+      let template = await this.templateManager.getTaskGenerationTemplateWithContext({
         task: {
           title: task.title,
           description: enhancedDescription,
@@ -1111,6 +1193,13 @@ export class WorkflowEngine {
         fileGuidance: moduleBoundaryGuidance + (fileGuidance || ''),
         patternGuidance,
       });
+
+      // Inject spec-kit context (clarifications, research, constitution) into prompt
+      const specKitSection = this.buildSpecKitSection();
+      if (specKitSection) {
+        template += specKitSection;
+        logger.info(`[WorkflowEngine] Injected ${this.specKitContext?.clarifications?.length || 0} design decision(s) from spec-kit`);
+      }
 
       // Track session usage for session pollution detection
       // Note: Session ID is created in cursor-chat-opener, but we track usage here
@@ -4868,7 +4957,7 @@ export class WorkflowEngine {
             prdSetId: prdSetId,             // Already extracted at line 2700
           };
 
-          const template = await this.templateManager.getTaskGenerationTemplateWithContext({
+          let template = await this.templateManager.getTaskGenerationTemplateWithContext({
             task: {
               title: task.title,
               description: task.description,
@@ -4881,6 +4970,12 @@ export class WorkflowEngine {
             fileGuidance: '',
             patternGuidance: '',
           });
+
+          // Inject spec-kit context (clarifications, research, constitution) into prompt
+          const specKitSection = this.buildSpecKitSection();
+          if (specKitSection) {
+            template += specKitSection;
+          }
 
           // Record AI call start
           aiCallStartTime = Date.now();

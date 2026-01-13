@@ -1,7 +1,15 @@
 import * as fs from 'fs-extra';
 import * as path from 'path';
 import { z } from 'zod';
-import { FrameworkPlugin, FrameworkDefaultConfig, CodeChanges, CodeQualityTool, TechDebtIndicator } from '../interface';
+import {
+  FrameworkPlugin,
+  FrameworkDefaultConfig,
+  CodeChanges,
+  CodeQualityTool,
+  TechDebtIndicator,
+  PrdConcept,
+  PrdInferenceResult,
+} from '../interface';
 
 /**
  * Drupal Framework Plugin
@@ -485,5 +493,171 @@ ${forbiddenExamples}
 
 **Files outside the target module will be REJECTED. Do not waste tokens on them.**
 `;
+  }
+
+  // ===== Constitution Support (Spec-Kit Integration) =====
+
+  /**
+   * Get Drupal-specific constraints for constitution merging.
+   * These are injected into AI prompts as MUST/NEVER rules.
+   */
+  getConstraints(): string[] {
+    return [
+      'NEVER modify Drupal core or contrib code directly',
+      'NEVER create custom PHP entity classes - use bd.entity_type.*.yml config',
+      'MUST use dependency injection via constructor',
+      'MUST extend Drupal\\bd\\Plugin\\EntityPluginBase for all plugins',
+      'MUST use config_schema_subform for configuration forms',
+      'ALWAYS run ddev exec bash -c "drush cr" after schema/config changes',
+      'MUST follow Drupal coding standards (2-space indentation, no closing PHP tags)',
+      'MUST use PHP 8.3 type hints and return types',
+    ];
+  }
+
+  /**
+   * Get Drupal-specific patterns for constitution merging.
+   */
+  getPatterns(): Array<{ pattern: string; when: string; reference?: string }> {
+    return [
+      {
+        pattern: 'EntityPluginBase',
+        when: 'creating any plugin type',
+        reference: 'docroot/modules/share/bd/src/Plugin/EntityPluginBase.php',
+      },
+      {
+        pattern: 'config_schema_subform',
+        when: 'building configuration forms',
+        reference: 'docroot/modules/share/bd/config/schema/bd.schema.yml',
+      },
+      {
+        pattern: 'bd.entity_type.*.yml',
+        when: 'defining entity types',
+        reference: 'config/default/bd.entity_type.*.yml',
+      },
+      {
+        pattern: 'bd.bundle.*.yml',
+        when: 'defining entity bundles',
+        reference: 'config/default/bd.bundle.*.yml',
+      },
+      {
+        pattern: 'DefaultPluginManager',
+        when: 'creating plugin managers',
+        reference: 'docroot/modules/share/bd/src/Plugin/',
+      },
+      {
+        pattern: 'annotation discovery',
+        when: 'plugin discovery (Drupal 10 compatibility)',
+      },
+    ];
+  }
+
+  /**
+   * Get code location rules for Drupal projects.
+   */
+  getCodeLocationRules(): Record<string, string> {
+    return {
+      custom_modules: 'docroot/modules/share/{module}/',
+      configuration: 'config/default/',
+      schema_definitions: 'docroot/modules/share/*/config/schema/*.schema.yml',
+      tests: 'tests/playwright/',
+      services: 'docroot/modules/share/*/*.services.yml',
+      hooks: 'docroot/modules/share/*/*.module',
+    };
+  }
+
+  // ===== PRD Content Analysis (For Spec-Kit Integration) =====
+
+  /**
+   * Get Drupal-specific concepts that can be inferred from PRDs.
+   */
+  getPrdConcepts(): PrdConcept[] {
+    return [
+      {
+        name: 'entity_type',
+        label: 'Entity Types',
+        extractPattern: /entity\s+type[:\s]+["']?(\w+)["']?/gi,
+        filePattern: /bd\.entity_type\.(\w+)\.yml/,
+        schemaQuestion: 'Should I generate schemas for all {count} entity type(s) found in the PRD?',
+        priorityQuestion: 'Which entity types should I prioritize for schema generation?',
+      },
+      {
+        name: 'plugin_type',
+        label: 'Plugin Types',
+        extractPattern: /plugin\s+type[:\s]+["']?(\w+)["']?/gi,
+        filePattern: /Plugin\/(\w+)\//,
+        schemaQuestion: 'Should I generate plugin definitions for all {count} plugin type(s)?',
+      },
+      {
+        name: 'config_schema',
+        label: 'Config Schemas',
+        extractPattern: /config\s+schema[:\s]+["']?(\w+)["']?/gi,
+        filePattern: /(\w+)\.schema\.yml/,
+      },
+      {
+        name: 'bundle',
+        label: 'Entity Bundles',
+        extractPattern: /bundle[:\s]+["']?(\w+)["']?/gi,
+        filePattern: /bd\.bundle\.(\w+)\.\w+\.yml/,
+      },
+    ];
+  }
+
+  /**
+   * Infer Drupal-specific decisions from PRD content.
+   */
+  inferFromPrd(prd: any): PrdInferenceResult {
+    const prdText = JSON.stringify(prd).toLowerCase();
+    const concepts: PrdInferenceResult['concepts'] = [];
+
+    for (const concept of this.getPrdConcepts()) {
+      const items: string[] = [];
+
+      // Extract from PRD text using pattern
+      const regex = new RegExp(concept.extractPattern.source, 'gi');
+      let match;
+      while ((match = regex.exec(prdText)) !== null) {
+        if (match[1] && !items.includes(match[1].toLowerCase())) {
+          items.push(match[1].toLowerCase());
+        }
+      }
+
+      // Extract from target files if filePattern provided
+      if (concept.filePattern) {
+        for (const phase of prd.phases || []) {
+          for (const task of phase.tasks || []) {
+            for (const file of task.targetFiles || task.files || []) {
+              const fileMatch = file.match(concept.filePattern);
+              if (fileMatch?.[1] && !items.includes(fileMatch[1].toLowerCase())) {
+                items.push(fileMatch[1].toLowerCase());
+              }
+            }
+          }
+        }
+      }
+
+      if (items.length > 0) {
+        concepts.push({
+          type: concept.name,
+          items,
+          priorities: items.slice(0, 3), // First 3 as priorities
+          confidence: items.length >= 3 ? 0.9 : items.length > 0 ? 0.75 : 0.5,
+        });
+      }
+    }
+
+    // Determine schema type (Drupal-specific: config vs entity schemas)
+    const hasEntityMentions = prdText.includes('entity type') || prdText.includes('content type') || prdText.includes('bundle');
+    const hasConfigMentions = prdText.includes('module settings') || prdText.includes('config schema') || prdText.includes('configuration form');
+
+    let schemaType: PrdInferenceResult['schemaType'];
+    if (hasEntityMentions || hasConfigMentions) {
+      schemaType = {
+        value: hasEntityMentions && hasConfigMentions ? 'both' :
+               hasEntityMentions ? 'entity' : 'config',
+        confidence: 0.8,
+      };
+    }
+
+    return { concepts, schemaType };
   }
 }

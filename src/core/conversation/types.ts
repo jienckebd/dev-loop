@@ -21,6 +21,16 @@ export type ConversationState = 'questioning' | 'refining' | 'complete' | 'pause
 export type QuestionType = 'multiple-choice' | 'open-ended' | 'multi-select' | 'confirm';
 
 /**
+ * Spec-kit clarification category for structured question classification
+ */
+export type ClarificationCategory =
+  | 'scope'          // What's in/out of scope
+  | 'architecture'   // High-level design decisions
+  | 'implementation' // How to build it
+  | 'testing'        // How to validate
+  | 'integration';   // How it connects to other systems
+
+/**
  * Question for PRD building
  */
 export interface Question {
@@ -37,6 +47,11 @@ export interface Question {
     ifAnswerContains?: { [key: string]: Question[] };
     ifAnswerIsNumeric?: { min?: number; max?: number; then: Question[] };
   };
+  // Spec-kit extensions
+  category?: ClarificationCategory;  // Categorize the question
+  inferredAnswer?: string;           // AI-inferred answer (for auto-approve)
+  inferenceSource?: string;          // Where inference came from (e.g., ".cursorrules", "codebase pattern")
+  confidence?: number;               // 0-1 confidence in inference
 }
 
 /**

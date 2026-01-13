@@ -53,7 +53,7 @@ export class PatternLoader {
     this.validator = new SchemaValidator({
       autoFix: true,
       autoMigrate: true,
-      backup: true,
+      backup: false, // Disabled: backup files should never be created
       debug: this.debug,
     });
   }
@@ -69,7 +69,15 @@ export class PatternLoader {
       if (this.config.validateOnLoad) {
         const validationResult = await this.validator.validatePatternsFile(this.config.filePath);
         if (!validationResult.valid && validationResult.errors.length > 0) {
-          logger.warn(`[PatternLoader] Schema validation errors (some may have been auto-fixed): ${validationResult.errors.join('; ')}`);
+          const warningMsg = `Schema validation errors (some may have been auto-fixed): ${validationResult.errors.join('; ')}`;
+          logger.warn(`[PatternLoader] ${warningMsg}`);
+          // Record warning in build metrics if available
+          try {
+            const { getBuildMetrics } = await import('../../metrics/build');
+            getBuildMetrics().recordWarning('PatternLoader', warningMsg);
+          } catch {
+            // Build metrics not available
+          }
         }
         if (validationResult.warnings.length > 0 && this.debug) {
           logger.debug(`[PatternLoader] Schema validation warnings: ${validationResult.warnings.join('; ')}`);
@@ -87,7 +95,15 @@ export class PatternLoader {
 
       // Verify version
       if (data.version && data.version !== '2.0') {
-        logger.warn(`[PatternLoader] Patterns file has unexpected version: ${data.version}. Expected v2.0. Schema may have been migrated.`);
+        const warningMsg = `Patterns file has unexpected version: ${data.version}. Expected v2.0. Schema may have been migrated.`;
+        logger.warn(`[PatternLoader] ${warningMsg}`);
+        // Record warning in build metrics if available
+        try {
+          const { getBuildMetrics } = await import('../../metrics/build');
+          getBuildMetrics().recordWarning('PatternLoader', warningMsg);
+        } catch {
+          // Build metrics not available
+        }
       }
 
       // Auto-prune old entries if enabled and interval has passed

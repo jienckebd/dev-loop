@@ -3,13 +3,12 @@
  *
  * Adapter for AI providers to support text generation for PRD building.
  * Wraps existing AIProvider interface to provide generate() method for text generation.
+ * 
+ * IMPORTANT: This adapter delegates exclusively to provider.generateText() to ensure
+ * session management, token tracking, and metrics are properly handled by the provider.
  */
 
 import { AIProvider, AIProviderConfig } from '../../../providers/ai/interface';
-import { TaskContext } from '../../../types';
-import Anthropic from '@anthropic-ai/sdk';
-import { OpenAI } from 'openai';
-import { GoogleGenerativeAI } from '@google/generative-ai';
 import { logger } from '../../utils/logger';
 
 /**
@@ -19,10 +18,23 @@ export interface TextGenerationOptions {
   maxTokens?: number;
   temperature?: number;
   systemPrompt?: string;
+  /**
+   * Task type hint for model selection optimization.
+   * Simple tasks can use faster models for better performance.
+   */
+  taskType?: 'schema-generation' | 'test-planning' | 'code-generation' | 'analysis' | 'general';
+  /**
+   * Override the default model for this call.
+   * When set, uses this model instead of provider default.
+   */
+  model?: string;
 }
 
 /**
  * Adapter for text generation using AI providers
+ * 
+ * Delegates all text generation to the provider's generateText() method,
+ * ensuring session management and token tracking work correctly.
  */
 export class TextGenerationAdapter {
   private provider: AIProvider;
@@ -35,198 +47,137 @@ export class TextGenerationAdapter {
     this.providerConfig = providerConfig;
     this.providerName = provider.name;
     this.debug = debug;
+
+    // Validate that provider supports generateText
+    if (!('generateText' in this.provider) || typeof this.provider.generateText !== 'function') {
+      logger.warn(`[TextGenerationAdapter] Provider ${this.providerName} does not have generateText() method. Text generation may fail.`);
+    }
+  }
+
+  /**
+   * Select optimal model for task type
+   * Simple tasks can use faster/cheaper models for better performance
+   */
+  private selectModelForTask(taskType?: TextGenerationOptions['taskType'], defaultModel?: string): string {
+    // If a model is explicitly set in provider config, respect it
+    if (defaultModel && defaultModel !== 'auto' && defaultModel !== 'Auto') {
+      return defaultModel;
+    }
+
+    // Task-based model selection for optimization
+    switch (taskType) {
+      case 'schema-generation':
+      case 'test-planning':
+        // These are structured tasks that don't need heavy reasoning
+        // Use faster models when available
+        if (this.providerName === 'gemini') {
+          return 'gemini-2.0-flash'; // Fast and capable
+        }
+        if (this.providerName === 'anthropic') {
+          return 'claude-3-5-haiku-latest'; // Faster Claude
+        }
+        if (this.providerName === 'openai') {
+          return 'gpt-4o-mini'; // Fast GPT-4
+        }
+        break;
+
+      case 'code-generation':
+      case 'analysis':
+        // These need more reasoning capability
+        if (this.providerName === 'anthropic') {
+          return 'claude-sonnet-4-20250514'; // Best for code
+        }
+        break;
+    }
+
+    // Default to provider's configured model
+    return defaultModel || this.providerConfig.model || 'auto';
   }
 
   /**
    * Generate text from prompt (text generation, not code generation)
+   * 
+   * Delegates to provider.generateText() to ensure proper session management,
+   * token tracking, and metrics recording.
    */
   async generate(prompt: string, options: TextGenerationOptions = {}): Promise<string> {
+    const startTime = Date.now();
     const maxTokens = options.maxTokens || this.providerConfig.maxTokens || 4000;
     const temperature = options.temperature ?? this.providerConfig.temperature ?? 0.7;
     const systemPrompt = options.systemPrompt || 'You are a helpful assistant that generates structured documents.';
 
+    // Select optimal model based on task type
+    const model = options.model || this.selectModelForTask(options.taskType, this.providerConfig.model);
+    if (this.debug && model !== this.providerConfig.model) {
+      logger.debug(`[TextGenerationAdapter] Using optimized model '${model}' for ${options.taskType || 'general'} task`);
+    }
+
     try {
-      // Primary: Use provider's native generateText method if available
-      if ('generateText' in this.provider && typeof this.provider.generateText === 'function') {
-        logger.debug(`[TextGenerationAdapter] Using provider.generateText() for ${this.providerName}`);
-        return await this.provider.generateText(prompt, { maxTokens, temperature, systemPrompt });
+      // Validate provider supports generateText
+      if (!('generateText' in this.provider) || typeof this.provider.generateText !== 'function') {
+        throw new Error(
+          `Provider '${this.providerName}' does not support generateText(). ` +
+          `All providers must implement generateText() for PRD building. ` +
+          `Check that the provider is correctly configured.`
+        );
       }
 
-      // Fallback: Use underlying SDK based on provider type
-      logger.debug(`[TextGenerationAdapter] Falling back to direct SDK for ${this.providerName}`);
-      switch (this.providerName) {
-        case 'anthropic':
-          return await this.generateWithAnthropic(prompt, systemPrompt, maxTokens, temperature);
-        case 'openai':
-          return await this.generateWithOpenAI(prompt, systemPrompt, maxTokens, temperature);
-        case 'gemini':
-          return await this.generateWithGemini(prompt, systemPrompt, maxTokens, temperature);
-        case 'ollama':
-          return await this.generateWithOllama(prompt, systemPrompt, maxTokens, temperature);
-        default:
-          // Last resort fallback: use generateCode and extract text from response
-          logger.warn(`[TextGenerationAdapter] Unknown provider ${this.providerName}, using generateCode fallback`);
-          return await this.generateWithCodeGeneration(prompt, systemPrompt);
+      logger.debug(`[TextGenerationAdapter] Using provider.generateText() for ${this.providerName}`);
+      const result = await this.provider.generateText(prompt, { maxTokens, temperature, systemPrompt, model });
+      
+      // Track metrics with token data if provider supports it
+      const durationMs = Date.now() - startTime;
+      if ('getLastTokens' in this.provider && typeof this.provider.getLastTokens === 'function') {
+        const tokens = this.provider.getLastTokens();
+        if (tokens && (tokens.input !== undefined || tokens.output !== undefined)) {
+          try {
+            const { getBuildMetrics } = require('../../metrics/build');
+            getBuildMetrics().recordAICall(
+              `${this.providerName}-generateText`,
+              true,
+              durationMs,
+              tokens.input !== undefined && tokens.output !== undefined 
+                ? { input: tokens.input, output: tokens.output }
+                : undefined
+            );
+          } catch {
+            // Build metrics not available
+          }
+        }
       }
+      
+      return result;
     } catch (error) {
+      const durationMs = Date.now() - startTime;
+      
+      // Record failed call in metrics
+      try {
+        const { getBuildMetrics } = require('../../metrics/build');
+        getBuildMetrics().recordAICall(
+          `${this.providerName}-generateText`,
+          false,
+          durationMs
+        );
+      } catch {
+        // Build metrics not available
+      }
+      
       logger.error(`[TextGenerationAdapter] Text generation failed: ${error}`);
       throw error;
     }
   }
 
   /**
-   * Generate with Anthropic
+   * Get the provider name
    */
-  private async generateWithAnthropic(
-    prompt: string,
-    systemPrompt: string,
-    maxTokens: number,
-    temperature: number
-  ): Promise<string> {
-    const client = new Anthropic({ apiKey: this.providerConfig.apiKey });
-    const model = this.providerConfig.model || 'claude-3-5-sonnet-20241022';
-
-    const response = await client.messages.create({
-      model,
-      max_tokens: maxTokens,
-      temperature,
-      system: systemPrompt,
-      messages: [
-        {
-          role: 'user',
-          content: prompt,
-        },
-      ],
-    });
-
-    // Extract text from response
-    if (response.content && response.content.length > 0) {
-      const textBlock = response.content.find(block => block.type === 'text');
-      if (textBlock && 'text' in textBlock) {
-        return textBlock.text;
-      }
-    }
-
-    throw new Error('No text content in Anthropic response');
+  getProviderName(): string {
+    return this.providerName;
   }
 
   /**
-   * Generate with OpenAI
+   * Check if provider supports text generation
    */
-  private async generateWithOpenAI(
-    prompt: string,
-    systemPrompt: string,
-    maxTokens: number,
-    temperature: number
-  ): Promise<string> {
-    const client = new OpenAI({ apiKey: this.providerConfig.apiKey });
-    const model = this.providerConfig.model || 'gpt-4-turbo-preview';
-
-    const response = await client.chat.completions.create({
-      model,
-      max_tokens: maxTokens,
-      temperature,
-      messages: [
-        { role: 'system', content: systemPrompt },
-        { role: 'user', content: prompt },
-      ],
-    });
-
-    if (response.choices && response.choices.length > 0) {
-      return response.choices[0].message.content || '';
-    }
-
-    throw new Error('No content in OpenAI response');
-  }
-
-  /**
-   * Generate with Gemini
-   */
-  private async generateWithGemini(
-    prompt: string,
-    systemPrompt: string,
-    maxTokens: number,
-    temperature: number
-  ): Promise<string> {
-    const genAI = new GoogleGenerativeAI(this.providerConfig.apiKey || '');
-    const model = genAI.getGenerativeModel({ model: this.providerConfig.model || 'gemini-pro' });
-
-    const fullPrompt = `${systemPrompt}\n\n${prompt}`;
-    const result = await model.generateContent({
-      contents: [{ role: 'user', parts: [{ text: fullPrompt }] }],
-      generationConfig: {
-        maxOutputTokens: maxTokens,
-        temperature,
-      },
-    });
-
-    const response = await result.response;
-    return response.text();
-  }
-
-  /**
-   * Generate with Ollama (local)
-   */
-  private async generateWithOllama(
-    prompt: string,
-    systemPrompt: string,
-    maxTokens: number,
-    temperature: number
-  ): Promise<string> {
-    // Ollama uses HTTP API
-    const ollamaUrl = process.env.OLLAMA_URL || 'http://localhost:11434';
-    const model = this.providerConfig.model || 'llama2';
-
-    const response = await fetch(`${ollamaUrl}/api/generate`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        model,
-        prompt: `${systemPrompt}\n\n${prompt}`,
-        options: {
-          num_predict: maxTokens,
-          temperature,
-        },
-        stream: false,
-      }),
-    });
-
-    if (!response.ok) {
-      throw new Error(`Ollama API error: ${response.statusText}`);
-    }
-
-    const data = await response.json() as { response?: string };
-    return data.response || '';
-  }
-
-  /**
-   * Fallback: Generate using code generation interface
-   */
-  private async generateWithCodeGeneration(prompt: string, systemPrompt: string): Promise<string> {
-    // Create a minimal context
-    const context: TaskContext = {
-      task: {
-        id: 'text-generation',
-        title: 'Text Generation',
-        description: prompt,
-        status: 'pending',
-        priority: 'medium',
-      },
-      codebaseContext: systemPrompt,
-    };
-
-    // Use generateCode and extract text from summary
-    const codeChanges = await this.provider.generateCode(prompt, context);
-    
-    // Extract text from codeChanges summary or first file content
-    if (codeChanges.summary) {
-      return codeChanges.summary;
-    }
-
-    if (codeChanges.files && codeChanges.files.length > 0 && codeChanges.files[0].content) {
-      return codeChanges.files[0].content;
-    }
-
-    throw new Error('No text content in code generation response');
+  supportsTextGeneration(): boolean {
+    return 'generateText' in this.provider && typeof this.provider.generateText === 'function';
   }
 }

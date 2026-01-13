@@ -5,6 +5,8 @@ import { AIProvider, AIProviderConfig } from './interface';
 import { CodeChanges, TaskContext, LogAnalysis, FrameworkConfig } from '../../types';
 import { logger } from "../../core/utils/logger";
 import { extractCodeChanges, JsonParsingContext } from './json-parser';
+import { GenericSessionManager, GenericSession } from './generic-session-manager';
+import { Session, SessionContext } from './session-manager';
 
 export class AnthropicProvider implements AIProvider {
   public name = 'anthropic';
@@ -15,6 +17,7 @@ export class AnthropicProvider implements AIProvider {
   private baseDelay = 60000; // 60 seconds base delay for rate limits
   private debug = false;
   private lastTokens: { input?: number; output?: number } = {};
+  private sessionManager: GenericSessionManager | null = null;
 
   constructor(private config: AIProviderConfig) {
     if (!config.apiKey) {
@@ -33,6 +36,39 @@ export class AnthropicProvider implements AIProvider {
       this.frameworkConfig = config.frameworkConfig;
       console.log('[Anthropic] Using framework config:', this.frameworkConfig.type || 'generic');
     }
+
+    // Initialize session manager if enabled
+    const sessionConfig = (config as any).sessionManagement;
+    if (sessionConfig?.enabled !== false) {
+      this.sessionManager = new GenericSessionManager({
+        providerName: 'anthropic',
+        maxSessionAge: sessionConfig?.maxSessionAge,
+        maxHistoryItems: sessionConfig?.maxHistoryItems,
+        enabled: sessionConfig?.enabled,
+      });
+      logger.debug('[AnthropicProvider] Session management initialized');
+    }
+  }
+
+  /**
+   * Get session by ID
+   */
+  getSession(sessionId: string): Session | null {
+    return this.sessionManager?.getSession(sessionId) || null;
+  }
+
+  /**
+   * Get or create session for a given context
+   */
+  getOrCreateSession(context: SessionContext): Session | null {
+    return this.sessionManager?.getOrCreateSession(context) || null;
+  }
+
+  /**
+   * Check if provider supports sessions
+   */
+  supportsSessions(): boolean {
+    return this.sessionManager !== null;
   }
 
   /**
@@ -504,20 +540,29 @@ ${prompt}`;
    * Generate text without expecting JSON CodeChanges format
    * Used for PRD building (schemas, test plans, etc.) where plain text output is expected
    */
-  async generateText(prompt: string, options?: { maxTokens?: number; temperature?: number; systemPrompt?: string }): Promise<string> {
+  async generateText(prompt: string, options?: { maxTokens?: number; temperature?: number; systemPrompt?: string; model?: string }): Promise<string> {
     const maxTokens = options?.maxTokens || this.config.maxTokens || 4000;
     const temperature = options?.temperature ?? 0.7;
     const systemPrompt = options?.systemPrompt || 'You are a helpful assistant.';
+    const model = options?.model || this.config.model;
 
-    logger.info(`[AnthropicProvider] generateText: Generating text with ${this.config.model}`);
+    logger.info(`[AnthropicProvider] generateText: Generating text with ${model}`);
 
     const response = await this.client.messages.create({
-      model: this.config.model,
+      model,
       max_tokens: maxTokens,
       temperature,
       system: systemPrompt,
       messages: [{ role: 'user', content: prompt }],
     });
+
+    // Track token usage for metrics
+    if (response.usage) {
+      this.lastTokens = {
+        input: response.usage.input_tokens,
+        output: response.usage.output_tokens,
+      };
+    }
 
     const textBlock = response.content.find(block => block.type === 'text');
     if (textBlock && 'text' in textBlock) {

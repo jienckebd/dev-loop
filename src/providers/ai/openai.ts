@@ -2,16 +2,61 @@ import OpenAI from 'openai';
 import { AIProvider, AIProviderConfig } from './interface';
 import { CodeChanges, TaskContext, LogAnalysis } from '../../types';
 import { extractCodeChanges, JsonParsingContext } from './json-parser';
+import { GenericSessionManager } from './generic-session-manager';
+import { Session, SessionContext } from './session-manager';
+import { logger } from '../../core/utils/logger';
 
 export class OpenAIProvider implements AIProvider {
   public name = 'openai';
   private client: OpenAI;
+  private lastTokens: { input?: number; output?: number } = {};
+  private sessionManager: GenericSessionManager | null = null;
 
   constructor(private config: AIProviderConfig) {
     if (!config.apiKey) {
       throw new Error('OpenAI API key is required');
     }
     this.client = new OpenAI({ apiKey: config.apiKey });
+
+    // Initialize session manager if enabled
+    const sessionConfig = (config as any).sessionManagement;
+    if (sessionConfig?.enabled !== false) {
+      this.sessionManager = new GenericSessionManager({
+        providerName: 'openai',
+        maxSessionAge: sessionConfig?.maxSessionAge,
+        maxHistoryItems: sessionConfig?.maxHistoryItems,
+        enabled: sessionConfig?.enabled,
+      });
+      logger.debug('[OpenAIProvider] Session management initialized');
+    }
+  }
+
+  /**
+   * Get last token usage from the most recent API call
+   */
+  public getLastTokens(): { input?: number; output?: number } {
+    return { ...this.lastTokens };
+  }
+
+  /**
+   * Get session by ID
+   */
+  getSession(sessionId: string): Session | null {
+    return this.sessionManager?.getSession(sessionId) || null;
+  }
+
+  /**
+   * Get or create session for a given context
+   */
+  getOrCreateSession(context: SessionContext): Session | null {
+    return this.sessionManager?.getOrCreateSession(context) || null;
+  }
+
+  /**
+   * Check if provider supports sessions
+   */
+  supportsSessions(): boolean {
+    return this.sessionManager !== null;
   }
 
   async generateCode(prompt: string, context: TaskContext): Promise<CodeChanges> {
@@ -46,6 +91,14 @@ ${prompt}`;
         temperature: this.config.temperature || 0.7,
         response_format: { type: 'json_object' },
       });
+
+      // Track token usage
+      if (response.usage) {
+        this.lastTokens = {
+          input: response.usage.prompt_tokens,
+          output: response.usage.completion_tokens,
+        };
+      }
 
       const content = response.choices[0]?.message?.content;
       if (content) {

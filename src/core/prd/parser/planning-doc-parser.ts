@@ -2,6 +2,7 @@ import * as fs from 'fs-extra';
 import * as path from 'path';
 import { parse as yamlParse } from 'yaml';
 import { logger } from '../../utils/logger';
+import { ClarificationCategory } from '../../conversation/types';
 
 /**
  * Represents a parsed phase from a planning document
@@ -19,17 +20,93 @@ export interface ParsedPhase {
 }
 
 /**
+ * Research finding from codebase analysis
+ */
+export interface ResearchFinding {
+  topic: string;
+  findings: string;
+  relevantFiles?: string[];
+}
+
+/**
+ * Resolved clarification question and answer
+ */
+export interface ResolvedClarification {
+  question: string;
+  answer: string;
+  category?: ClarificationCategory;
+  autoApplied?: boolean; // True if answer was auto-applied without prompting
+}
+
+/**
+ * Pattern rule for constitution
+ */
+export interface PatternRule {
+  pattern: string;    // e.g., "config_schema_subform"
+  when: string;       // e.g., "building configuration forms"
+  reference?: string; // Example file path
+}
+
+/**
+ * Constitution rules structure
+ */
+export interface ConstitutionRules {
+  constraints: string[];      // "NEVER modify Drupal core"
+  patterns: PatternRule[];    // When to use what
+  avoid: string[];            // Things to never do
+  codeLocations: string[];    // Where code should go
+}
+
+/**
  * Represents a parsed task from a planning document
  */
 export interface ParsedTask {
   id: string;
-  title: string;
-  description: string;
+  title: string;                              // SHORT title only (no embedded metadata)
+  description: string;                        // Detailed description (no duplication)
+  
+  // Existing optional fields
   testStrategy?: string;
   validationChecklist?: string[];
   dependencies?: string[];
   files?: string[];
+  
+  // Structured fields (spec-kit style)
+  priority?: 'must' | 'should' | 'could' | 'wont';
+  type?: 'functional' | 'technical' | 'documentation' | 'test';
+  acceptanceCriteria?: string[];              // Structured list
+  targetFiles?: string[];                     // Clean file paths
+  validation?: {
+    commands?: string[];                      // Shell commands
+    expectedOutcome?: string;                 // Expected result
+  };
+  context?: {                                 // Injected from research
+    constitutionRules?: string[];             // Relevant project rules
+    researchFindings?: ResearchFinding[];     // Relevant patterns
+    clarifications?: ResolvedClarification[]; // Related Q&A
+  };
 }
+
+/**
+ * Spec-kit integration block for PRD
+ */
+export interface SpecKitBlock {
+  constitutionPath?: string;                // Path to constitution file
+  constitution?: ConstitutionRules;         // Parsed constitution
+  clarifications?: ResolvedClarification[]; // Resolved Q&A
+  research?: ResearchFinding[];             // Tech stack research
+  techStack?: {                             // Explicit decisions
+    framework?: string;
+    patterns?: string[];
+    constraints?: string[];
+  };
+}
+
+/**
+ * Spec-kit context for execution (subset of SpecKitBlock)
+ * Reuses existing types to avoid duplication
+ */
+export type SpecKitContext = Pick<SpecKitBlock, 'clarifications' | 'research' | 'constitution'>;
 
 /**
  * Represents the complete parsed structure of a planning document
@@ -54,6 +131,8 @@ export interface ParsedPlanningDoc {
   };
   rawFrontmatter?: Record<string, any>;
   rawContent: string;
+  // Spec-kit integration block
+  specKit?: SpecKitBlock;
 }
 
 /**

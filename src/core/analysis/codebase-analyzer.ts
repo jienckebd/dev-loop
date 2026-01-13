@@ -808,4 +808,114 @@ export class CodebaseAnalyzer {
   setSemanticDiscovery(discovery: SemanticFileDiscovery): void {
     this.semanticDiscovery = discovery;
   }
+
+  /**
+   * Generate research findings for a specific task
+   * Uses existing pattern detection but structures output for spec-kit
+   */
+  async generateResearchForTask(task: {
+    id: string;
+    title: string;
+    description: string;
+    files?: string[];
+  }): Promise<Array<{ topic: string; findings: string; relevantFiles?: string[] }>> {
+    const findings: Array<{ topic: string; findings: string; relevantFiles?: string[] }> = [];
+
+    try {
+      // 1. Find relevant files using semantic discovery if available
+      let relevantFiles: string[] = [];
+      if (this.semanticDiscovery && this.config.useSemanticDiscovery) {
+        const discovered = await this.semanticDiscovery.discoverFiles({
+          query: `${task.title} ${task.description}`,
+          maxResults: 10,
+        });
+        relevantFiles = discovered.map(f => f.filePath);
+      } else if (task.files?.length) {
+        relevantFiles = task.files;
+      }
+
+      // 2. Detect patterns in those files
+      if (relevantFiles.length > 0) {
+        const fileContexts = new Map<string, FileContext>();
+        for (const filePath of relevantFiles.slice(0, 5)) {
+          try {
+            const fullPath = path.resolve(this.config.projectRoot, filePath);
+            if (await fs.pathExists(fullPath)) {
+              const context = await this.contextProvider.getFileContext(fullPath);
+              fileContexts.set(filePath, context);
+            }
+          } catch {
+            // Skip files that can't be read
+          }
+        }
+
+        // Extract patterns from file contexts
+        const patterns = this.extractPatterns(fileContexts);
+        for (const pattern of patterns) {
+          findings.push({
+            topic: `${pattern.type} pattern`,
+            findings: pattern.signature,
+            relevantFiles: pattern.files.slice(0, 3),
+          });
+        }
+      }
+
+      // 3. Add framework-specific patterns if framework detected
+      const frameworkPlugin = await this.frameworkLoader.loadFramework();
+      if (frameworkPlugin) {
+        const frameworkPatterns = frameworkPlugin.getPatterns?.() || [];
+        for (const fp of frameworkPatterns) {
+          // Check if this pattern is relevant to the task
+          const descLower = task.description.toLowerCase();
+          const patternLower = fp.pattern.toLowerCase();
+          if (descLower.includes(patternLower) || descLower.includes(fp.when.toLowerCase())) {
+            findings.push({
+              topic: `${fp.pattern} pattern`,
+              findings: `Use ${fp.pattern} when ${fp.when}`,
+              relevantFiles: fp.reference ? [fp.reference] : [],
+            });
+          }
+        }
+      }
+    } catch (error) {
+      logger.debug(`[CodebaseAnalyzer] Error generating research for task ${task.id}: ${error}`);
+    }
+
+    return findings;
+  }
+
+  /**
+   * Detect tech stack from codebase
+   * Uses existing framework detection but adds patterns
+   */
+  async detectTechStack(): Promise<{
+    framework?: string;
+    patterns?: string[];
+    constraints?: string[];
+  }> {
+    try {
+      // Use existing framework detection
+      const frameworkPlugin = await this.frameworkLoader.loadFramework();
+      const framework = frameworkPlugin?.name || 'generic';
+
+      // Get patterns from cached analysis if available
+      const patterns: string[] = [];
+      
+      // Extract constraints from framework plugin
+      const constraints = frameworkPlugin?.getConstraints?.() || [];
+
+      return {
+        framework,
+        patterns: [...new Set(patterns)],
+        constraints,
+      };
+    } catch (error) {
+      logger.debug(`[CodebaseAnalyzer] Error detecting tech stack: ${error}`);
+      return {
+        framework: 'generic',
+        patterns: [],
+        constraints: [],
+      };
+    }
+  }
 }

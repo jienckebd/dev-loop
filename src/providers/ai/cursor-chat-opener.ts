@@ -17,6 +17,7 @@ import { extractCodeChanges, parseCodeChangesFromText, JsonParsingContext } from
 import { ObservationTracker } from "../../core/tracking/observation-tracker";
 import { getParallelMetricsTracker } from "../../core/metrics/parallel";
 import { AgentIPCServer, IPCMessage } from '../../core/utils/agent-ipc';
+import { getEventStream } from '../../core/utils/event-stream';
 
 const execAsync = promisify(exec);
 
@@ -98,6 +99,8 @@ export class CursorChatOpener {
   private sessionManager: CursorSessionManager | null = null;
   private observationTracker: ObservationTracker;
   private ipcServer: AgentIPCServer | null = null;
+  /** Chat ID for session resumption - reuses existing Cursor agent session */
+  private currentChatId: string | null = null;
 
   constructor(config?: CursorChatOpenerConfig) {
     this.observationTracker = new ObservationTracker();
@@ -723,7 +726,13 @@ export class CursorChatOpener {
         normalizedModel,
       ];
 
-      logger.info(`[CursorChatOpener] Starting background agent with --print mode${session ? ` (session: ${session.sessionId})` : ''}`);
+      // Add --resume flag if we have a chatId from a previous call (session reuse for performance)
+      if (this.currentChatId) {
+        args.push('--resume', this.currentChatId);
+        logger.info(`[CursorChatOpener] Resuming session with chatId: ${this.currentChatId}`);
+      }
+
+      logger.info(`[CursorChatOpener] Starting background agent with --print mode${session ? ` (session: ${session.sessionId})` : ''}${this.currentChatId ? ` (resuming: ${this.currentChatId})` : ''}`);
       logger.debug(`[CursorChatOpener] Command: cursor agent --print --output-format ${outputFormat} --workspace ${workspacePath} --model ${normalizedModel}`);
       if (enhancedPrompt) {
         logger.debug(`[CursorChatOpener] Prompt length: ${enhancedPrompt.length} chars (will be passed via stdin)${session ? `, ${session.history.length} history entries` : ''}`);
@@ -789,9 +798,46 @@ export class CursorChatOpener {
 
           let stdout = '';
           let stderr = '';
+          let streamedTokens = 0;
 
           child.stdout?.on('data', (data) => {
-            stdout += data.toString();
+            const chunk = data.toString();
+            stdout += chunk;
+
+            // Emit streaming progress event for real-time monitoring
+            // This provides better UX by showing progress during long AI calls
+            if (outputFormat === 'stream-json') {
+              // Try to parse streaming JSON chunks
+              try {
+                for (const line of chunk.split('\n')) {
+                  if (line.trim()) {
+                    const parsed = JSON.parse(line);
+                    if (parsed.type === 'partial' || parsed.type === 'chunk') {
+                      streamedTokens += (parsed.tokens || 10);
+                      getEventStream().emit('build:ai_progress', {
+                        taskId: request.context?.taskId || request.id,
+                        tokens: streamedTokens,
+                        partial: true,
+                      }, { severity: 'info' });
+                    }
+                  }
+                }
+              } catch {
+                // Not valid JSON - just accumulate text
+                streamedTokens += Math.floor(chunk.length / 4); // Rough token estimate
+              }
+            } else {
+              // For non-streaming, emit periodic progress based on output size
+              const currentTokens = Math.floor(stdout.length / 4);
+              if (currentTokens > streamedTokens + 100) { // Emit every ~100 tokens
+                streamedTokens = currentTokens;
+                getEventStream().emit('build:ai_progress', {
+                  taskId: request.context?.taskId || request.id,
+                  tokens: streamedTokens,
+                  partial: true,
+                }, { severity: 'info' });
+              }
+            }
           });
 
           child.stderr?.on('data', (data) => {
@@ -826,6 +872,11 @@ export class CursorChatOpener {
             clearTimeout(timeoutHandle);
           if (code !== 0 && stderr) {
             logger.warn(`[CursorChatOpener] Background agent exited with code ${code}: ${stderr.substring(0, 200)}`);
+            // Reset chatId if session resume failed (will create new session on next call)
+            if (this.currentChatId && stderr.includes('session') || stderr.includes('resume')) {
+              logger.warn(`[CursorChatOpener] Session resume may have failed, resetting chatId`);
+              this.currentChatId = null;
+            }
           }
 
           // Parse response based on output format
@@ -856,6 +907,12 @@ export class CursorChatOpener {
                       ? parsed.result 
                       : JSON.stringify(parsed.result);
                     logger.debug(`[CursorChatOpener] Extracted result field from CLI response`);
+                    
+                    // Extract chatId for session resumption (performance optimization)
+                    if (parsed.chatId && typeof parsed.chatId === 'string') {
+                      this.currentChatId = parsed.chatId;
+                      logger.debug(`[CursorChatOpener] Captured chatId for session reuse: ${parsed.chatId}`);
+                    }
                   } else {
                     // Fallback: use entire parsed object as string
                     parsedResponse = JSON.stringify(parsed);
@@ -885,23 +942,31 @@ export class CursorChatOpener {
           }
 
           // Track session history
-          const parsingContext: JsonParsingContext = {
-            providerName: 'cursor',
-            taskId: request.context?.taskId || request.id,
-            prdId: request.context?.prdId,
-            phaseId: request.context?.phaseId ?? undefined,
-          };
-          const codeChanges = this.extractCodeChangesFromResponse(parsedResponse, this.observationTracker, parsingContext);
+          // Only attempt CodeChanges extraction for JSON format, not text generation
+          let codeChanges: CodeChanges | null = null;
+          if (outputFormat !== 'text') {
+            const parsingContext: JsonParsingContext = {
+              providerName: 'cursor',
+              taskId: request.context?.taskId || request.id,
+              prdId: request.context?.prdId,
+              phaseId: request.context?.phaseId ?? undefined,
+            };
+            codeChanges = this.extractCodeChangesFromResponse(parsedResponse, this.observationTracker, parsingContext);
+          }
           const success = code === 0 || stdout.trim().length > 0;
           const error = success ? undefined : (stderr || `Background agent exited with code ${code}`);
 
           if (session && this.sessionManager) {
+            // For text format, success is based on response length, not CodeChanges extraction
+            const historySuccess = outputFormat === 'text' 
+              ? success 
+              : success && codeChanges !== null;
             this.sessionManager.addToHistory(
               session.sessionId,
               request.id,
               prompt,
               parsedResponse,
-              success && codeChanges !== null,
+              historySuccess,
               error
             );
           }
@@ -1195,6 +1260,11 @@ export class CursorChatOpener {
 
   /**
    * Build a prompt string from a chat request
+   *
+   * IMPORTANT: Adds @codebase tag for code-related prompts to leverage
+   * Cursor's pre-indexed codebase context. This dramatically improves
+   * response quality and reduces the need to include codebase context
+   * in prompts manually.
    */
   private buildPromptFromRequest(request: ChatRequest): string {
     const parts: string[] = [];
@@ -1204,7 +1274,14 @@ export class CursorChatOpener {
     }
 
     if (request.question) {
-      parts.push(request.question);
+      // Add @codebase tag if this is a code-related prompt
+      // This leverages Cursor's indexed codebase for better context
+      const prompt = request.question;
+      if (this.shouldAddCodebaseTag(prompt)) {
+        parts.push(`@codebase ${prompt}`);
+      } else {
+        parts.push(prompt);
+      }
     }
 
     if (request.context) {

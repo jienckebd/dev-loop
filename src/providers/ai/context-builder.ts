@@ -437,13 +437,15 @@ export class ContextBuilder {
       }
 
       // Framework-specific error patterns (if available)
-      const errorPatterns = analysis.frameworkPlugin.getErrorPatterns();
-      if (errorPatterns && Object.keys(errorPatterns).length > 0) {
-        lines.push('');
-        lines.push('Error Pattern Guidance:');
-        for (const [pattern, guidance] of Object.entries(errorPatterns).slice(0, 5)) {
-          // Limit to 5 error patterns
-          lines.push(`- ${pattern}: ${guidance}`);
+      if (typeof analysis.frameworkPlugin.getErrorPatterns === 'function') {
+        const errorPatterns = analysis.frameworkPlugin.getErrorPatterns();
+        if (errorPatterns && Object.keys(errorPatterns).length > 0) {
+          lines.push('');
+          lines.push('Error Pattern Guidance:');
+          for (const [pattern, guidance] of Object.entries(errorPatterns).slice(0, 5)) {
+            // Limit to 5 error patterns
+            lines.push(`- ${pattern}: ${guidance}`);
+          }
         }
       }
     }

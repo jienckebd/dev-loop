@@ -127,15 +127,15 @@ export const sessionStateSchema = z.object({
 
 export const executionStateFileSchema = z.object({
   version: z.union([z.number(), z.string()]).default('1.0'),
-  updatedAt: z.string(),
-  active: activeContextSchema,
+  updatedAt: z.string().default(new Date().toISOString()),
+  active: activeContextSchema.default({ workflowState: 'idle' }),
   prdSets: z.record(z.string(), prdSetStateSchema).default({}),
   prds: z.record(z.string(), prdStateSchema).default({}),
   contribution: contributionSchema.default({
     fileCreation: {},
     investigationTasks: {},
   }),
-  contributionMode: contributionModeSchema,
+  contributionMode: contributionModeSchema.default({ active: false }),
   sessions: z.record(z.string(), sessionStateSchema).default({}),
 });
 

@@ -66,6 +66,7 @@ export interface PrdSetMetricsData {
   codebase?: CodebaseMetrics;
   sessions?: SessionMetrics;
   contributionMode?: ContributionModeMetrics;
+  specKit?: SpecKitMetrics;
 }
 
 // PRD Level
@@ -405,6 +406,45 @@ export interface ContributionModeMetrics {
       inconsistencyRate: number; // % of inconsistent validation results
       alertThreshold: number; // Max false positive rate (e.g., 0.20 = 20%)
     };
+  };
+}
+
+// Spec-Kit Context Metrics
+export interface SpecKitMetrics {
+  contextsLoaded: number;
+  clarificationsUsed: number;
+  researchFindingsUsed: number;
+  constitutionRulesApplied: number;
+  contextInjections: {
+    total: number;
+    byCategory: Record<string, number>;  // architecture, integration, etc.
+  };
+  avgContextSizeChars: number;
+  totalContextSizeChars: number;
+  designDecisionsApplied: number;
+  loadTimeMs: {
+    avg: number;
+    total: number;
+  };
+}
+
+export function createDefaultSpecKitMetrics(): SpecKitMetrics {
+  return {
+    contextsLoaded: 0,
+    clarificationsUsed: 0,
+    researchFindingsUsed: 0,
+    constitutionRulesApplied: 0,
+    contextInjections: {
+      total: 0,
+      byCategory: {},
+    },
+    avgContextSizeChars: 0,
+    totalContextSizeChars: 0,
+    designDecisionsApplied: 0,
+    loadTimeMs: {
+      avg: 0,
+      total: 0,
+    },
   };
 }
 

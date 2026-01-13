@@ -7,7 +7,7 @@
 
 import * as fs from 'fs-extra';
 import * as path from 'path';
-import { PlanningDocParser, ParsedPlanningDoc } from '../parser/planning-doc-parser';
+import { PlanningDocParser, ParsedPlanningDoc, ResolvedClarification, ResearchFinding, ConstitutionRules } from '../parser/planning-doc-parser';
 import { PrdSetGenerator } from '../set/generator';
 import { AIRefinementOrchestrator, RefinementResult } from '../refinement/ai-refinement-orchestrator';
 import { CodebaseAnalyzer, CodebaseAnalysisResult } from '../../analysis/codebase-analyzer';
@@ -16,11 +16,15 @@ import { PromptSelector } from '../../../prompts/code-generation/prompt-selector
 import { ConversationManager } from '../../conversation/conversation-manager';
 import { PRDBuildingProgressTracker } from '../../tracking/prd-building-progress-tracker';
 import { InteractivePromptSystem } from './interactive-prompt-system';
+import { ConstitutionParser } from './constitution-parser';
+import { filterAndAutoApply } from './speckit-utils';
+import { AmbiguityAnalyzer } from './ambiguity-analyzer';
 import { AIProvider, AIProviderConfig } from '../../../providers/ai/interface';
 import { Config } from '../../../config/schema/core';
 import { logger } from '../../utils/logger';
 import { PatternEntry, ObservationEntry, TestResultExecution } from '../learning/types';
 import { ValidationAutoFixer } from './validation-auto-fixer';
+import { Question, ClarificationCategory } from '../../conversation/types';
 
 /**
  * Convert Mode Options
@@ -40,6 +44,10 @@ export interface ConvertModeOptions {
   patterns?: PatternEntry[];
   observations?: ObservationEntry[];
   testResults?: TestResultExecution[];
+  // Spec-kit integration options
+  constitution?: string;       // Path to constitution file (default: .cursorrules)
+  skipClarification?: boolean; // Skip clarification phase
+  skipResearch?: boolean;      // Skip research phase
 }
 
 /**
@@ -66,9 +74,14 @@ export class ConvertModeHandler {
   private conversationManager?: ConversationManager;
   private progressTracker?: PRDBuildingProgressTracker;
   private interactivePrompts?: InteractivePromptSystem;
+  private constitutionParser: ConstitutionParser;
+  private ambiguityAnalyzer: AmbiguityAnalyzer;
   private aiProvider: AIProvider;
   private aiProviderConfig: AIProviderConfig;
   private debug: boolean;
+  private projectRoot: string;
+  private patterns: PatternEntry[];
+  private observations: ObservationEntry[];
 
   private projectConfig?: Config;
 
@@ -80,19 +93,39 @@ export class ConvertModeHandler {
     conversationManager?: ConversationManager;
     progressTracker?: PRDBuildingProgressTracker;
     interactivePrompts?: InteractivePromptSystem;
+    patterns?: PatternEntry[];
+    observations?: ObservationEntry[];
     debug?: boolean;
   }) {
     this.debug = config.debug || false;
+    this.projectRoot = config.projectRoot;
     this.projectConfig = config.projectConfig;
     this.aiProvider = config.aiProvider;
     this.aiProviderConfig = config.aiProviderConfig;
     this.conversationManager = config.conversationManager;
     this.progressTracker = config.progressTracker;
     this.interactivePrompts = config.interactivePrompts;
+    this.patterns = config.patterns || [];
+    this.observations = config.observations || [];
 
     // Initialize services
     this.planningParser = new PlanningDocParser(this.debug);
     this.prdSetGenerator = new PrdSetGenerator(this.debug);
+
+    // Initialize constitution parser for spec-kit integration
+    this.constitutionParser = new ConstitutionParser({
+      projectRoot: config.projectRoot,
+      debug: this.debug,
+    });
+
+    // Initialize ambiguity analyzer for AI-driven question generation
+    this.ambiguityAnalyzer = new AmbiguityAnalyzer({
+      aiProvider: config.aiProvider,
+      aiProviderConfig: config.aiProviderConfig,
+      patterns: this.patterns,
+      observations: this.observations,
+      debug: this.debug,
+    });
 
     // Initialize shared analysis services with full project config (including framework and testGeneration)
     this.codebaseAnalyzer = new CodebaseAnalyzer({
@@ -133,6 +166,10 @@ export class ConvertModeHandler {
     logger.debug('[ConvertModeHandler] Parsing planning document');
     const parsedDoc = await this.planningParser.parse(planningDocPath);
 
+    // Import build metrics for timing instrumentation
+    const { getBuildMetrics } = await import('../../metrics/build');
+    const buildMetrics = getBuildMetrics();
+
     // 2. Analyze codebase (if not skipped)
     let codebaseAnalysis: CodebaseAnalysisResult;
     if (options.skipAnalysis) {
@@ -146,13 +183,43 @@ export class ConvertModeHandler {
       };
     } else {
       logger.debug('[ConvertModeHandler] Analyzing codebase');
+      const analysisStart = Date.now();
       codebaseAnalysis = await this.codebaseAnalyzer.analyze('convert', parsedDoc.title);
+      buildMetrics.recordTiming('codebaseAnalysisMs', Date.now() - analysisStart);
     }
 
     // 3. Detect feature types
     logger.debug('[ConvertModeHandler] Detecting feature types');
     const featureTypeResult = await this.featureTypeDetector.detectFeatureTypes(codebaseAnalysis);
     codebaseAnalysis.featureTypes = featureTypeResult.featureTypes;
+
+    // ========== SPEC-KIT INTEGRATION PHASES ==========
+
+    // 3a. Load and parse constitution
+    logger.debug('[ConvertModeHandler] Loading constitution');
+    const constitution = await this.runConstitutionPhase(codebaseAnalysis, options);
+
+    // 3b. Run clarification phase
+    const clarifications = await this.runClarificationPhase(parsedDoc, codebaseAnalysis, options);
+
+    // 3c. Run research phase
+    const research = await this.runResearchPhase(parsedDoc, codebaseAnalysis, options);
+
+    // 3d. Detect tech stack
+    const techStack = await this.codebaseAnalyzer.detectTechStack();
+
+    // 3e. Inject specKit into parsedDoc
+    parsedDoc.specKit = {
+      constitutionPath: options.constitution || '.cursorrules',
+      constitution,
+      clarifications,
+      research,
+      techStack,
+    };
+
+    logger.debug(`[ConvertModeHandler] SpecKit: ${clarifications.length} clarifications, ${research.length} research findings`);
+
+    // ========== END SPEC-KIT PHASES ==========
 
     // Initialize refinement orchestrator with codebase analysis, project config, and learning data
     this.refinementOrchestrator = new AIRefinementOrchestrator({
@@ -242,6 +309,8 @@ export class ConvertModeHandler {
     
     await fs.ensureDir(prdSetDir);
 
+    // File generation with timing
+    const fileGenStart = Date.now();
     const generatedFiles = await this.prdSetGenerator.generate(parsedDoc, prdSetDir, setId);
 
     // Write generated files
@@ -250,6 +319,7 @@ export class ConvertModeHandler {
       await fs.writeFile(filePath, file.content, 'utf-8');
       logger.debug(`[ConvertModeHandler] Generated file: ${filePath}`);
     }
+    buildMetrics.recordTiming('fileGenerationMs', Date.now() - fileGenStart);
 
     // 7. Validate and auto-fix until executable (using shared utility)
     const autoFixer = new ValidationAutoFixer({ debug: this.debug });
@@ -275,7 +345,12 @@ export class ConvertModeHandler {
       );
     }
 
-    // 9. Generate summary
+    // 9. Write spec-kit intermediate artifacts for audit trail
+    if (parsedDoc.specKit) {
+      await this.writeIntermediateArtifacts(prdSetDir, parsedDoc.specKit);
+    }
+
+    // 10. Generate summary
     const summary = this.generateSummary(parsedDoc, refinement, prdSetDir, setId, fixesApplied);
 
     return {
@@ -350,5 +425,322 @@ export class ConvertModeHandler {
     }
 
     return parts.join('\n');
+  }
+
+  // ========== SPEC-KIT INTEGRATION METHODS ==========
+
+  /**
+   * Load constitution rules from .cursorrules and merge with framework rules
+   */
+  private async runConstitutionPhase(
+    codebaseAnalysis: CodebaseAnalysisResult,
+    options: ConvertModeOptions
+  ): Promise<ConstitutionRules> {
+    try {
+      const constitution = await this.constitutionParser.parse(options.constitution);
+
+      // Merge with framework rules if framework detected
+      const frameworkPlugin = codebaseAnalysis.frameworkPlugin;
+      return this.constitutionParser.mergeWithFramework(constitution, frameworkPlugin);
+    } catch (error) {
+      logger.debug(`[ConvertModeHandler] Error loading constitution: ${error}`);
+      return { constraints: [], patterns: [], avoid: [], codeLocations: [] };
+    }
+  }
+
+  /**
+   * Run clarification phase to generate and resolve spec-kit style questions
+   * 
+   * Uses spec-kit methodology:
+   * 1. Auto-apply high-confidence answers without prompting
+   * 2. Only prompt for genuinely ambiguous decisions
+   * 3. Generate questions from constitution gaps, not hardcoded lists
+   */
+  private async runClarificationPhase(
+    parsedDoc: ParsedPlanningDoc,
+    codebaseAnalysis: CodebaseAnalysisResult,
+    options: ConvertModeOptions
+  ): Promise<ResolvedClarification[]> {
+    if (options.skipClarification) {
+      logger.debug('[ConvertModeHandler] Skipping clarification phase');
+      return [];
+    }
+
+    try {
+      // Generate clarifying questions using AI-driven ambiguity analysis
+      const questions = await this.generateClarifyingQuestions(parsedDoc, codebaseAnalysis);
+
+      if (questions.length === 0) {
+        return [];
+      }
+
+      const clarifications: ResolvedClarification[] = [];
+
+      // Use shared spec-kit utility to filter and auto-apply high-confidence answers
+      const specKitConfig = this.projectConfig?.prdBuilding?.specKit;
+      const { autoApplied, needsPrompt, answers } = filterAndAutoApply(
+        questions,
+        specKitConfig,
+        '[ConvertModeHandler]'
+      );
+
+      // Convert auto-applied questions to clarifications
+      for (const q of autoApplied) {
+        clarifications.push({
+          question: q.text,
+          answer: answers.get(q.id) || 'Auto-inferred from constitution/codebase',
+          category: q.category,
+          autoApplied: true,
+        });
+      }
+
+      if (options.autoApprove) {
+        // Also auto-apply low-confidence questions in auto-approve mode
+        for (const q of needsPrompt) {
+          clarifications.push({
+            question: q.text,
+            answer: q.inferredAnswer || 'Inferred from codebase',
+            category: q.category,
+            autoApplied: true,
+          });
+        }
+        return clarifications;
+      }
+
+      // If interactive and we have prompt system, ask only the low-confidence questions
+      if (this.interactivePrompts && options.interactive && needsPrompt.length > 0) {
+        logger.info(`[ConvertModeHandler] Prompting for ${needsPrompt.length} question(s)`);
+        for (const question of needsPrompt) {
+          const answer = await this.interactivePrompts.askQuestion(question);
+          clarifications.push({
+            question: question.text,
+            answer: String(answer),
+            category: question.category,
+            autoApplied: false,
+          });
+        }
+      } else {
+        // Fallback: auto-apply remaining questions
+        for (const q of needsPrompt) {
+          clarifications.push({
+            question: q.text,
+            answer: q.inferredAnswer || 'Auto-inferred',
+            category: q.category,
+            autoApplied: true,
+          });
+        }
+      }
+
+      return clarifications;
+    } catch (error) {
+      logger.debug(`[ConvertModeHandler] Error in clarification phase: ${error}`);
+      return [];
+    }
+  }
+
+  /**
+   * Generate clarifying questions using AI-driven ambiguity analysis
+   *
+   * Uses spec-kit methodology with AI:
+   * 1. Infer parallel execution from dependency analysis (not hardcoded question)
+   * 2. Use AI to analyze PRD for genuine ambiguities with full context
+   * 3. Only generate questions for decisions that have multiple valid approaches
+   */
+  private async generateClarifyingQuestions(
+    parsedDoc: ParsedPlanningDoc,
+    codebaseAnalysis: CodebaseAnalysisResult
+  ): Promise<Question[]> {
+    // Get spec-kit config
+    const specKitConfig = this.projectConfig?.prdBuilding?.specKit;
+    const inferParallelFromDependencies = specKitConfig?.inferParallelFromDependencies ?? true;
+
+    // 1. Infer parallel execution from dependencies instead of asking
+    if (inferParallelFromDependencies) {
+      this.inferParallelExecution(parsedDoc);
+      // No question generated - parallel is set automatically based on dependencies
+    }
+
+    // 2. Use AI to analyze PRD for genuine ambiguities
+    const constitution = parsedDoc.specKit?.constitution;
+    const aiQuestions = await this.ambiguityAnalyzer.analyzeAmbiguities(
+      parsedDoc,
+      codebaseAnalysis,
+      constitution
+    );
+
+    if (aiQuestions.length > 0) {
+      logger.info(`[ConvertModeHandler] AI detected ${aiQuestions.length} ambiguity(ies) requiring clarification`);
+    } else {
+      logger.info(`[ConvertModeHandler] PRD is explicit - no clarifications needed`);
+    }
+
+    return aiQuestions;
+  }
+
+  /**
+   * Infer parallel execution for phases based on dependency analysis
+   * Sets phase.parallel = true for phases without dependencies on previous phases
+   */
+  private inferParallelExecution(parsedDoc: ParsedPlanningDoc): void {
+    // Phase 1 is never parallel (it's the starting point)
+    // Phases 2+ can be parallel if they don't depend on previous phase completion
+    
+    for (let i = 1; i < parsedDoc.phases.length; i++) {
+      const phase = parsedDoc.phases[i];
+      const prevPhase = parsedDoc.phases[i - 1];
+      
+      // Check if this phase depends on outputs from previous phase
+      const hasDependency = this.phaseHasDependencyOn(phase, prevPhase);
+      
+      // Set parallel = true if no dependency detected
+      if (!hasDependency) {
+        phase.parallel = true;
+        logger.debug(`[ConvertModeHandler] Phase "${phase.name}" set to parallel (no dependency on previous phase)`);
+      } else {
+        phase.parallel = false;
+        logger.debug(`[ConvertModeHandler] Phase "${phase.name}" set to sequential (depends on previous phase)`);
+      }
+    }
+  }
+
+  /**
+   * Check if a phase has dependencies on a previous phase
+   */
+  private phaseHasDependencyOn(phase: any, prevPhase: any): boolean {
+    // Simple heuristic: check if phase mentions files or outputs from previous phase
+    const phaseText = JSON.stringify(phase).toLowerCase();
+    const prevPhaseName = (prevPhase.name || '').toLowerCase();
+    
+    // Check for explicit dependency markers
+    if (phaseText.includes('after phase') || phaseText.includes('depends on')) {
+      return true;
+    }
+    
+    // Check if phase references previous phase by name
+    if (prevPhaseName && phaseText.includes(prevPhaseName)) {
+      return true;
+    }
+    
+    // Check for file output dependencies
+    const prevOutputFiles = this.extractTargetFiles(prevPhase);
+    const currInputFiles = this.extractReferencedFiles(phase);
+    
+    // If current phase references files created in previous phase, there's a dependency
+    for (const inputFile of currInputFiles) {
+      if (prevOutputFiles.some(outFile => inputFile.includes(outFile) || outFile.includes(inputFile))) {
+        return true;
+      }
+    }
+    
+    return false;
+  }
+
+  /**
+   * Extract target files from a phase
+   */
+  private extractTargetFiles(phase: any): string[] {
+    const files: string[] = [];
+    for (const task of phase.tasks || []) {
+      if (task.targetFiles) {
+        files.push(...task.targetFiles);
+      }
+      if (task.files) {
+        files.push(...task.files);
+      }
+    }
+    return files.map(f => path.basename(f));
+  }
+
+  /**
+   * Extract referenced files from a phase (files mentioned in descriptions)
+   */
+  private extractReferencedFiles(phase: any): string[] {
+    const text = JSON.stringify(phase);
+    const filePattern = /[\w-]+\.(php|ts|js|yml|yaml|json|md)/g;
+    const matches = text.match(filePattern) || [];
+    return [...new Set(matches)];
+  }
+
+  /**
+   * Run research phase to gather tech stack findings for tasks
+   */
+  private async runResearchPhase(
+    parsedDoc: ParsedPlanningDoc,
+    codebaseAnalysis: CodebaseAnalysisResult,
+    options: ConvertModeOptions
+  ): Promise<ResearchFinding[]> {
+    if (options.skipResearch) {
+      logger.debug('[ConvertModeHandler] Skipping research phase');
+      return [];
+    }
+
+    try {
+      const allFindings: ResearchFinding[] = [];
+
+      // Generate research for each phase/task
+      for (const phase of parsedDoc.phases) {
+        for (const task of phase.tasks || []) {
+          const findings = await this.codebaseAnalyzer.generateResearchForTask(task);
+          allFindings.push(...findings);
+        }
+      }
+
+      // Deduplicate by topic
+      const uniqueFindings = new Map<string, ResearchFinding>();
+      for (const f of allFindings) {
+        if (!uniqueFindings.has(f.topic)) {
+          uniqueFindings.set(f.topic, f);
+        }
+      }
+
+      const results = Array.from(uniqueFindings.values());
+      logger.debug(`[ConvertModeHandler] Generated ${results.length} unique research findings`);
+      return results;
+    } catch (error) {
+      logger.debug(`[ConvertModeHandler] Error in research phase: ${error}`);
+      return [];
+    }
+  }
+
+  /**
+   * Write intermediate artifacts for audit trail
+   */
+  async writeIntermediateArtifacts(
+    prdSetPath: string,
+    specKit: ParsedPlanningDoc['specKit']
+  ): Promise<void> {
+    if (!specKit) return;
+
+    const artifactsDir = path.join(prdSetPath, '.speckit');
+    await fs.ensureDir(artifactsDir);
+
+    // Write clarifications
+    if (specKit.clarifications?.length) {
+      await fs.writeJson(
+        path.join(artifactsDir, 'clarifications.json'),
+        specKit.clarifications,
+        { spaces: 2 }
+      );
+    }
+
+    // Write research
+    if (specKit.research?.length) {
+      await fs.writeJson(
+        path.join(artifactsDir, 'research.json'),
+        specKit.research,
+        { spaces: 2 }
+      );
+    }
+
+    // Write constitution (parsed)
+    if (specKit.constitution) {
+      await fs.writeJson(
+        path.join(artifactsDir, 'constitution.json'),
+        specKit.constitution,
+        { spaces: 2 }
+      );
+    }
+
+    logger.debug(`[ConvertModeHandler] Wrote spec-kit artifacts to ${artifactsDir}`);
   }
 }

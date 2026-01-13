@@ -23,6 +23,8 @@ import { FileDiscoveryService } from '../../core/prd/builder/file-discovery-serv
 import { BuildMode } from '../../core/conversation/types';
 import { logger } from '../../core/utils/logger';
 import { killAllChildProcesses } from '../../providers/ai/cursor-chat-opener';
+import { BuildMetrics, setBuildMetrics } from '../../core/metrics/build';
+import { PrdReportGenerator } from '../../core/reporting/prd-report-generator';
 
 interface BuildPrdSetOptions {
   convert?: string; // Planning doc path (convert mode)
@@ -49,6 +51,11 @@ interface BuildPrdSetOptions {
   watch?: boolean; // Watch mode for PRD building
   requireExecutable?: boolean; // Require 100% executability (default: true)
   maxExecutabilityIterations?: number; // Maximum iterations for executability validation (default: 10)
+  // Spec-kit integration options
+  constitution?: string; // Path to constitution file (default: .cursorrules)
+  clarify?: boolean; // Run clarification phase (default: true)
+  research?: boolean; // Run research phase (default: true)
+  executabilityThreshold?: number; // Minimum executability score (default: 70)
 }
 
 /**
@@ -86,6 +93,13 @@ export function registerBuildPrdSetCommand(program: Command): void {
     .option('--require-executable', 'Require 100% executability (default: true)', true)
     .option('--no-require-executable', 'Allow PRD sets that are not 100% executable')
     .option('--max-executability-iterations <n>', 'Maximum iterations for executability validation', '10')
+    // Spec-kit integration options
+    .option('--constitution <path>', 'Path to constitution file (default: .cursorrules)')
+    .option('--clarify', 'Run clarification phase (default: true)', true)
+    .option('--no-clarify', 'Skip clarification phase')
+    .option('--research', 'Run research phase (default: true)', true)
+    .option('--no-research', 'Skip research phase')
+    .option('--executability-threshold <n>', 'Minimum executability score (default: 70)', '70')
     .action(async (input: string | undefined, options: BuildPrdSetOptions) => {
       await buildPrdSet(input, options);
     });
@@ -353,6 +367,11 @@ async function buildPrdSet(input: string | undefined, options: BuildPrdSetOption
       force: options.force,
       requireExecutable: options.requireExecutable !== false, // Default to true
       maxExecutabilityIterations: parseInt(String(options.maxExecutabilityIterations || '10'), 10),
+      // Spec-kit integration options
+      constitution: options.constitution || '.cursorrules',
+      skipClarification: options.clarify === false,
+      skipResearch: options.research === false,
+      executabilityThreshold: parseInt(String(options.executabilityThreshold || '70'), 10),
     };
 
     // Start watch mode if requested
@@ -362,12 +381,45 @@ async function buildPrdSet(input: string | undefined, options: BuildPrdSetOption
       // For now, just log that watch mode is requested
     }
 
+    // Initialize build metrics and set as global for AI providers to access
+    const buildMetrics = new BuildMetrics();
+    setBuildMetrics(buildMetrics);
+    const buildStartTime = Date.now();
+    // Set ID will be updated after build if not provided
+    let prdSetId = options.setId || 'pending';
+    const buildId = buildMetrics.startBuild(
+      mode as 'convert' | 'enhance' | 'create',
+      prdSetId,
+      selectedPath
+    );
+
     // Execute build
     spinner.start(`Building PRD set (mode: ${mode})...`);
     const result = await orchestrator.build(buildInput, buildOptions);
 
+    // Calculate build duration
+    const buildDuration = Date.now() - buildStartTime;
+
     if (result.success) {
       spinner.succeed('PRD set built successfully');
+
+      // Complete build metrics
+      const buildResult = buildMetrics.finishBuild(
+        'completed',
+        {
+          directory: result.prdSetPath || '',
+          filesGenerated: result.filesGenerated || 0,
+          phasesCount: result.phasesCount || 0,
+          tasksCount: result.tasksCount || 0,
+          indexSizeBytes: 0, // Will be computed if needed
+        },
+        {
+          executabilityScore: result.executable ? 100 : (result.executabilityScore || 0),
+          schemaCompleteness: result.schemaCompleteness || 0,
+          testCoverage: result.testCoverage || 0,
+          taskSpecificity: result.taskSpecificity || 0,
+        }
+      );
 
       // Display results
       console.log(chalk.green('\n✓ PRD Set Build Complete\n'));
@@ -380,12 +432,74 @@ async function buildPrdSet(input: string | undefined, options: BuildPrdSetOption
       console.log(result.summary);
       console.log('');
 
+      // Display build summary with metrics
+      if (buildResult) {
+        const formatDuration = (ms: number): string => {
+          if (ms < 1000) return `${ms}ms`;
+          if (ms < 60000) return `${(ms / 1000).toFixed(1)}s`;
+          return `${(ms / 60000).toFixed(1)}m`;
+        };
+
+        const successRate = buildResult.aiCalls.total > 0
+          ? ((buildResult.aiCalls.successful / buildResult.aiCalls.total) * 100).toFixed(0)
+          : '100';
+
+        console.log(chalk.cyan('Build Summary:'));
+        console.log(`  Duration: ${formatDuration(buildResult.duration || 0)}`);
+        console.log(`  Executability: ${buildResult.quality.executabilityScore}%`);
+        if (buildResult.aiCalls.total > 0) {
+          console.log(`  AI Calls: ${buildResult.aiCalls.total} (${successRate}% success)`);
+          console.log(`  Tokens: ${buildResult.tokens.totalInput} in / ${buildResult.tokens.totalOutput} out (~$${(buildResult.tokens.estimatedCost || 0).toFixed(4)})`);
+        }
+        if (buildResult.validation.iterations > 0) {
+          console.log(`  Validation: ${buildResult.validation.iterations} iteration(s), ${buildResult.validation.autoFixesApplied.length} auto-fix(es)`);
+        }
+        console.log(`  Output: ${buildResult.output.filesGenerated} file(s) (${buildResult.output.phasesCount} phase(s), ${buildResult.output.tasksCount} task(s))`);
+        console.log('');
+
+        // Generate build report
+        try {
+          const reportGenerator = new PrdReportGenerator();
+          const { path: reportPath } = await reportGenerator.generateBuildReportFromMetrics(buildResult, {
+            format: 'markdown',
+            includeTimingAnalysis: true,
+            includeTokenBreakdown: true,
+          });
+          console.log(chalk.cyan('Report:'), reportPath);
+          console.log('');
+        } catch (reportError) {
+          if (debug) {
+            logger.warn(`[BuildPrdSet] Failed to generate report: ${reportError}`);
+          }
+        }
+      }
+
       if (!result.executable) {
         console.log(chalk.yellow('⚠ PRD set is not 100% executable. Review and refine as needed.'));
       } else {
         console.log(chalk.green('✓ PRD set is 100% executable and ready for dev-loop execution.'));
       }
+
+      // Clean up and exit after successful build
+      try {
+        // Kill any remaining background agents
+        await killAllChildProcesses();
+      } catch (cleanupError) {
+        if (debug) {
+          logger.warn(`[BuildPrdSet] Cleanup warning: ${cleanupError}`);
+        }
+      }
+
+      // Force exit after small delay to allow final I/O
+      setTimeout(() => process.exit(0), 100);
     } else {
+      // Mark build as failed
+      buildMetrics.finishBuild(
+        'failed',
+        { directory: '', filesGenerated: 0, phasesCount: 0, tasksCount: 0, indexSizeBytes: 0 },
+        { executabilityScore: 0, schemaCompleteness: 0, testCoverage: 0, taskSpecificity: 0 }
+      );
+
       spinner.fail('PRD set build failed');
       console.error(chalk.red('\n✗ PRD Set Build Failed\n'));
       console.error(result.summary);

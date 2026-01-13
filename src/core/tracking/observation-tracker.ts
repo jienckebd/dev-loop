@@ -14,6 +14,19 @@ export interface Observation {
   lastSeen: string;
   suggestedImprovements: string[];
   evidence?: string[]; // Metrics/observations supporting this observation
+  // Context properties for linking to dev-loop entities
+  prdId?: string;
+  prdSetId?: string;
+  phaseId?: number;
+  taskId?: string;
+  // ObservationEntry compatibility fields
+  createdAt?: string;
+  relevanceScore?: number;
+  expiresAt?: string | null;
+  category?: string;
+  observation?: string;
+  context?: Record<string, any>;
+  metadata?: Record<string, any>;
 }
 
 interface ObservationData {
@@ -207,6 +220,7 @@ export class ObservationTracker {
     }
 
     // Create new observation
+    const now = new Date().toISOString();
     const observation: Observation = {
       id: `failure-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
       type: 'failure-pattern',
@@ -214,10 +228,18 @@ export class ObservationTracker {
       description: errorSignature,
       occurrences: 1,
       affectedProjects: [projectType],
-      firstSeen: new Date().toISOString(),
-      lastSeen: new Date().toISOString(),
+      firstSeen: now,
+      lastSeen: now,
       suggestedImprovements: this.suggestImprovementsForError(errorText),
       evidence: [errorText.substring(0, 200)],
+      // Context properties for linking to dev-loop entities
+      prdId: projectType,
+      createdAt: now,
+      relevanceScore: 1.0,
+      category: 'failure-pattern',
+      observation: errorSignature,
+      context: { projectType },
+      metadata: {},
     };
 
     this.observations.observations.push(observation);
@@ -329,6 +351,16 @@ export class ObservationTracker {
       lastSeen: now,
       suggestedImprovements: this.suggestImprovementsForJsonFailure(responseSample, providerName),
       evidence,
+      // Context properties for linking to dev-loop entities
+      prdId: prdId || projectType,
+      phaseId,
+      taskId,
+      createdAt: now,
+      relevanceScore: 1.0,
+      category: 'json-parsing',
+      observation: signature,
+      context: { provider: providerName, projectType },
+      metadata: {},
     };
 
     this.observations.observations.push(observation);

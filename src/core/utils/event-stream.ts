@@ -77,7 +77,32 @@ export type EventType =
   | 'intervention:fix_applied'
   | 'intervention:error'
   | 'intervention:threshold_exceeded'
-  | 'intervention:issue_prevented';
+  | 'intervention:issue_prevented'
+  // Build events (build-prd-set)
+  | 'build:started'
+  | 'build:completed'
+  | 'build:failed'
+  | 'build:phase_started'
+  | 'build:phase_completed'
+  | 'build:ai_call_started'
+  | 'build:ai_call_completed'
+  | 'build:ai_call_failed'
+  | 'build:ai_progress'
+  | 'build:validation_started'
+  | 'build:validation_completed'
+  | 'build:auto_fix_applied'
+  // Spec-Kit context events
+  | 'speckit:context_loaded'
+  | 'speckit:context_injected'
+  | 'speckit:clarification_applied'
+  | 'speckit:research_used'
+  | 'speckit:constitution_enforced'
+  | 'speckit:load_failed'
+  // Pattern learning events
+  | 'pattern:injected'
+  | 'pattern:prevented'
+  | 'pattern:matched'
+  | 'pattern:learned';
 
 export type EventSeverity = 'info' | 'warn' | 'error' | 'critical';
 
@@ -92,6 +117,8 @@ export interface DevLoopEvent {
   prdId?: string;
   phaseId?: number;
   targetModule?: string;
+  // Build context
+  buildId?: string;
 }
 
 export interface EventFilter {
@@ -148,6 +175,7 @@ class EventStreamImpl {
       prdId?: string;
       phaseId?: number;
       targetModule?: string;
+      buildId?: string;
     } = {}
   ): DevLoopEvent {
     const event: DevLoopEvent = {
@@ -160,6 +188,7 @@ class EventStreamImpl {
       prdId: options.prdId,
       phaseId: options.phaseId,
       targetModule: options.targetModule,
+      buildId: options.buildId,
     };
 
     this.events.push(event);

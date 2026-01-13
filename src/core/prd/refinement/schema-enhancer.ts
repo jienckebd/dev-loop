@@ -50,6 +50,18 @@ export interface SchemaEnhancerConfig {
   codebaseAnalysis: CodebaseAnalysisResult;
   promptSelector: PromptSelector;
   debug?: boolean;
+  /**
+   * Whether @codebase tag is being used for AI calls.
+   * When true, prompts will be minimal since Cursor provides indexed context.
+   * When false, full codebase context is included in prompts.
+   * 
+   * Default behavior:
+   * - For Cursor provider: true (uses Cursor's indexed codebase)
+   * - For API providers (Anthropic, OpenAI, etc.): false (include full context)
+   * 
+   * This can be explicitly set to override the default behavior.
+   */
+  useCodebaseTag?: boolean;
 }
 
 /**
@@ -598,65 +610,88 @@ export class SchemaEnhancer {
     // Group needs by type for batching
     const groupedNeeds = this.groupNeedsByType(needs);
     
-    // Process each group (batch by type)
-    for (const [type, typeNeeds] of groupedNeeds.entries()) {
-      if (typeNeeds.length === 1) {
-        // Single schema - use individual generation
-        try {
-          const need = typeNeeds[0];
-          const matchedPattern = matchedPatterns.get(need.task.id);
-          const schema = await this.generateSingleSchema(
-            need,
-            matchedPattern,
-            basePrompt,
-            context,
-            schemaContext
-          );
-          if (schema) {
-            schemas.push(schema);
+    // Process groups in parallel with concurrency limit for performance
+    const CONCURRENCY = 3;
+    const entries = Array.from(groupedNeeds.entries());
+    
+    logger.info(`[SchemaEnhancer] Processing ${entries.length} schema type groups with concurrency ${CONCURRENCY}`);
+    
+    // Process in batches of CONCURRENCY
+    for (let i = 0; i < entries.length; i += CONCURRENCY) {
+      const batch = entries.slice(i, i + CONCURRENCY);
+      const batchPromises = batch.map(async ([type, typeNeeds]) => {
+        const results: SchemaDefinition[] = [];
+        
+        if (typeNeeds.length === 1) {
+          // Single schema - use individual generation
+          try {
+            const need = typeNeeds[0];
+            const matchedPattern = matchedPatterns.get(need.task.id);
+            const schema = await this.generateSingleSchema(
+              need,
+              matchedPattern,
+              basePrompt,
+              context,
+              schemaContext
+            );
+            if (schema) {
+              results.push(schema);
+            }
+          } catch (error) {
+            logger.warn(
+              `[SchemaEnhancer] Failed to generate schema for task ${typeNeeds[0].task.id}: ${error}`
+            );
           }
-        } catch (error) {
-          logger.warn(
-            `[SchemaEnhancer] Failed to generate schema for task ${typeNeeds[0].task.id}: ${error}`
-          );
-        }
-      } else {
-        // Multiple schemas of same type - batch them
-        try {
-          const batchSchemas = await this.generateBatchSchemas(
-            typeNeeds,
-            type,
-            matchedPatterns,
-            basePrompt,
-            context,
-            schemaContext
-          );
-          schemas.push(...batchSchemas);
-        } catch (error) {
-          logger.warn(
-            `[SchemaEnhancer] Failed to generate batch schemas for type ${type}: ${error}, falling back to individual generation`
-          );
-          // Fallback to individual generation if batch fails
-          for (const need of typeNeeds) {
-            try {
-              const matchedPattern = matchedPatterns.get(need.task.id);
-              const schema = await this.generateSingleSchema(
-                need,
-                matchedPattern,
-                basePrompt,
-                context,
-                schemaContext
-              );
-              if (schema) {
-                schemas.push(schema);
+        } else {
+          // Multiple schemas of same type - batch them
+          try {
+            const batchSchemas = await this.generateBatchSchemas(
+              typeNeeds,
+              type,
+              matchedPatterns,
+              basePrompt,
+              context,
+              schemaContext
+            );
+            results.push(...batchSchemas);
+          } catch (error) {
+            logger.warn(
+              `[SchemaEnhancer] Failed to generate batch schemas for type ${type}: ${error}, falling back to individual generation`
+            );
+            // Fallback to individual generation if batch fails
+            for (const need of typeNeeds) {
+              try {
+                const matchedPattern = matchedPatterns.get(need.task.id);
+                const schema = await this.generateSingleSchema(
+                  need,
+                  matchedPattern,
+                  basePrompt,
+                  context,
+                  schemaContext
+                );
+                if (schema) {
+                  results.push(schema);
+                }
+              } catch (individualError) {
+                logger.warn(
+                  `[SchemaEnhancer] Failed to generate schema for task ${need.task.id}: ${individualError}`
+                );
               }
-            } catch (individualError) {
-              logger.warn(
-                `[SchemaEnhancer] Failed to generate schema for task ${need.task.id}: ${individualError}`
-              );
             }
           }
         }
+        
+        return results;
+      });
+      
+      // Wait for batch to complete
+      const batchResults = await Promise.all(batchPromises);
+      for (const results of batchResults) {
+        schemas.push(...results);
+      }
+      
+      if (i + CONCURRENCY < entries.length) {
+        logger.debug(`[SchemaEnhancer] Completed batch ${Math.floor(i / CONCURRENCY) + 1}, processing next...`);
       }
     }
 
@@ -867,61 +902,85 @@ export class SchemaEnhancer {
     parts.push(`Schema Type: ${need.type}`);
     parts.push('');
 
-    // Framework context
+    // Determine if we should include verbose codebase context
+    // When @codebase tag is used (Cursor provider), prompts can be minimal
+    // For API providers (Anthropic, OpenAI, etc.), always include full context
+    const isCursorProvider = this.config.aiProvider.name === 'cursor';
+    const useCodebaseTag = this.config.useCodebaseTag ?? isCursorProvider; // Default: true only for Cursor
+    
+    // Framework context - always useful as a brief hint
     if (this.config.codebaseAnalysis.frameworkPlugin) {
       parts.push('## Framework');
       parts.push(`Framework: ${this.config.codebaseAnalysis.frameworkPlugin.name}`);
-      parts.push(`Description: ${this.config.codebaseAnalysis.frameworkPlugin.description}`);
+      // Only include description if not using @codebase (Cursor already knows this)
+      if (!useCodebaseTag) {
+        parts.push(`Description: ${this.config.codebaseAnalysis.frameworkPlugin.description}`);
+      }
       parts.push('');
     }
 
-    // Extracted schema patterns from existing schema files (NEW)
-    if (schemaContext?.schemaPatterns && schemaContext.schemaPatterns.length > 0) {
-      parts.push('## Extracted Schema Patterns (Follow These Structures)');
-      for (const extractedPattern of schemaContext.schemaPatterns.slice(0, 5)) {
-        parts.push(`- Pattern: ${extractedPattern.pattern}`);
-        parts.push(`  File: ${path.basename(extractedPattern.file)}`);
-        if (extractedPattern.examples && extractedPattern.examples.length > 0) {
-          parts.push(`  Structure: ${extractedPattern.examples[0].substring(0, 200)}${extractedPattern.examples[0].length > 200 ? '...' : ''}`);
+    // When using @codebase, include only essential pattern hints
+    // Cursor's indexed codebase will provide full examples
+    if (useCodebaseTag) {
+      // Minimal hint: just mention pattern types to look for
+      if (schemaContext?.schemaPatterns && schemaContext.schemaPatterns.length > 0) {
+        parts.push('## Schema Patterns');
+        parts.push('Follow existing schema patterns in the codebase. Key patterns:');
+        for (const extractedPattern of schemaContext.schemaPatterns.slice(0, 2)) {
+          parts.push(`- ${extractedPattern.pattern} (see ${path.basename(extractedPattern.file)})`);
         }
+        parts.push('');
       }
-      if (schemaContext.schemaPatterns.length > 5) {
-        parts.push(`... and ${schemaContext.schemaPatterns.length - 5} more patterns`);
+    } else {
+      // Full context when @codebase is not available
+      // Extracted schema patterns from existing schema files
+      if (schemaContext?.schemaPatterns && schemaContext.schemaPatterns.length > 0) {
+        parts.push('## Extracted Schema Patterns (Follow These Structures)');
+        for (const extractedPattern of schemaContext.schemaPatterns.slice(0, 5)) {
+          parts.push(`- Pattern: ${extractedPattern.pattern}`);
+          parts.push(`  File: ${path.basename(extractedPattern.file)}`);
+          if (extractedPattern.examples && extractedPattern.examples.length > 0) {
+            parts.push(`  Structure: ${extractedPattern.examples[0].substring(0, 200)}${extractedPattern.examples[0].length > 200 ? '...' : ''}`);
+          }
+        }
+        if (schemaContext.schemaPatterns.length > 5) {
+          parts.push(`... and ${schemaContext.schemaPatterns.length - 5} more patterns`);
+        }
+        parts.push('');
+        parts.push('**IMPORTANT**: Follow these existing schema structures when generating new schemas.');
+        parts.push('');
       }
-      parts.push('');
-      parts.push('**IMPORTANT**: Follow these existing schema structures when generating new schemas.');
-      parts.push('');
+
+      // File contexts for reference
+      if (schemaContext?.fileContexts && schemaContext.fileContexts.size > 0) {
+        parts.push('## Example Schema Files (Reference for Structure)');
+        let fileCount = 0;
+        for (const [filePath, fileContext] of schemaContext.fileContexts.entries()) {
+          if (fileCount >= 3) break;
+          parts.push(`- ${path.basename(filePath)}`);
+          if (fileContext.skeleton) {
+            parts.push(`  Structure: ${fileContext.skeleton.substring(0, 200)}${fileContext.skeleton.length > 200 ? '...' : ''}`);
+          }
+          fileCount++;
+        }
+        parts.push('');
+      }
+
+      // Codebase context summary - only when @codebase not available
+      if (this.config.codebaseAnalysis.codebaseContext) {
+        parts.push('## Codebase Context');
+        parts.push(this.config.codebaseAnalysis.codebaseContext.substring(0, 2000)); // Limit context size
+        parts.push('');
+      }
     }
 
-    // Codebase patterns context
+    // Codebase patterns context - brief reference for both modes
     if (matchedPattern?.pattern) {
       parts.push('## Existing Pattern (Use as Reference)');
       parts.push(`Pattern Type: ${matchedPattern.pattern.type || 'unknown'}`);
       if (matchedPattern.pattern.examples && matchedPattern.pattern.examples.length > 0) {
         parts.push(`Example Files: ${matchedPattern.pattern.examples.slice(0, 3).join(', ')}`);
       }
-      parts.push('');
-    }
-
-    // File contexts for reference (NEW)
-    if (schemaContext?.fileContexts && schemaContext.fileContexts.size > 0) {
-      parts.push('## Example Schema Files (Reference for Structure)');
-      let fileCount = 0;
-      for (const [filePath, fileContext] of schemaContext.fileContexts.entries()) {
-        if (fileCount >= 3) break;
-        parts.push(`- ${path.basename(filePath)}`);
-        if (fileContext.skeleton) {
-          parts.push(`  Structure: ${fileContext.skeleton.substring(0, 200)}${fileContext.skeleton.length > 200 ? '...' : ''}`);
-        }
-        fileCount++;
-      }
-      parts.push('');
-    }
-
-    // Codebase context summary
-    if (this.config.codebaseAnalysis.codebaseContext) {
-      parts.push('## Codebase Context');
-      parts.push(this.config.codebaseAnalysis.codebaseContext.substring(0, 2000)); // Limit context size
       parts.push('');
     }
 

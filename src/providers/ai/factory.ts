@@ -17,6 +17,8 @@ export class AIProviderFactory {
       cursorRulesPath: config.rules?.cursorRulesPath,
       // Pass framework config for task detection and prompt customization
       frameworkConfig: (config as any).framework,
+      // Pass session management config for provider-agnostic session support
+      sessionManagement: (config.ai as any).sessionManagement,
     };
 
     switch (config.ai.provider) {

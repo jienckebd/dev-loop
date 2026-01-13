@@ -122,6 +122,13 @@ const configSchemaBase = z.object({
         autoPrune: z.boolean().optional().default(true).describe('Auto-prune old entries when loading'),
       }).optional(),
     }).optional(),
+    // Spec-kit integration configuration for intelligent clarification
+    specKit: z.object({
+      autoAnswerThreshold: z.number().default(0.85).describe('Confidence threshold for auto-applying answers without prompting'),
+      skipIfHighConfidence: z.boolean().default(true).describe('Skip prompting for high-confidence inferred answers'),
+      inferParallelFromDependencies: z.boolean().default(true).describe('Infer parallel execution from phase dependency analysis'),
+      constitutionDrivenQuestions: z.boolean().default(true).describe('Generate questions from constitution gaps rather than hardcoded list'),
+    }).optional(),
   }).optional(),
   // MCP (Model Context Protocol) configuration
   mcp: z.object({
@@ -373,6 +380,8 @@ const configSchemaBase = z.object({
     enabled: z.boolean().default(true),
     // Skip investigation task creation (investigation slows down execution)
     skipInvestigation: z.boolean().default(false),
+    // Skip prerequisite validation (environment, Drupal availability checks)
+    skipPrerequisiteValidation: z.boolean().default(false),
     // Test generation configuration
     testGeneration: z.object({
       framework: z.enum(['playwright', 'cypress', 'jest']).default('playwright'),

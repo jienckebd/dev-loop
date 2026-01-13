@@ -132,6 +132,54 @@ export interface RecommendationPattern {
 }
 
 /**
+ * PRD Concept Definition
+ * Defines a framework-specific concept that can be extracted from PRD content.
+ * Each framework has its own concepts (e.g., Drupal: entity_type, React: component).
+ */
+export interface PrdConcept {
+  /** Internal identifier (e.g., 'entity_type', 'component', 'model') */
+  name: string;
+  /** Human-readable label (e.g., 'Entity Types', 'React Components') */
+  label: string;
+  /** Regex pattern to extract from PRD content */
+  extractPattern: RegExp;
+  /** Optional pattern to match in target file paths */
+  filePattern?: RegExp;
+  /** Question to ask about generating schemas for these (supports {count} placeholder) */
+  schemaQuestion?: string;
+  /** Question to ask about prioritization */
+  priorityQuestion?: string;
+}
+
+/**
+ * Inferred concept from PRD content
+ */
+export interface InferredConcept {
+  /** Matches PrdConcept.name */
+  type: string;
+  /** Extracted items (e.g., ['node', 'media', 'user']) */
+  items: string[];
+  /** Items to prioritize (typically first few) */
+  priorities: string[];
+  /** 0-1 confidence score based on extraction clarity */
+  confidence: number;
+}
+
+/**
+ * PRD Inference Result
+ * Returned by FrameworkPlugin.inferFromPrd()
+ */
+export interface PrdInferenceResult {
+  /** Inferred concepts from PRD */
+  concepts: InferredConcept[];
+  /** Optional schema type inference (framework-specific) */
+  schemaType?: {
+    value: string;       // e.g., 'config', 'entity', 'both' for Drupal
+    confidence: number;
+  };
+}
+
+/**
  * Framework Plugin Interface
  *
  * Defines the contract for framework-specific functionality in dev-loop.
@@ -322,6 +370,50 @@ export interface FrameworkPlugin {
    * @returns Formatted warning text with allowed/forbidden paths
    */
   generateModuleBoundaryWarning?(targetModule: string): string;
+
+  // ===== Constitution Support (For Spec-Kit Integration) =====
+
+  /**
+   * Get framework-specific constraints for constitution merging.
+   * These are injected into AI prompts as MUST/NEVER rules.
+   * @returns Array of constraint strings
+   * @example ['NEVER modify Drupal core', 'MUST use dependency injection']
+   */
+  getConstraints?(): string[];
+
+  /**
+   * Get framework-specific patterns for constitution merging.
+   * These guide AI on which patterns to use when.
+   * @returns Array of pattern rules
+   */
+  getPatterns?(): Array<{ pattern: string; when: string; reference?: string }>;
+
+  /**
+   * Get code location rules for constitution.
+   * Specifies where different types of code should live.
+   * @returns Record of code type to path patterns
+   * @example { 'custom_modules': 'docroot/modules/share/*' }
+   */
+  getCodeLocationRules?(): Record<string, string>;
+
+  // ===== PRD Content Analysis (For Spec-Kit Integration) =====
+
+  /**
+   * Get framework-specific concepts that can be inferred from PRDs.
+   * These are used to generate relevant questions during refinement.
+   * Each framework defines its own concepts (e.g., Drupal: entity_type, React: component).
+   * @returns Array of concept definitions with extraction patterns
+   * @example For Drupal: [{ name: 'entity_type', label: 'Entity Types', extractPattern: /entity.type/ }]
+   */
+  getPrdConcepts?(): PrdConcept[];
+
+  /**
+   * Infer framework-specific decisions from PRD content.
+   * Called by RefinementQuestionGenerator to generate high-confidence answers.
+   * @param prd The parsed planning document
+   * @returns Framework-specific inference results with confidence scores
+   */
+  inferFromPrd?(prd: any): PrdInferenceResult;
 }
 
 /**

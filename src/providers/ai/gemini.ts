@@ -2,11 +2,16 @@ import { GoogleGenerativeAI } from '@google/generative-ai';
 import { AIProvider, AIProviderConfig } from './interface';
 import { CodeChanges, TaskContext, LogAnalysis } from '../../types';
 import { extractCodeChanges, JsonParsingContext } from './json-parser';
+import { GenericSessionManager } from './generic-session-manager';
+import { Session, SessionContext } from './session-manager';
+import { logger } from '../../core/utils/logger';
 
 export class GeminiProvider implements AIProvider {
   public name = 'gemini';
   private client: GoogleGenerativeAI;
   private model: any;
+  private lastTokens: { input?: number; output?: number } = {};
+  private sessionManager: GenericSessionManager | null = null;
 
   constructor(private config: AIProviderConfig) {
     if (!config.apiKey) {
@@ -14,6 +19,47 @@ export class GeminiProvider implements AIProvider {
     }
     this.client = new GoogleGenerativeAI(config.apiKey);
     this.model = this.client.getGenerativeModel({ model: config.model });
+
+    // Initialize session manager if enabled
+    const sessionConfig = (config as any).sessionManagement;
+    if (sessionConfig?.enabled !== false) {
+      this.sessionManager = new GenericSessionManager({
+        providerName: 'gemini',
+        maxSessionAge: sessionConfig?.maxSessionAge,
+        maxHistoryItems: sessionConfig?.maxHistoryItems,
+        enabled: sessionConfig?.enabled,
+      });
+      logger.debug('[GeminiProvider] Session management initialized');
+    }
+  }
+
+  /**
+   * Get last token usage from the most recent API call
+   * Note: Gemini provides token counts via usageMetadata
+   */
+  public getLastTokens(): { input?: number; output?: number } {
+    return { ...this.lastTokens };
+  }
+
+  /**
+   * Get session by ID
+   */
+  getSession(sessionId: string): Session | null {
+    return this.sessionManager?.getSession(sessionId) || null;
+  }
+
+  /**
+   * Get or create session for a given context
+   */
+  getOrCreateSession(context: SessionContext): Session | null {
+    return this.sessionManager?.getOrCreateSession(context) || null;
+  }
+
+  /**
+   * Check if provider supports sessions
+   */
+  supportsSessions(): boolean {
+    return this.sessionManager !== null;
   }
 
   async generateCode(prompt: string, context: TaskContext): Promise<CodeChanges> {
@@ -41,6 +87,14 @@ ${prompt}`;
       const result = await this.model.generateContent(`${systemPrompt}\n\n${userPrompt}`);
       const response = result.response;
       const text = response.text();
+
+      // Track token usage if available from usageMetadata
+      if (response.usageMetadata) {
+        this.lastTokens = {
+          input: response.usageMetadata.promptTokenCount,
+          output: response.usageMetadata.candidatesTokenCount,
+        };
+      }
 
       // Use shared JSON parser for consistent extraction
       const parsingContext: JsonParsingContext = {

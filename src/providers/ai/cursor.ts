@@ -11,13 +11,53 @@ import { logger } from "../../core/utils/logger";
 import { executeCursorGenerateCode } from '../../mcp/tools/cursor-ai';
 import { generateAgentConfig } from './cursor-agent-generator';
 import { createChatRequest } from './cursor-chat-requests';
-import { CursorChatOpener } from './cursor-chat-opener';
+import { CursorChatOpener, CursorChatOpenerConfig } from './cursor-chat-opener';
 import { extractCodeChanges, parseCodeChangesFromText, JsonParsingContext, extractCodeChangesWithAiFallback, shouldUseAiFallback } from './json-parser';
 import { CODE_CHANGES_JSON_SCHEMA_STRING, CODE_CHANGES_EXAMPLE_JSON } from './code-changes-schema';
 import { JsonSchemaValidator } from './json-schema-validator';
 import { ObservationTracker } from "../../core/tracking/observation-tracker";
+import { getBuildMetrics } from '../../core/metrics/build';
 import * as path from 'path';
 import * as fs from 'fs-extra';
+
+/**
+ * Singleton CursorChatOpener instance for session persistence
+ * Reusing the same opener across AI calls allows session/chat reuse,
+ * avoiding workspace re-indexing overhead on each call.
+ */
+let globalChatOpener: CursorChatOpener | null = null;
+let globalChatOpenerConfig: CursorChatOpenerConfig | null = null;
+
+/**
+ * Get or create singleton CursorChatOpener
+ * Compares config to determine if a new opener is needed
+ */
+function getGlobalChatOpener(config: CursorChatOpenerConfig): CursorChatOpener {
+  // Check if config changed (workspace path is the key differentiator)
+  const configChanged = !globalChatOpenerConfig ||
+    globalChatOpenerConfig.workspacePath !== config.workspacePath ||
+    globalChatOpenerConfig.useBackgroundAgent !== config.useBackgroundAgent ||
+    globalChatOpenerConfig.agentOutputFormat !== config.agentOutputFormat;
+
+  if (!globalChatOpener || configChanged) {
+    logger.debug('[CursorProvider] Creating new singleton CursorChatOpener');
+    globalChatOpener = new CursorChatOpener(config);
+    globalChatOpenerConfig = { ...config };
+  } else {
+    logger.debug('[CursorProvider] Reusing existing singleton CursorChatOpener');
+  }
+
+  return globalChatOpener;
+}
+
+/**
+ * Reset the global chat opener (useful for testing or forced reinitialization)
+ */
+export function resetGlobalChatOpener(): void {
+  globalChatOpener = null;
+  globalChatOpenerConfig = null;
+  logger.debug('[CursorProvider] Reset singleton CursorChatOpener');
+}
 
 /**
  * Custom error class for JSON parsing failures that should halt execution
@@ -98,7 +138,10 @@ export class CursorProvider implements AIProvider {
         // Get session management config from cursor config
         const sessionConfig = (cursorConfig as any)?.agents?.sessionManagement;
 
-        const chatOpener = new CursorChatOpener({
+        // Use singleton CursorChatOpener for session persistence
+        // This avoids creating a new opener for each AI call, allowing
+        // session/chat reuse and avoiding workspace re-indexing overhead
+        const chatOpener = getGlobalChatOpener({
           useBackgroundAgent: true,
           agentOutputFormat: agentOutputFormat as 'json' | 'text' | 'stream-json',
           openStrategy: 'agent',
@@ -708,25 +751,52 @@ export class CursorProvider implements AIProvider {
 
     logger.info(`[CursorProvider] generateText: Using background agent for text generation`);
 
-    const result = await chatOpener.openChat(chatRequest);
+    const startTime = Date.now();
+    const buildMetrics = getBuildMetrics();
+    const hasBuild = buildMetrics.getCurrentBuildId() !== undefined;
 
-    if (result.success && result.response) {
-      // Extract text from response
-      let text: string;
-      if (typeof result.response === 'string') {
-        text = result.response;
-      } else if (result.response.text) {
-        text = result.response.text;
-      } else if (result.response.result) {
-        text = typeof result.response.result === 'string' ? result.response.result : JSON.stringify(result.response.result);
-      } else {
-        text = JSON.stringify(result.response);
+    try {
+      const result = await chatOpener.openChat(chatRequest);
+      const durationMs = Date.now() - startTime;
+
+      if (result.success && result.response) {
+        // Extract text from response
+        let text: string;
+        if (typeof result.response === 'string') {
+          text = result.response;
+        } else if (result.response.text) {
+          text = result.response.text;
+        } else if (result.response.result) {
+          text = typeof result.response.result === 'string' ? result.response.result : JSON.stringify(result.response.result);
+        } else {
+          text = JSON.stringify(result.response);
+        }
+        
+        // Record successful AI call to build metrics
+        if (hasBuild) {
+          buildMetrics.recordAICall('cursor-generateText', true, durationMs, {
+            input: fullPrompt.length,
+            output: text.length,
+          });
+        }
+        
+        logger.info(`[CursorProvider] generateText: Successfully received text response (${text.length} chars)`);
+        return text;
       }
-      logger.info(`[CursorProvider] generateText: Successfully received text response (${text.length} chars)`);
-      return text;
-    }
 
-    throw new Error(`Text generation failed: ${result.message || 'No response'}`);
+      // Record failed AI call
+      if (hasBuild) {
+        buildMetrics.recordAICall('cursor-generateText', false, durationMs);
+      }
+
+      throw new Error(`Text generation failed: ${result.message || 'No response'}`);
+    } catch (error) {
+      const durationMs = Date.now() - startTime;
+      if (hasBuild) {
+        buildMetrics.recordAICall('cursor-generateText', false, durationMs);
+      }
+      throw error;
+    }
   }
 
   async analyzeError(error: string, context: TaskContext): Promise<LogAnalysis> {

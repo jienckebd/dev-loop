@@ -55,6 +55,11 @@ export interface BuildOptions {
   force?: boolean; // Convert mode
   requireExecutable?: boolean; // Require 100% executability (default: true)
   maxExecutabilityIterations?: number; // Maximum iterations for executability validation (default: 10)
+  // Spec-kit integration options
+  constitution?: string;       // Path to constitution file (default: .cursorrules)
+  skipClarification?: boolean; // Skip clarification phase
+  skipResearch?: boolean;      // Skip research phase
+  executabilityThreshold?: number; // Minimum executability score (default: 70)
 }
 
 /**
@@ -67,6 +72,14 @@ export interface BuildResult {
   executable: boolean;
   summary: string;
   result?: ConvertModeResult | EnhanceModeResult | CreateModeResult;
+  // Build metrics
+  filesGenerated?: number;
+  phasesCount?: number;
+  tasksCount?: number;
+  executabilityScore?: number;
+  schemaCompleteness?: number;
+  testCoverage?: number;
+  taskSpecificity?: number;
 }
 
 /**
@@ -213,6 +226,10 @@ export class PRDBuilderOrchestrator {
             patterns: this.loadedPatterns,
             observations: this.loadedObservations,
             testResults: this.loadedTestResults,
+            // Spec-kit integration options
+            constitution: options.constitution,
+            skipClarification: options.skipClarification,
+            skipResearch: options.skipResearch,
           });
           executable = result.executable;
           prdSetPath = result.prdSetPath;

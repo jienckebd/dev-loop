@@ -1,6 +1,7 @@
 import * as fs from 'fs-extra';
 import * as path from 'path';
 import { Task } from '../../../types';
+import { emitEvent } from '../../utils/event-stream';
 
 export interface LearnedPattern {
   id: string;
@@ -10,6 +11,10 @@ export interface LearnedPattern {
   lastSeen: string;          // ISO timestamp
   files?: string[];          // Files where this pattern was seen
   projectTypes?: string[];   // Project types where this pattern was seen (e.g., "drupal", "react")
+  // Pattern usage tracking
+  injectionCount?: number;   // Times this pattern was injected into prompts
+  preventionCount?: number;  // Times this pattern helped prevent an error
+  lastInjected?: string;     // ISO timestamp of last injection
 }
 
 export interface PatternMatch {
@@ -285,11 +290,13 @@ export class PatternLearningSystem {
 
   /**
    * Generate guidance prompt from relevant patterns.
+   * Automatically tracks pattern injections for usage analytics.
    */
   async generateGuidancePrompt(
     task: Task,
     targetFiles?: string[],
-    projectType?: string
+    projectType?: string,
+    trackUsage: boolean = true
   ): Promise<string> {
     const matches = await this.getRelevantPatterns(task, targetFiles, projectType);
 
@@ -303,6 +310,7 @@ export class PatternLearningSystem {
     ];
 
     // Include top 5 most relevant patterns
+    const injectedPatternIds: string[] = [];
     for (const match of matches.slice(0, 5)) {
       const { pattern } = match;
       sections.push(`### ${pattern.id.toUpperCase()}`);
@@ -311,6 +319,12 @@ export class PatternLearningSystem {
         sections.push(`- *(Seen ${pattern.occurrences} time${pattern.occurrences > 1 ? 's' : ''})*`);
       }
       sections.push('');
+      injectedPatternIds.push(pattern.id);
+    }
+
+    // Track pattern injections for usage analytics
+    if (trackUsage && injectedPatternIds.length > 0) {
+      await this.trackPatternInjection(injectedPatternIds);
     }
 
     return sections.join('\n');
@@ -333,5 +347,106 @@ export class PatternLearningSystem {
       this.patterns.set(pattern.id, { ...pattern });
     }
     await this.save();
+  }
+
+  /**
+   * Track when patterns are injected into prompts.
+   * Call this when generateGuidancePrompt is used.
+   */
+  async trackPatternInjection(patternIds: string[]): Promise<void> {
+    await this.load();
+    const now = new Date().toISOString();
+    
+    for (const id of patternIds) {
+      const pattern = this.patterns.get(id);
+      if (pattern) {
+        pattern.injectionCount = (pattern.injectionCount || 0) + 1;
+        pattern.lastInjected = now;
+      }
+    }
+    
+    await this.save();
+    
+    // Emit event for observability
+    emitEvent('pattern:injected', {
+      patternIds,
+      count: patternIds.length,
+    }, { severity: 'info' });
+    
+    if (this.debug) {
+      console.log(`[PatternLearner] Tracked injection of ${patternIds.length} patterns`);
+    }
+  }
+
+  /**
+   * Track when a pattern helps prevent an error.
+   * Call this when a task succeeds after pattern guidance was injected.
+   */
+  async trackPatternPrevention(patternIds: string[]): Promise<void> {
+    await this.load();
+    
+    for (const id of patternIds) {
+      const pattern = this.patterns.get(id);
+      if (pattern) {
+        pattern.preventionCount = (pattern.preventionCount || 0) + 1;
+      }
+    }
+    
+    await this.save();
+    
+    // Emit event for observability
+    emitEvent('pattern:prevented', {
+      patternIds,
+      count: patternIds.length,
+    }, { severity: 'info' });
+    
+    if (this.debug) {
+      console.log(`[PatternLearner] Tracked prevention by ${patternIds.length} patterns`);
+    }
+  }
+
+  /**
+   * Get pattern usage statistics.
+   */
+  async getPatternUsageStats(): Promise<{
+    totalPatterns: number;
+    totalInjections: number;
+    totalPreventions: number;
+    preventionRate: number;
+    topPreventionPatterns: { id: string; preventionCount: number; injectionCount: number }[];
+    unusedPatterns: string[];
+  }> {
+    await this.load();
+    
+    let totalInjections = 0;
+    let totalPreventions = 0;
+    const patternStats: { id: string; preventionCount: number; injectionCount: number }[] = [];
+    const unusedPatterns: string[] = [];
+    
+    for (const [id, pattern] of this.patterns) {
+      const injections = pattern.injectionCount || 0;
+      const preventions = pattern.preventionCount || 0;
+      
+      totalInjections += injections;
+      totalPreventions += preventions;
+      
+      if (injections > 0 || preventions > 0) {
+        patternStats.push({ id, preventionCount: preventions, injectionCount: injections });
+      } else {
+        unusedPatterns.push(id);
+      }
+    }
+    
+    // Sort by prevention count
+    patternStats.sort((a, b) => b.preventionCount - a.preventionCount);
+    
+    return {
+      totalPatterns: this.patterns.size,
+      totalInjections,
+      totalPreventions,
+      preventionRate: totalInjections > 0 ? totalPreventions / totalInjections : 0,
+      topPreventionPatterns: patternStats.slice(0, 5),
+      unusedPatterns,
+    };
   }
 }

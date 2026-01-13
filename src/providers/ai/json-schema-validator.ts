@@ -25,11 +25,27 @@ try {
   logger.warn('[JsonSchemaValidator] partial-json not available, will use fallback methods only');
 }
 
+/**
+ * Validation modes for different JSON structures
+ */
+export type ValidationMode = 'code-changes' | 'array' | 'object' | 'any';
+
 export interface ValidationResult {
   valid: boolean;
   errors: string[];
   warnings: string[];
   normalized?: CodeChanges;
+}
+
+/**
+ * Generic validation result for non-CodeChanges validation
+ */
+export interface GenericValidationResult {
+  valid: boolean;
+  errors: string[];
+  warnings: string[];
+  extracted?: any;
+  type: 'object' | 'array' | 'null' | 'primitive';
 }
 
 export interface Candidate {
@@ -613,6 +629,301 @@ export class JsonSchemaValidator {
   }
 
   /**
+   * Strategy 10: YAML to JSON Conversion
+   * Handles multi-document YAML separated by ---
+   */
+  private static strategy10_YamlToJson(text: string): ExtractionStrategy {
+    return {
+      name: 'yaml-to-json',
+      extract: (text: string): string[] => {
+        const candidates: string[] = [];
+        
+        // Check if text contains YAML document separators
+        if (!text.includes('---')) {
+          return candidates;
+        }
+        
+        try {
+          // Try to import yaml parser
+          const yaml = require('js-yaml');
+          
+          // Split by YAML document separator and parse each
+          const documents = text.split(/^---$/m).filter(doc => doc.trim());
+          
+          for (const doc of documents) {
+            try {
+              const parsed = yaml.load(doc.trim());
+              if (parsed && typeof parsed === 'object') {
+                // Check if it looks like CodeChanges
+                if (parsed.files && Array.isArray(parsed.files)) {
+                  candidates.push(JSON.stringify(parsed));
+                }
+              }
+            } catch {
+              // Not valid YAML
+            }
+          }
+          
+          // Also try parsing entire text as YAML
+          try {
+            const parsed = yaml.load(text);
+            if (parsed && typeof parsed === 'object' && parsed.files) {
+              candidates.push(JSON.stringify(parsed));
+            }
+          } catch {
+            // Not valid YAML
+          }
+        } catch {
+          // js-yaml not available, skip this strategy
+        }
+        
+        return candidates;
+      },
+      score: (candidate: string): number => {
+        return 0.7; // Medium-high confidence for YAML conversion
+      }
+    };
+  }
+
+  /**
+   * Strategy 11: Strip Conversational Preamble
+   * Removes conversational text before JSON/code blocks
+   */
+  private static strategy11_StripPreamble(text: string): ExtractionStrategy {
+    return {
+      name: 'strip-preamble',
+      extract: (text: string): string[] => {
+        const candidates: string[] = [];
+        
+        // Common preamble patterns to strip
+        const preamblePatterns = [
+          /^.*?(?=\{)/s, // Everything before first {
+          /^.*?Here(?:'s| is)(?: the)? (?:JSON|response|result)[:\s]*/is, // "Here's the JSON:"
+          /^.*?(?:The |This )?(?:JSON|response|result|output)(?: is)?[:\s]*/is, // "The JSON is:"
+          /^.*?(?:Returning|Generated)[:\s]*/is, // "Returning:" or "Generated:"
+          /^.*?(?:I've |I have )?(?:created|generated|produced)[^{]*\{/is // "I've created..." before {
+        ];
+        
+        for (const pattern of preamblePatterns) {
+          const strippedText = text.replace(pattern, '{');
+          if (strippedText !== text && strippedText.startsWith('{')) {
+            // Find matching closing brace
+            let depth = 0;
+            let inString = false;
+            let escapeNext = false;
+            let endPos = -1;
+            
+            for (let i = 0; i < strippedText.length; i++) {
+              const char = strippedText[i];
+              
+              if (escapeNext) {
+                escapeNext = false;
+                continue;
+              }
+              
+              if (char === '\\') {
+                escapeNext = true;
+                continue;
+              }
+              
+              if (char === '"' && !escapeNext) {
+                inString = !inString;
+                continue;
+              }
+              
+              if (!inString) {
+                if (char === '{') depth++;
+                else if (char === '}') {
+                  depth--;
+                  if (depth === 0) {
+                    endPos = i;
+                    break;
+                  }
+                }
+              }
+            }
+            
+            if (endPos > 0) {
+              const candidate = strippedText.substring(0, endPos + 1);
+              if (candidate.includes('files')) {
+                candidates.push(candidate);
+              }
+            }
+          }
+        }
+        
+        return candidates;
+      },
+      score: (candidate: string): number => {
+        let score = 0.65;
+        if (candidate.includes('"files"') && candidate.includes('"summary"')) {
+          score = 0.85;
+        }
+        return score;
+      }
+    };
+  }
+
+  /**
+   * Strategy 12: Extract from Array Response
+   * Handles responses that are arrays instead of objects with files key
+   * Enhanced to handle more array patterns including test cases and generic arrays
+   */
+  private static strategy12_ArrayToCodeChanges(text: string): ExtractionStrategy {
+    return {
+      name: 'array-to-code-changes',
+      extract: (text: string): string[] => {
+        const candidates: string[] = [];
+        
+        // Find array bounds
+        const arrayStart = text.indexOf('[');
+        if (arrayStart === -1) return candidates;
+        
+        // Balance brackets to find array end
+        let depth = 0;
+        let inString = false;
+        let escapeNext = false;
+        let arrayEnd = -1;
+        
+        for (let i = arrayStart; i < text.length; i++) {
+          const char = text[i];
+          
+          if (escapeNext) {
+            escapeNext = false;
+            continue;
+          }
+          
+          if (char === '\\') {
+            escapeNext = true;
+            continue;
+          }
+          
+          if (char === '"' && !escapeNext) {
+            inString = !inString;
+            continue;
+          }
+          
+          if (!inString) {
+            if (char === '[') depth++;
+            else if (char === ']') {
+              depth--;
+              if (depth === 0) {
+                arrayEnd = i;
+                break;
+              }
+            }
+          }
+        }
+        
+        if (arrayEnd > arrayStart) {
+          const arrayText = text.substring(arrayStart, arrayEnd + 1);
+          try {
+            const parsed = JSON.parse(arrayText);
+            if (Array.isArray(parsed) && parsed.length > 0) {
+              // Check if items look like file operations
+              const looksLikeFiles = parsed.some((item: any) => 
+                item && typeof item === 'object' && 
+                (item.path || item.file || item.filename) &&
+                (item.content || item.operation || item.action)
+              );
+              
+              if (looksLikeFiles) {
+                // Convert to CodeChanges format
+                const files = parsed.map((item: any) => ({
+                  path: item.path || item.file || item.filename || 'unknown',
+                  content: item.content || '',
+                  operation: item.operation || item.action || 'create'
+                }));
+                const codeChanges = {
+                  files,
+                  summary: `Converted from array response with ${files.length} file(s)`
+                };
+                candidates.push(JSON.stringify(codeChanges));
+              }
+              
+              // Check if items look like test cases (taskId, testCases pattern)
+              const looksLikeTestCases = parsed.some((item: any) =>
+                item && typeof item === 'object' &&
+                (item.taskId || item.task_id) &&
+                (item.testCases || item.test_cases || item.tests)
+              );
+              
+              if (looksLikeTestCases) {
+                // Wrap in object for test case responses
+                const testPlan = {
+                  testCases: parsed,
+                  summary: `Converted from test case array with ${parsed.length} task(s)`
+                };
+                candidates.push(JSON.stringify(testPlan));
+              }
+              
+              // Generic array - wrap in a results object
+              if (!looksLikeFiles && !looksLikeTestCases) {
+                const wrapped = {
+                  results: parsed,
+                  summary: `Wrapped array response with ${parsed.length} item(s)`
+                };
+                candidates.push(JSON.stringify(wrapped));
+              }
+            }
+          } catch {
+            // Not valid JSON array
+          }
+        }
+        
+        return candidates;
+      },
+      score: (candidate: string): number => {
+        return 0.6; // Medium confidence for converted arrays
+      }
+    };
+  }
+
+  /**
+   * Strategy 13: Strip Conversational Preamble More Aggressively
+   * Handles AI responses that start with explanatory text before the JSON
+   */
+  private static strategy13_AggressivePreambleStrip(text: string): ExtractionStrategy {
+    return {
+      name: 'aggressive-preamble-strip',
+      extract: (text: string): string[] => {
+        const candidates: string[] = [];
+        
+        // Common preamble patterns to strip
+        const preamblePatterns = [
+          /^.*?Generated\s+\d+.*?:\s*/si,
+          /^.*?Here(?:'s| is) the (?:JSON|response|output).*?:\s*/si,
+          /^.*?Test plans? (?:are|is) ready.*?:\s*/si,
+          /^.*?I(?:'ve| have) (?:created|generated).*?:\s*/si,
+          /^.*?Summary:?\s*/si,
+          /^.*?(?:The )?following (?:is|are).*?:\s*/si,
+        ];
+        
+        for (const pattern of preamblePatterns) {
+          const stripped = text.replace(pattern, '');
+          if (stripped !== text && stripped.trim()) {
+            // Try to find JSON in the stripped text
+            const jsonMatch = stripped.match(/(\{[\s\S]*\}|\[[\s\S]*\])/);
+            if (jsonMatch) {
+              try {
+                JSON.parse(jsonMatch[1]);
+                candidates.push(jsonMatch[1]);
+              } catch {
+                // Not valid JSON
+              }
+            }
+          }
+        }
+        
+        return candidates;
+      },
+      score: (candidate: string): number => {
+        return 0.55; // Lower confidence for stripped preamble
+      }
+    };
+  }
+
+  /**
    * Get all extraction strategies
    */
   private static getAllStrategies(text: string): ExtractionStrategy[] {
@@ -625,7 +936,11 @@ export class JsonSchemaValidator {
       this.strategy6_NestedResults(text),
       this.strategy7_SchemaFieldDetection(text),
       this.strategy8_RegexExtraction(text),
-      this.strategy9_PartialJsonFallback(text)
+      this.strategy9_PartialJsonFallback(text),
+      this.strategy10_YamlToJson(text),
+      this.strategy11_StripPreamble(text),
+      this.strategy12_ArrayToCodeChanges(text),
+      this.strategy13_AggressivePreambleStrip(text)
     ];
   }
 
@@ -677,12 +992,62 @@ export class JsonSchemaValidator {
   }
 
   /**
-   * Validate an object against the CodeChanges JSON schema
+   * Validate an object against a schema based on validation mode
+   * 
+   * @param data - The data to validate
+   * @param mode - Validation mode: 'code-changes' (default), 'array', 'object', or 'any'
+   * @param arrayItemSchema - Optional schema for array item validation
    */
-  static validate(data: any): ValidationResult {
+  static validate(
+    data: any,
+    mode: ValidationMode = 'code-changes',
+    arrayItemSchema?: { requiredFields?: string[] }
+  ): ValidationResult {
     const errors: string[] = [];
     const warnings: string[] = [];
 
+    // Handle 'any' mode - just check if data exists
+    if (mode === 'any') {
+      if (data === null || data === undefined) {
+        return { valid: false, errors: ['No data provided'], warnings: [] };
+      }
+      return { valid: true, errors: [], warnings: [] };
+    }
+
+    // Handle 'array' mode - validate as array with optional item schema
+    if (mode === 'array') {
+      if (!Array.isArray(data)) {
+        return { valid: false, errors: ['Expected array'], warnings: [] };
+      }
+      // Validate items if schema provided
+      if (arrayItemSchema?.requiredFields && arrayItemSchema.requiredFields.length > 0) {
+        const invalidItems: number[] = [];
+        data.forEach((item: any, index: number) => {
+          if (!item || typeof item !== 'object') {
+            invalidItems.push(index);
+          } else {
+            const hasAllFields = arrayItemSchema.requiredFields!.every(f => f in item);
+            if (!hasAllFields) {
+              invalidItems.push(index);
+            }
+          }
+        });
+        if (invalidItems.length > 0) {
+          warnings.push(`Items at indices [${invalidItems.slice(0, 5).join(', ')}${invalidItems.length > 5 ? '...' : ''}] missing required fields`);
+        }
+      }
+      return { valid: true, errors: [], warnings };
+    }
+
+    // Handle 'object' mode - just check if it's an object
+    if (mode === 'object') {
+      if (!data || typeof data !== 'object' || Array.isArray(data)) {
+        return { valid: false, errors: ['Expected object'], warnings: [] };
+      }
+      return { valid: true, errors: [], warnings: [] };
+    }
+
+    // Default 'code-changes' mode - full CodeChanges schema validation
     // Check if data is an object
     if (!data || typeof data !== 'object' || Array.isArray(data)) {
       return {
@@ -837,8 +1202,11 @@ export class JsonSchemaValidator {
    * 
    * This method tries multiple strategies to extract valid JSON,
    * then validates it against the schema.
+   * 
+   * @param text - Text to extract JSON from
+   * @param suppressWarnings - If true, don't log warnings or record to build metrics
    */
-  static extractAndValidate(text: string): ValidationResult {
+  static extractAndValidate(text: string, suppressWarnings: boolean = false): ValidationResult {
     if (!text || typeof text !== 'string') {
       return {
         valid: false,
@@ -898,7 +1266,21 @@ export class JsonSchemaValidator {
     if (allCandidates.length > 0) {
       allCandidates.sort((a, b) => b.score - a.score);
       const bestCandidate = allCandidates[0];
-      logger.warn(`[JsonSchemaValidator] Best candidate (strategy: ${bestCandidate.strategy}, score: ${bestCandidate.score.toFixed(2)}) failed validation: ${bestCandidate.validationResult?.errors.join(', ')}`);
+      
+      // Only log and record warning if not suppressed
+      if (!suppressWarnings) {
+        const warningMsg = `Best candidate (strategy: ${bestCandidate.strategy}, score: ${bestCandidate.score.toFixed(2)}) failed validation: ${bestCandidate.validationResult?.errors.join(', ')}`;
+        logger.warn(`[JsonSchemaValidator] ${warningMsg}`);
+        
+        // Record warning in build metrics if available
+        try {
+          const { getBuildMetrics } = require('../../core/metrics/build');
+          getBuildMetrics().recordWarning('JsonSchemaValidator', warningMsg);
+        } catch {
+          // Build metrics not available
+        }
+      }
+      
       return bestCandidate.validationResult || {
         valid: false,
         errors: ['Could not extract valid JSON from text'],
@@ -911,6 +1293,101 @@ export class JsonSchemaValidator {
       valid: false,
       errors: ['Could not extract valid JSON from text'],
       warnings: []
+    };
+  }
+
+  /**
+   * Extract and validate JSON from text with configurable validation mode
+   * 
+   * This method uses the same extraction strategies but validates according
+   * to the specified mode, avoiding CodeChanges-specific validation errors
+   * when extracting arrays or generic objects.
+   * 
+   * @param text - Text to extract JSON from
+   * @param mode - Validation mode: 'code-changes', 'array', 'object', or 'any'
+   * @param options - Additional options for validation
+   */
+  static extractAndValidateGeneric(
+    text: string,
+    mode: ValidationMode = 'any',
+    options?: {
+      arrayItemSchema?: { requiredFields?: string[] };
+      suppressWarnings?: boolean;
+    }
+  ): GenericValidationResult {
+    if (!text || typeof text !== 'string') {
+      return {
+        valid: false,
+        errors: ['Input must be a non-empty string'],
+        warnings: [],
+        type: 'null'
+      };
+    }
+
+    const suppressWarnings = options?.suppressWarnings ?? false;
+
+    // Get strategies ordered by success rate
+    const strategies = this.getOrderedStrategies(text);
+
+    // Try each strategy
+    for (const strategy of strategies) {
+      try {
+        const candidates = strategy.extract(text);
+        
+        for (const candidateJson of candidates) {
+          // Try to parse the candidate
+          const parseResult = this.tryParseJson(candidateJson);
+          
+          if (parseResult.success && parseResult.parsed !== undefined) {
+            const parsed = parseResult.parsed;
+            
+            // Determine type
+            let type: GenericValidationResult['type'] = 'null';
+            if (Array.isArray(parsed)) {
+              type = 'array';
+            } else if (parsed !== null && typeof parsed === 'object') {
+              type = 'object';
+            } else if (parsed !== null) {
+              type = 'primitive';
+            }
+
+            // Validate according to mode
+            const validationResult = this.validate(parsed, mode, options?.arrayItemSchema);
+            
+            if (validationResult.valid) {
+              this.updateStrategyStats(strategy.name, true);
+              logger.debug(`[JsonSchemaValidator] Successfully extracted ${type} using strategy: ${strategy.name}`);
+              return {
+                valid: true,
+                errors: [],
+                warnings: validationResult.warnings,
+                extracted: parsed,
+                type
+              };
+            }
+          }
+        }
+        
+        // Update stats (strategy attempted but didn't find valid result)
+        if (candidates.length > 0) {
+          this.updateStrategyStats(strategy.name, false);
+        }
+      } catch (error) {
+        logger.debug(`[JsonSchemaValidator] Strategy ${strategy.name} failed: ${error}`);
+        this.updateStrategyStats(strategy.name, false);
+      }
+    }
+
+    // No valid candidates found - only log warning if not suppressed
+    if (!suppressWarnings) {
+      logger.debug(`[JsonSchemaValidator] Could not extract valid JSON (mode: ${mode}) from text`);
+    }
+
+    return {
+      valid: false,
+      errors: ['Could not extract valid JSON from text'],
+      warnings: [],
+      type: 'null'
     };
   }
 }

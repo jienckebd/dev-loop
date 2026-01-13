@@ -29,6 +29,8 @@ import {
   createDefaultContributionModeMetrics,
   createDefaultTimingBreakdown,
   createDefaultTokenBreakdown,
+  createDefaultSpecKitMetrics,
+  SpecKitMetrics,
 } from "./types";
 import type { ConfigOverlay } from '../../config/schema/overlays';
 import { logger } from '../utils/logger';
@@ -423,6 +425,66 @@ export class PrdSetMetrics {
       estimatedCost,
       averageSuccessRate: allMetrics.length > 0 ? successRateSum / allMetrics.length : 0,
     };
+  }
+
+  /**
+   * Update spec-kit metrics for a PRD set
+   */
+  updateSpecKitMetrics(setId: string, update: Partial<SpecKitMetrics>): void {
+    let metrics = this.metrics.get(setId);
+    if (!metrics) {
+      // Create a minimal metrics entry if it doesn't exist
+      metrics = this.normalizeMetric({ setId, startTime: new Date().toISOString() });
+      this.metrics.set(setId, metrics);
+    }
+
+    if (!metrics.specKit) {
+      metrics.specKit = createDefaultSpecKitMetrics();
+    }
+
+    // Update scalar values
+    if (update.contextsLoaded !== undefined) {
+      metrics.specKit.contextsLoaded += update.contextsLoaded;
+    }
+    if (update.clarificationsUsed !== undefined) {
+      metrics.specKit.clarificationsUsed += update.clarificationsUsed;
+    }
+    if (update.researchFindingsUsed !== undefined) {
+      metrics.specKit.researchFindingsUsed += update.researchFindingsUsed;
+    }
+    if (update.constitutionRulesApplied !== undefined) {
+      metrics.specKit.constitutionRulesApplied += update.constitutionRulesApplied;
+    }
+    if (update.designDecisionsApplied !== undefined) {
+      metrics.specKit.designDecisionsApplied += update.designDecisionsApplied;
+    }
+
+    // Update context injections
+    if (update.contextInjections) {
+      metrics.specKit.contextInjections.total += update.contextInjections.total || 0;
+      if (update.contextInjections.byCategory) {
+        for (const [category, count] of Object.entries(update.contextInjections.byCategory)) {
+          metrics.specKit.contextInjections.byCategory[category] =
+            (metrics.specKit.contextInjections.byCategory[category] || 0) + count;
+        }
+      }
+    }
+
+    // Update context size tracking
+    if (update.totalContextSizeChars !== undefined) {
+      metrics.specKit.totalContextSizeChars += update.totalContextSizeChars;
+      metrics.specKit.avgContextSizeChars =
+        metrics.specKit.totalContextSizeChars / Math.max(1, metrics.specKit.contextInjections.total);
+    }
+
+    // Update load time tracking
+    if (update.loadTimeMs) {
+      metrics.specKit.loadTimeMs.total += update.loadTimeMs.total || 0;
+      metrics.specKit.loadTimeMs.avg =
+        metrics.specKit.loadTimeMs.total / Math.max(1, metrics.specKit.contextsLoaded);
+    }
+
+    this.saveMetrics();
   }
 
   /**

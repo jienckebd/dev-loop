@@ -57,6 +57,11 @@ export class ValidationAutoFixer {
     let isExecutable = false;
     const fixesApplied: string[] = [];
     let finalValidation: ExecutabilityValidationResult | null = null;
+    let firstValidation: ExecutabilityValidationResult | null = null;
+
+    // Import build metrics for tracking
+    const { getBuildMetrics } = await import('../../metrics/build');
+    const buildMetrics = getBuildMetrics();
 
     while (!isExecutable && iteration < maxIterations) {
       // Discover/reload PRD set
@@ -65,6 +70,13 @@ export class ValidationAutoFixer {
       // Validate
       const validationResult = await this.validator.validateExecutability(discoveredPrdSet);
       finalValidation = validationResult;
+
+      // Track first validation for metrics
+      if (iteration === 0) {
+        firstValidation = validationResult;
+        // Record initial validation state
+        buildMetrics.recordValidation(1, validationResult.score, [], 0, 0);
+      }
 
       logger.info(`[ValidationAutoFixer] Iteration ${iteration + 1}: score=${validationResult.score}, errors=${validationResult.errors.length}`);
 
@@ -159,6 +171,23 @@ export class ValidationAutoFixer {
       }
     }
 
+    // Record validation metrics
+    const errorsFixed = (firstValidation?.errors.length || 0) - (finalValidation?.errors.length || 0);
+    const warningsFixed = (firstValidation?.warnings.length || 0) - (finalValidation?.warnings.length || 0);
+    buildMetrics.recordValidation(
+      iteration,
+      finalValidation?.score || 0,
+      fixesApplied,
+      Math.max(0, errorsFixed),
+      Math.max(0, warningsFixed)
+    );
+
+    // Also record initial score if we have it
+    if (firstValidation && iteration > 0) {
+      // Update initial score separately since recordValidation only sets it on iteration 1
+      // The method already handles this, but ensure we pass the right iteration number
+    }
+
     return {
       isExecutable,
       fixesApplied,
@@ -180,7 +209,8 @@ export class ValidationAutoFixer {
       e.type === 'invalid-config' &&
       (e.message.includes('testing') || e.message.includes('framework') || e.message.includes('Testing directory'))
     ) || result.warnings.some(w =>
-      w.type === 'missing-optional' && w.message.includes('testing')
+      (w.type === 'missing-optional' || w.type === 'optimization-opportunity') &&
+      (w.message.includes('testing') || w.message.includes('runner') || w.message.includes('command') || w.message.includes('framework'))
     );
   }
 
