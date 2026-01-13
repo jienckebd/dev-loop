@@ -3437,6 +3437,27 @@ export class WorkflowEngine {
     }
     const mentionedFiles: string[] = [];
 
+    // CRITICAL: Extract targetFiles from task details (added by PRD parser)
+    // This is the most reliable source of target files
+    try {
+      const detailsObj = task.details ? JSON.parse(task.details) : {};
+      const taskTargetFiles = detailsObj.targetFiles as string[] | undefined;
+      if (taskTargetFiles && Array.isArray(taskTargetFiles)) {
+        for (const tf of taskTargetFiles) {
+          // Clean the file path (remove "(updated)" annotations, etc.)
+          const cleanPath = tf.replace(/\s*\([^)]*\)\s*$/g, '').trim();
+          if (cleanPath && !mentionedFiles.includes(cleanPath)) {
+            mentionedFiles.push(cleanPath);
+            if (this.debug) {
+              console.log(`[DEBUG] Target file from task details: ${cleanPath}`);
+            }
+          }
+        }
+      }
+    } catch {
+      // Ignore JSON parse errors - task details might not be JSON
+    }
+
     // Get codebase config with defaults
     const codebaseConfig = this.config.codebase || {};
     const extensions = codebaseConfig.extensions || ['php', 'ts', 'js', 'py', 'yml', 'yaml', 'json'];
@@ -4343,6 +4364,8 @@ export class WorkflowEngine {
             acceptanceCriteria: req.acceptanceCriteria || [],
             type: req.type || 'functional',
             createdAt: new Date().toISOString(),
+            // CRITICAL: Include target files for codebase context discovery
+            targetFiles: req.implementationFiles || [],
           };
           
           // Add PRD context to task details

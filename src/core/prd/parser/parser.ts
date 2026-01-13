@@ -143,13 +143,17 @@ export class PrdParser {
             || (task.testSpec?.describe as string | undefined)
             || `Task ${task.id}`;
 
+          // Extract targetFiles from task if present
+          const targetFiles = (task as any).targetFiles as string[] | undefined;
+          
           requirements.push({
             id: reqId,
             description: title + (description ? '\n\n' + description : ''),
             acceptanceCriteria,
-            priority: 'must', // Default to 'must' for structured requirements
+            priority: (task as any).priority || 'must', // Use task priority or default to 'must'
             status: 'pending',
-            type: 'functional',
+            type: (task as any).type || 'functional',
+            implementationFiles: targetFiles, // Map targetFiles to implementationFiles for context discovery
           });
         }
       } else {
