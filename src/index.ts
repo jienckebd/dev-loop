@@ -205,6 +205,7 @@ program
   .option('-c, --config <path>', 'Path to config file', 'devloop.config.js')
   .option('--all-failed', 'Reset all blocked/failed tasks')
   .option('--all', 'Reset all tasks to pending')
+  .option('--clear-retries', 'Clear retry counts (allows tasks to retry from scratch)')
   .action(async (taskId, options) => {
     await resetCommand({ ...options, taskId });
   });

@@ -8,6 +8,7 @@ export async function resetCommand(options: {
   taskId?: string;
   allFailed?: boolean;
   all?: boolean;
+  clearRetries?: boolean;
 }): Promise<void> {
   const spinner = ora('Loading configuration').start();
 
@@ -27,8 +28,13 @@ export async function resetCommand(options: {
       }
 
       await taskBridge.updateTaskStatus(options.taskId, 'pending');
-      spinner.succeed(`Task ${options.taskId} reset to pending`);
-      console.log(chalk.green(`✓ Task "${task.title}" is now pending`));
+      if (options.clearRetries) {
+        await taskBridge.resetRetryCount(options.taskId);
+        spinner.succeed(`Task ${options.taskId} reset to pending with retry count cleared`);
+      } else {
+        spinner.succeed(`Task ${options.taskId} reset to pending`);
+      }
+      console.log(chalk.green(`✓ Task "${task.title}" is now pending${options.clearRetries ? ' (retry count cleared)' : ''}`));
       return;
     }
 
@@ -46,8 +52,11 @@ export async function resetCommand(options: {
       spinner.text = `Resetting ${blockedTasks.length} blocked tasks`;
       for (const task of blockedTasks) {
         await taskBridge.updateTaskStatus(task.id, 'pending');
+        if (options.clearRetries) {
+          await taskBridge.resetRetryCount(task.id);
+        }
       }
-      spinner.succeed(`Reset ${blockedTasks.length} blocked tasks to pending`);
+      spinner.succeed(`Reset ${blockedTasks.length} blocked tasks to pending${options.clearRetries ? ' with retry counts cleared' : ''}`);
 
       console.log(chalk.green(`\nReset tasks:`));
       for (const task of blockedTasks) {
@@ -69,8 +78,11 @@ export async function resetCommand(options: {
 
       for (const task of nonPendingTasks) {
         await taskBridge.updateTaskStatus(task.id, 'pending');
+        if (options.clearRetries) {
+          await taskBridge.resetRetryCount(task.id);
+        }
       }
-      spinner.succeed(`Reset ${nonPendingTasks.length} tasks to pending`);
+      spinner.succeed(`Reset ${nonPendingTasks.length} tasks to pending${options.clearRetries ? ' with retry counts cleared' : ''}`);
       return;
     }
 
@@ -79,6 +91,9 @@ export async function resetCommand(options: {
     console.log('  dev-loop reset <taskId>     Reset specific task to pending');
     console.log('  dev-loop reset --all-failed Reset all blocked tasks');
     console.log('  dev-loop reset --all        Reset all tasks to pending');
+    console.log('');
+    console.log(chalk.bold('Options:'));
+    console.log('  --clear-retries             Also clear retry counts (allows tasks to retry)');
 
   } catch (error) {
     spinner.fail('Failed to reset tasks');
