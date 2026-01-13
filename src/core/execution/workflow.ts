@@ -4376,15 +4376,20 @@ export class WorkflowEngine {
             (taskDetails as any).prdSetId = prdSetId;
           }
 
+          // Namespace task ID by prdSetId to avoid collisions between PRD sets
+          const namespacedTaskId = prdSetId ? `${prdSetId}--${req.id}` : req.id;
+          
           const task: Task = {
-            id: req.id,
+            id: namespacedTaskId,
             title: req.description || `Complete: ${req.id}`,
             description: req.description || `Implement requirement: ${req.id}`,
             status: 'pending',
             priority: taskPriority,
             details: JSON.stringify(taskDetails),
-            // Add dependencies from requirement if present
-            ...(req.dependencies && req.dependencies.length > 0 ? { dependencies: req.dependencies } : {}),
+            // Add dependencies from requirement if present - also namespace them
+            ...(req.dependencies && req.dependencies.length > 0 
+              ? { dependencies: req.dependencies.map((dep: string) => prdSetId ? `${prdSetId}--${dep}` : dep) } 
+              : {}),
           };
           await this.taskBridge.createTask(task);
           taskCount++;
