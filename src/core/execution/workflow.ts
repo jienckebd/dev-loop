@@ -45,6 +45,8 @@ import { AutonomousTaskGenerator } from '../generation/autonomous-task-generator
 import { DrupalImplementationGenerator } from '../generation/drupal-implementation-generator';
 import { FrameworkLoader, FrameworkPlugin } from '../../frameworks';
 import { SpecKitContext } from '../prd/parser/planning-doc-parser';
+import { CLICommandExecutor } from './cli-executor';
+import { RecoverySystem, RecoveryResult } from './recovery-system';
 
 const execAsync = promisify(exec);
 
@@ -89,6 +91,8 @@ export class WorkflowEngine {
   private debuggingStrategyAdvisor?: any; // DebuggingStrategyAdvisor
   private investigationTaskGenerator?: any; // InvestigationTaskGenerator
   private executionOrderAnalyzer?: any; // ExecutionOrderAnalyzer
+  private cliExecutor?: CLICommandExecutor;
+  private recoverySystem?: RecoverySystem;
   private componentInteractionAnalyzer?: any; // ComponentInteractionAnalyzer
   private rootCauseAnalyzer?: any; // RootCauseAnalyzer
   private shutdownRequested = false;
@@ -453,11 +457,15 @@ export class WorkflowEngine {
       this.templateManager.setFrameworkPlugin(plugin);
       const frameworkLoadDuration = Date.now() - frameworkLoadStart;
 
-      // Track framework plugin feature
-      // Note: Framework plugin loading happens before PRD tracking starts,
-      // so we track it globally when a PRD is executed (not at load time)
+      // Initialize CLI executor and recovery system with framework commands
+      this.cliExecutor = new CLICommandExecutor(process.cwd(), this.debug);
+      this.recoverySystem = new RecoverySystem(this.cliExecutor, plugin, this.debug);
+
       if (this.debug) {
         console.log(`[WorkflowEngine] Framework plugin loaded: ${plugin.name} v${plugin.version} (${frameworkLoadDuration}ms)`);
+        const cliCommands = plugin.getCLICommands?.() || [];
+        console.log(`[WorkflowEngine] CLI commands available: ${cliCommands.length}`);
+        console.log(`[WorkflowEngine] Recovery system initialized`);
       }
     }).catch(err => {
       if (this.debug) {
@@ -1639,6 +1647,53 @@ export class WorkflowEngine {
                 }
               } catch (err) {
                 // Ignore
+              }
+            }
+          }
+
+          // Attempt automatic recovery before creating fix task
+          let recoveryAttempted = false;
+          let recoverySucceeded = false;
+          if (this.recoverySystem) {
+            const primaryError = validationResult.errors[0];
+            const errorType = this.extractErrorCategory(primaryError?.message || errorDescription);
+            const recoveryResult = await this.recoverySystem.attemptRecovery(
+              task.id,
+              primaryError?.message || errorDescription,
+              errorType
+            );
+
+            recoveryAttempted = recoveryResult.attempted;
+            recoverySucceeded = recoveryResult.success;
+
+            if (recoveryResult.attempted) {
+              if (this.debug) {
+                console.log(`[WorkflowEngine] Recovery attempted: ${recoveryResult.strategy}, success: ${recoveryResult.success}`);
+              }
+
+              // If recovery succeeded and we should retry, don't create fix task
+              if (recoveryResult.success && recoveryResult.suggestedAction === 'retry') {
+                if (this.debug) {
+                  console.log(`[WorkflowEngine] Recovery successful, will retry task on next iteration`);
+                }
+                // Keep task as pending for retry
+                await this.taskBridge.updateTaskStatus(task.id, 'pending');
+
+                // Complete metrics with pending retry (not a failure since recovery may work)
+                const totalDuration = Date.now() - startTime;
+                if (this.debugMetrics) {
+                  this.debugMetrics.recordValidation(false, validationResult.errors.length);
+                  this.debugMetrics.recordTiming('total', totalDuration);
+                  // Don't mark as failed - we're retrying after recovery
+                }
+
+                await this.updateState({ status: 'idle' });
+                return {
+                  completed: false,
+                  noTasks: false,
+                  taskId: task.id,
+                  error: `Recovery attempted (${recoveryResult.strategy}), retrying...`,
+                };
               }
             }
           }

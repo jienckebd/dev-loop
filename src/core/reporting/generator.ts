@@ -7,6 +7,19 @@ import { ObservationTracker, Observation } from '../tracking/observation-tracker
 /**
  * PRD Execution Report Data
  */
+/**
+ * Feature utilization data for a single feature
+ */
+export interface FeatureUtilization {
+  name: string;
+  utilized: boolean;
+  invocations: number;
+  successes: number;
+  failures: number;
+  avgDurationMs: number;
+  details?: Record<string, any>;
+}
+
 export interface PrdExecutionReport {
   prdId: string;
   prdName: string;
@@ -56,6 +69,21 @@ export interface PrdExecutionReport {
     failuresByProvider: Record<string, number>;
     commonPatterns: string[];
     suggestions: string[];
+  };
+  // NEW: Feature utilization metrics
+  featureUtilization?: FeatureUtilization[];
+  // NEW: Recovery system metrics
+  recovery?: {
+    totalAttempts: number;
+    successfulRecoveries: number;
+    failedRecoveries: number;
+    byStrategy: Record<string, { attempts: number; successes: number }>;
+  };
+  // NEW: CLI command metrics
+  cliCommands?: {
+    totalExecuted: number;
+    byCommand: Record<string, { executed: number; succeeded: number }>;
+    avgDurationMs: number;
   };
 }
 
@@ -126,6 +154,7 @@ export class ReportGenerator {
       },
       files: filesModified || { created: 0, patched: 0, deleted: 0 },
       jsonParsing: await this.getJsonParsingMetrics(),
+      featureUtilization: await this.analyzeFeatureUtilization(debugMetrics),
     };
 
     // Generate markdown
@@ -217,6 +246,50 @@ export class ReportGenerator {
     lines.push(`- **Patched**: ${report.files.patched} files`);
     lines.push(`- **Deleted**: ${report.files.deleted} files`);
     lines.push('');
+
+    // Feature Utilization Analysis (NEW)
+    if (report.featureUtilization && report.featureUtilization.length > 0) {
+      lines.push('## Feature Utilization Analysis');
+      lines.push('');
+      lines.push('| Feature | Utilized | Invocations | Successes | Failures | Success Rate |');
+      lines.push('|---------|----------|-------------|-----------|----------|--------------|');
+      
+      for (const feature of report.featureUtilization) {
+        const successRate = feature.invocations > 0 
+          ? ((feature.successes / feature.invocations) * 100).toFixed(1) + '%'
+          : 'N/A';
+        const utilized = feature.utilized ? '✅' : '❌';
+        lines.push(`| ${feature.name} | ${utilized} | ${feature.invocations} | ${feature.successes} | ${feature.failures} | ${successRate} |`);
+      }
+      lines.push('');
+
+      // Feature details for high-usage features
+      const highUsageFeatures = report.featureUtilization.filter(f => f.invocations > 10 && f.details);
+      if (highUsageFeatures.length > 0) {
+        lines.push('### Feature Details');
+        lines.push('');
+        for (const feature of highUsageFeatures) {
+          lines.push(`**${feature.name}**:`);
+          for (const [key, value] of Object.entries(feature.details || {})) {
+            lines.push(`- ${key}: ${value}`);
+          }
+          lines.push('');
+        }
+      }
+
+      // Underutilized features
+      const underutilized = report.featureUtilization.filter(f => !f.utilized);
+      if (underutilized.length > 0) {
+        lines.push('### Underutilized Features');
+        lines.push('');
+        lines.push('The following features were not used during this execution:');
+        lines.push('');
+        for (const feature of underutilized) {
+          lines.push(`- ${feature.name}`);
+        }
+        lines.push('');
+      }
+    }
 
     // JSON Parsing Metrics
     if (report.jsonParsing && report.jsonParsing.totalFailures > 0) {
@@ -338,6 +411,163 @@ export class ReportGenerator {
   private countRetries(debugMetrics?: MetricsData): number {
     if (!debugMetrics?.runs) return 0;
     return debugMetrics.runs.filter(r => r.status === 'failed').length;
+  }
+
+  /**
+   * Analyze feature utilization based on metrics data
+   */
+  private async analyzeFeatureUtilization(debugMetrics?: MetricsData): Promise<FeatureUtilization[]> {
+    const features: FeatureUtilization[] = [];
+
+    // Feature: JSON Parsing
+    try {
+      const jsonStatsPath = path.join(process.cwd(), '.devloop/json-parsing-stats.json');
+      if (await fs.pathExists(jsonStatsPath)) {
+        const jsonStats = await fs.readJson(jsonStatsPath);
+        features.push({
+          name: 'JSON Parsing',
+          utilized: true,
+          invocations: jsonStats.totalAttempts || 0,
+          successes: jsonStats.successfulAttempts || 0,
+          failures: jsonStats.failedAttempts || 0,
+          avgDurationMs: 0,
+          details: {
+            successRate: jsonStats.successRate || 0,
+            primaryStrategy: jsonStats.primaryStrategy || 'unknown',
+          },
+        });
+      }
+    } catch (err) {
+      // Ignore
+    }
+
+    // Feature: Pattern Learning
+    try {
+      const patternsPath = path.join(process.cwd(), '.devloop/patterns.json');
+      if (await fs.pathExists(patternsPath)) {
+        const patterns = await fs.readJson(patternsPath);
+        const patternCount = patterns.patterns?.length || 0;
+        const totalOccurrences = patterns.patterns?.reduce((sum: number, p: any) => sum + (p.occurrences || 0), 0) || 0;
+        features.push({
+          name: 'Pattern Learning',
+          utilized: patternCount > 0,
+          invocations: totalOccurrences,
+          successes: patternCount,
+          failures: 0,
+          avgDurationMs: 0,
+          details: {
+            patternsRecorded: patternCount,
+            activePatterns: patterns.patterns?.filter((p: any) => p.status === 'active')?.length || 0,
+          },
+        });
+      }
+    } catch (err) {
+      // Ignore
+    }
+
+    // Feature: Context Building
+    if (debugMetrics?.runs) {
+      const contextRuns = debugMetrics.runs.filter(r => r.context);
+      const avgContextFiles = contextRuns.length > 0 
+        ? contextRuns.reduce((sum, r) => sum + (r.context?.filesIncluded || 0), 0) / contextRuns.length 
+        : 0;
+      const avgContextChars = contextRuns.length > 0
+        ? contextRuns.reduce((sum, r) => sum + (r.context?.sizeChars || 0), 0) / contextRuns.length
+        : 0;
+      
+      features.push({
+        name: 'Context Building',
+        utilized: contextRuns.length > 0,
+        invocations: contextRuns.length,
+        successes: contextRuns.filter(r => r.status === 'completed').length,
+        failures: contextRuns.filter(r => r.status === 'failed').length,
+        avgDurationMs: 0, // Not tracked in summary
+        details: {
+          avgFiles: Math.round(avgContextFiles),
+          avgChars: Math.round(avgContextChars),
+        },
+      });
+    }
+
+    // Feature: Test Execution
+    if (debugMetrics?.runs) {
+      const testRuns = debugMetrics.runs.filter(r => r.timing?.testRunMs !== undefined && r.timing.testRunMs > 0);
+      const successfulTests = testRuns.filter(r => r.status === 'completed');
+      features.push({
+        name: 'Test Execution',
+        utilized: testRuns.length > 0,
+        invocations: testRuns.length,
+        successes: successfulTests.length,
+        failures: testRuns.length - successfulTests.length,
+        avgDurationMs: debugMetrics.summary?.avgTestRunMs || 0,
+      });
+    }
+
+    // Feature: Patch Application
+    if (debugMetrics?.runs) {
+      const patchRuns = debugMetrics.runs.filter(r => r.patches);
+      const totalPatches = patchRuns.reduce((sum, r) => sum + (r.patches?.attempted || 0), 0);
+      const successfulPatches = patchRuns.reduce((sum, r) => sum + (r.patches?.succeeded || 0), 0);
+      
+      features.push({
+        name: 'Patch Application',
+        utilized: totalPatches > 0,
+        invocations: totalPatches,
+        successes: successfulPatches,
+        failures: totalPatches - successfulPatches,
+        avgDurationMs: 0,
+      });
+    }
+
+    // Feature: Validation Gate
+    if (debugMetrics?.runs) {
+      const validationRuns = debugMetrics.runs.filter(r => r.validation !== undefined);
+      features.push({
+        name: 'Validation Gate',
+        utilized: validationRuns.length > 0,
+        invocations: validationRuns.length,
+        successes: validationRuns.filter(r => r.validation?.preValidationPassed).length,
+        failures: validationRuns.filter(r => !r.validation?.preValidationPassed).length,
+        avgDurationMs: 0,
+      });
+    }
+
+    // Feature: Framework Plugin (CLI Commands)
+    try {
+      // Check for CLI executor metrics in metrics.json
+      if (debugMetrics && (debugMetrics as any).cliCommands) {
+        const cliMetrics = (debugMetrics as any).cliCommands;
+        features.push({
+          name: 'CLI Commands',
+          utilized: cliMetrics.totalExecuted > 0,
+          invocations: cliMetrics.totalExecuted || 0,
+          successes: cliMetrics.succeeded || 0,
+          failures: (cliMetrics.totalExecuted || 0) - (cliMetrics.succeeded || 0),
+          avgDurationMs: cliMetrics.avgDurationMs || 0,
+        });
+      }
+    } catch (err) {
+      // Ignore
+    }
+
+    // Feature: Recovery System
+    try {
+      if (debugMetrics && (debugMetrics as any).recovery) {
+        const recoveryMetrics = (debugMetrics as any).recovery;
+        features.push({
+          name: 'Recovery System',
+          utilized: recoveryMetrics.totalAttempts > 0,
+          invocations: recoveryMetrics.totalAttempts || 0,
+          successes: recoveryMetrics.successfulRecoveries || 0,
+          failures: recoveryMetrics.failedRecoveries || 0,
+          avgDurationMs: recoveryMetrics.avgRecoveryTimeMs || 0,
+        });
+      }
+    } catch (err) {
+      // Ignore
+    }
+
+    return features;
   }
 
   /**

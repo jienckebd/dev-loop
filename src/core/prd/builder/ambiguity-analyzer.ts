@@ -10,6 +10,7 @@ import { ParsedPlanningDoc, ConstitutionRules } from '../parser/planning-doc-par
 import { CodebaseAnalysisResult } from '../../analysis/codebase-analyzer';
 import { PatternEntry, ObservationEntry } from '../learning/types';
 import { AIProvider, AIProviderConfig } from '../../../providers/ai/interface';
+import { TextGenerationAdapter } from '../refinement/text-generation-adapter';
 import { logger } from '../../utils/logger';
 
 export interface AmbiguityAnalyzerConfig {
@@ -33,6 +34,7 @@ export interface DetectedAmbiguity {
 export class AmbiguityAnalyzer {
   private aiProvider: AIProvider;
   private aiProviderConfig: AIProviderConfig;
+  private textAdapter: TextGenerationAdapter;
   private patterns: PatternEntry[];
   private observations: ObservationEntry[];
   private debug: boolean;
@@ -40,6 +42,11 @@ export class AmbiguityAnalyzer {
   constructor(config: AmbiguityAnalyzerConfig) {
     this.aiProvider = config.aiProvider;
     this.aiProviderConfig = config.aiProviderConfig;
+    this.textAdapter = new TextGenerationAdapter(
+      config.aiProvider,
+      config.aiProviderConfig,
+      config.debug
+    );
     this.patterns = config.patterns || [];
     this.observations = config.observations || [];
     this.debug = config.debug || false;
@@ -59,14 +66,18 @@ export class AmbiguityAnalyzer {
       logger.debug('[AmbiguityAnalyzer] Analyzing PRD for ambiguities with AI');
 
       // Check if AI provider supports text generation
-      if (!this.aiProvider.generateText) {
+      if (!this.textAdapter.supportsTextGeneration()) {
         logger.warn('[AmbiguityAnalyzer] AI provider does not support generateText, skipping AI analysis');
         return [];
       }
 
-      const response = await this.aiProvider.generateText(prompt, {
+      const response = await this.textAdapter.generate(prompt, {
         maxTokens: 2000,
         temperature: 0.3, // Lower temperature for consistent analysis
+      }, {
+        purpose: 'Analyze PRD for ambiguities requiring clarification',
+        phase: 'ambiguity-analysis',
+        expectedImpact: 'Detect unclear requirements',
       });
 
       const ambiguities = this.parseAIResponse(response);

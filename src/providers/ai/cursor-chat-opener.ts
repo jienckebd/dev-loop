@@ -55,6 +55,8 @@ export interface ChatOpenResult {
   response?: any;
   /** Raw stdout from agent command */
   stdout?: string;
+  /** Whether the result is due to a timeout */
+  timeout?: boolean;
 }
 
 export interface CursorChatOpenerConfig {
@@ -850,8 +852,12 @@ export class CursorChatOpener {
             child.stdin?.end();
           }
 
+          // Track if process was killed due to timeout
+          let killedByTimeout = false;
+
           // Handle timeout - kill the child process
           const timeoutHandle = setTimeout(() => {
+            killedByTimeout = true;  // Mark as timeout kill
             logger.warn(`[CursorChatOpener] Background agent timeout after ${timeoutMs / 1000 / 60} minutes, killing process`);
             try {
               child.kill('SIGTERM');
@@ -973,6 +979,21 @@ export class CursorChatOpener {
 
           // Clean up IPC server
           await ipcServer.stop();
+
+          // Handle timeout kills (code 143 = 128 + SIGTERM)
+          if (code === 143 && killedByTimeout) {
+            logger.warn(`[CursorChatOpener] Background agent timed out and was terminated (code 143)`);
+            // Track agent timeout in parallel metrics
+            parallelMetrics.completeAgent(agentId, 'timeout', stdout.length);
+
+            resolve({
+              success: false,
+              method: 'agent',
+              message: `Background agent timed out after ${timeoutMs / 1000 / 60} minutes`,
+              timeout: true,
+            });
+            return;
+          }
 
           if (success) {
             logger.info(`[CursorChatOpener] Background agent completed successfully${session ? ` (session: ${session.sessionId})` : ''}`);

@@ -414,6 +414,58 @@ export interface FrameworkPlugin {
    * @returns Framework-specific inference results with confidence scores
    */
   inferFromPrd?(prd: any): PrdInferenceResult;
+
+  // ===== CLI Commands (For Agentic Execution) =====
+
+  /**
+   * Get framework-specific CLI commands available for agentic execution.
+   * These commands enable dev-loop to execute framework operations like
+   * cache clearing, module enabling, service verification, etc.
+   * @returns Array of CLI command definitions
+   * @example For Drupal: [{ name: 'cache-rebuild', command: 'ddev exec drush cr', purpose: 'cache-clear' }]
+   */
+  getCLICommands?(): FrameworkCLICommand[];
+}
+
+/**
+ * Framework CLI Command Definition
+ *
+ * Defines a CLI command that can be executed by dev-loop for framework-specific operations.
+ * Commands support placeholders (e.g., {module}) that are replaced at execution time.
+ */
+export interface FrameworkCLICommand {
+  /** Command identifier (e.g., 'module-enable', 'cache-rebuild') */
+  name: string;
+
+  /** Full command template with {placeholders} for variable substitution */
+  command: string;
+
+  /** Purpose category for the command */
+  purpose: 'cache-clear' | 'module-enable' | 'module-disable' |
+           'service-check' | 'config-export' | 'config-import' |
+           'database-query' | 'code-check' | 'test-run' | 'scaffold' |
+           'entity-check' | 'health-check';
+
+  /** Human-readable description */
+  description: string;
+
+  /** Required placeholder names (e.g., ['module', 'service']) */
+  placeholders?: string[];
+
+  /** Example usage with filled placeholders */
+  example?: string;
+
+  /** Whether the command is safe to run multiple times (idempotent) */
+  idempotent?: boolean;
+
+  /** Whether the command requires human confirmation before execution */
+  requiresConfirmation?: boolean;
+
+  /** Expected output format for parsing results */
+  outputFormat?: 'json' | 'text' | 'boolean' | 'yaml';
+
+  /** Timeout in milliseconds (default: 60000) */
+  timeout?: number;
 }
 
 /**

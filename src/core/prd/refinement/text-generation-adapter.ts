@@ -31,6 +31,18 @@ export interface TextGenerationOptions {
 }
 
 /**
+ * Context for AI call tracking and reporting
+ */
+export interface TextGenerationContext {
+  /** Human-readable purpose of this call */
+  purpose: string;
+  /** Phase identifier for timing attribution */
+  phase: 'ambiguity-analysis' | 'schema-enhancement' | 'test-planning' | 'feature-enhancement';
+  /** What this call is expected to produce */
+  expectedImpact?: string;
+}
+
+/**
  * Adapter for text generation using AI providers
  * 
  * Delegates all text generation to the provider's generateText() method,
@@ -99,8 +111,16 @@ export class TextGenerationAdapter {
    * 
    * Delegates to provider.generateText() to ensure proper session management,
    * token tracking, and metrics recording.
+   * 
+   * @param prompt The prompt to send to the AI
+   * @param options Generation options (maxTokens, temperature, etc.)
+   * @param context Optional context for detailed metrics tracking
    */
-  async generate(prompt: string, options: TextGenerationOptions = {}): Promise<string> {
+  async generate(
+    prompt: string,
+    options: TextGenerationOptions = {},
+    context?: TextGenerationContext
+  ): Promise<string> {
     const startTime = Date.now();
     const maxTokens = options.maxTokens || this.providerConfig.maxTokens || 4000;
     const temperature = options.temperature ?? this.providerConfig.temperature ?? 0.7;
@@ -132,14 +152,34 @@ export class TextGenerationAdapter {
         if (tokens && (tokens.input !== undefined || tokens.output !== undefined)) {
           try {
             const { getBuildMetrics } = require('../../metrics/build');
-            getBuildMetrics().recordAICall(
-              `${this.providerName}-generateText`,
-              true,
-              durationMs,
-              tokens.input !== undefined && tokens.output !== undefined 
-                ? { input: tokens.input, output: tokens.output }
-                : undefined
-            );
+            const tokenData = tokens.input !== undefined && tokens.output !== undefined
+              ? { input: tokens.input, output: tokens.output }
+              : undefined;
+
+            if (context && tokenData) {
+              // Use detailed recording with context
+              getBuildMetrics().recordAICallWithDetails(
+                `${this.providerName}-generateText`,
+                true,
+                durationMs,
+                tokenData,
+                {
+                  purpose: context.purpose,
+                  promptSummary: prompt.substring(0, 200),
+                  responseSummary: result.substring(0, 200),
+                  phase: context.phase,
+                  model: model,
+                }
+              );
+            } else {
+              // Fall back to basic recording
+              getBuildMetrics().recordAICall(
+                `${this.providerName}-generateText`,
+                true,
+                durationMs,
+                tokenData
+              );
+            }
           } catch {
             // Build metrics not available
           }

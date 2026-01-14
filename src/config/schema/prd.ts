@@ -255,6 +255,91 @@ export function createPrdSchema(configOverlaySchema: ZodTypeAny) {
         cardinality: z.enum(['one_to_one', 'one_to_many', 'many_to_one', 'many_to_many']),
       }))).optional(),
     }).optional(),
+
+    // NEW: Lifecycle hooks for PRD execution
+    lifecycle: z.object({
+      // Run at start of PRD execution
+      onStart: z.array(z.object({
+        type: z.enum(['cli_command', 'shell', 'callback']),
+        command: z.string().optional(),
+        cliCommand: z.string().optional(), // Framework CLI command name
+        args: z.record(z.string(), z.string()).optional(),
+        description: z.string().optional(),
+        continueOnError: z.boolean().default(false),
+      })).optional(),
+      // Run at start of each phase
+      onPhaseStart: z.array(z.object({
+        type: z.enum(['cli_command', 'shell', 'callback']),
+        command: z.string().optional(),
+        cliCommand: z.string().optional(),
+        args: z.record(z.string(), z.string()).optional(),
+        description: z.string().optional(),
+        continueOnError: z.boolean().default(false),
+      })).optional(),
+      // Run after each task completes successfully
+      onTaskComplete: z.array(z.object({
+        type: z.enum(['cli_command', 'shell', 'callback']),
+        command: z.string().optional(),
+        cliCommand: z.string().optional(),
+        args: z.record(z.string(), z.string()).optional(),
+        description: z.string().optional(),
+        continueOnError: z.boolean().default(true),
+      })).optional(),
+      // Run at successful completion of PRD
+      onComplete: z.array(z.object({
+        type: z.enum(['cli_command', 'shell', 'callback']),
+        command: z.string().optional(),
+        cliCommand: z.string().optional(),
+        args: z.record(z.string(), z.string()).optional(),
+        description: z.string().optional(),
+      })).optional(),
+      // Run when a task/phase fails
+      onFailure: z.array(z.object({
+        type: z.enum(['cli_command', 'shell', 'callback', 'recovery']),
+        command: z.string().optional(),
+        cliCommand: z.string().optional(),
+        args: z.record(z.string(), z.string()).optional(),
+        description: z.string().optional(),
+        // Recovery-specific options
+        pattern: z.string().optional(), // Error pattern to match
+        recoveryStrategy: z.string().optional(), // Recovery strategy name
+      })).optional(),
+    }).optional(),
+
+    // NEW: Recovery configuration for automatic failure recovery
+    recovery: z.object({
+      enabled: z.boolean().default(true),
+      maxRecoveryAttempts: z.number().default(3),
+      // Custom recovery strategies
+      strategies: z.array(z.object({
+        pattern: z.string(), // Regex pattern to match errors
+        name: z.string().optional(),
+        action: z.enum(['cli_command', 'retry', 'retry_fuzzy', 'skip', 'escalate']),
+        cliCommands: z.array(z.string()).optional(), // Framework CLI commands to run
+        shellCommands: z.array(z.string()).optional(), // Raw shell commands
+        maxAttempts: z.number().default(2),
+        retryAfterRecovery: z.boolean().default(true),
+      })).optional(),
+      // Fallback strategy when no pattern matches
+      fallbackStrategy: z.enum(['create_fix_task', 'skip', 'escalate']).default('create_fix_task'),
+    }).optional(),
+
+    // NEW: Verification configuration for post-task validation
+    verification: z.object({
+      // Expected services to exist after completion
+      expectedServices: z.array(z.string()).optional(),
+      // CLI commands to run for verification
+      cliCommands: z.array(z.string()).optional(),
+      // Expected files to exist
+      expectedFiles: z.array(z.string()).optional(),
+      // Health checks to run
+      healthChecks: z.array(z.object({
+        type: z.enum(['http', 'cli', 'file', 'service']),
+        target: z.string(),
+        expectedStatus: z.string().optional(),
+        timeout: z.number().optional(),
+      })).optional(),
+    }).optional(),
   });
 }
 

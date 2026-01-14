@@ -21,7 +21,7 @@ import {
   TokenBreakdown,
 } from '../metrics/types';
 import { PrdSetMetrics } from '../metrics/prd-set';
-import { BuildMetrics, BuildMetricsData } from '../metrics/build';
+import { BuildMetrics, BuildMetricsData, MODEL_PRICING } from '../metrics/build';
 import { ObservationAnalyzer } from '../analysis/observation-analyzer';
 import { getEventStream } from '../utils/event-stream';
 import { logger } from '../utils/logger';
@@ -191,6 +191,73 @@ export interface BuildReport {
       inputOutputRatio: number;
     };
   };
+
+  // NEW: Session management metrics
+  sessionManagement?: {
+    sessionId: string;
+    reuseCount: number;
+    newSessionCreations: number;
+    workspaceIndexingEvents: number;
+    avgCallsPerSession: number;
+  };
+
+  // NEW: Codebase analysis metrics
+  codebaseAnalysis?: {
+    framework: string;
+    filesAnalyzed: number;
+    patternsDetected: number;
+    schemaPatterns: string[];
+    testPatterns: string[];
+    cacheHit: boolean;
+    analysisTimeMs: number;
+    contextSizeChars: number;
+  };
+
+  // NEW: Individual AI call details
+  aiCallDetails?: Array<{
+    id: string;
+    component: string;
+    purpose: string;
+    promptSummary: string;
+    responseSummary: string;
+    durationMs: number;
+    tokensIn: number;
+    tokensOut: number;
+    success: boolean;
+    timestamp: string;
+    phase?: string;
+    model?: string;
+    impact?: {
+      schemasGenerated?: string[];
+      testsPlanned?: string[];
+      clarificationsResolved?: string[];
+      filesImpacted?: string[];
+    };
+  }>;
+
+  // NEW: Build comparison data
+  buildComparison?: {
+    current: {
+      durationMs: number;
+      aiCalls: number;
+      tokensUsed: number;
+      estimatedCost: number;
+    };
+    previousBuilds: Array<{
+      buildId: string;
+      timestamp: string;
+      metrics: {
+        durationMs: number;
+        aiCalls: number;
+        tokensUsed: number;
+        estimatedCost: number;
+        executabilityScore: number;
+      };
+    }>;
+  };
+
+  // NEW: AI time breakdown by phase
+  aiTimeByPhase?: Record<string, number>;
 }
 
 export class PrdReportGenerator {
@@ -1070,6 +1137,46 @@ export class PrdReportGenerator {
       delete report.enhancedMetrics;
     }
 
+    // NEW: Include AI call details if available
+    if (metrics.aiCallDetails && metrics.aiCallDetails.length > 0) {
+      report.aiCallDetails = metrics.aiCallDetails;
+    }
+
+    // NEW: Include session management metrics if available
+    if (metrics.sessionManagement) {
+      report.sessionManagement = metrics.sessionManagement;
+    }
+
+    // NEW: Include codebase analysis metrics if available
+    if (metrics.codebaseAnalysis) {
+      report.codebaseAnalysis = metrics.codebaseAnalysis;
+    }
+
+    // NEW: Include AI time by phase
+    if (metrics.aiTimeByPhase) {
+      report.aiTimeByPhase = metrics.aiTimeByPhase;
+    }
+
+    // NEW: Include build comparison data if source file is available
+    if (metrics.sourceFile) {
+      const previousBuilds = this.buildMetrics.getPreviousBuilds(metrics.sourceFile, 5);
+      if (previousBuilds.length > 0) {
+        report.buildComparison = {
+          current: {
+            durationMs: metrics.duration || 0,
+            aiCalls: metrics.aiCalls.total,
+            tokensUsed: metrics.tokens.totalInput + metrics.tokens.totalOutput,
+            estimatedCost: metrics.tokens.estimatedCost || 0,
+          },
+          previousBuilds: previousBuilds.map(pb => ({
+            buildId: pb.buildId,
+            timestamp: pb.timestamp,
+            metrics: pb.metrics,
+          })),
+        };
+      }
+    }
+
     return report;
   }
 
@@ -1261,6 +1368,158 @@ export class PrdReportGenerator {
         md += `| Tokens per Phase | ${te.tokensPerPhase.toFixed(0)} |\n`;
         md += `| Input/Output Ratio | ${te.inputOutputRatio.toFixed(2)} |\n`;
         md += `\n`;
+      }
+    }
+
+    // NEW: Session Management section
+    if (report.sessionManagement) {
+      const sm = report.sessionManagement;
+      md += `## Session Management\n\n`;
+      md += `| Metric | Value |\n`;
+      md += `|--------|-------|\n`;
+      md += `| Session ID | ${sm.sessionId} |\n`;
+      md += `| Session Reuse Count | ${sm.reuseCount} |\n`;
+      md += `| New Session Creations | ${sm.newSessionCreations} |\n`;
+      md += `| Avg Calls per Session | ${sm.avgCallsPerSession.toFixed(1)} |\n`;
+      md += `\n`;
+    }
+
+    // NEW: Codebase Analysis section
+    if (report.codebaseAnalysis) {
+      const ca = report.codebaseAnalysis;
+      md += `## Codebase Analysis\n\n`;
+      md += `| Metric | Value |\n`;
+      md += `|--------|-------|\n`;
+      md += `| Framework | ${ca.framework} |\n`;
+      md += `| Files Analyzed | ${ca.filesAnalyzed}${ca.cacheHit ? ' (cache hit)' : ''} |\n`;
+      md += `| Patterns Detected | ${ca.patternsDetected} |\n`;
+      md += `| Context Size | ${ca.contextSizeChars.toLocaleString()} chars |\n`;
+      md += `| Analysis Time | ${ca.analysisTimeMs}ms |\n`;
+      md += `\n`;
+
+      if (ca.schemaPatterns && ca.schemaPatterns.length > 0) {
+        md += `### Schema Patterns\n\n`;
+        for (const pattern of ca.schemaPatterns) {
+          md += `- ${pattern}\n`;
+        }
+        md += `\n`;
+      }
+
+      if (ca.testPatterns && ca.testPatterns.length > 0) {
+        md += `### Test Patterns\n\n`;
+        for (const pattern of ca.testPatterns) {
+          md += `- ${pattern}\n`;
+        }
+        md += `\n`;
+      }
+    }
+
+    // NEW: AI Call Details section
+    if (report.aiCallDetails && report.aiCallDetails.length > 0) {
+      const calls = report.aiCallDetails;
+      md += `## AI Call Details\n\n`;
+      md += `| # | Component | Purpose | Duration | Tokens | Impact |\n`;
+      md += `|---|-----------|---------|----------|--------|--------|\n`;
+      
+      calls.forEach((call, index: number) => {
+        const impact = call.impact 
+          ? Object.entries(call.impact)
+              .filter(([_, v]) => v && (v as string[]).length > 0)
+              .map(([k, v]) => `${(v as string[]).length} ${k}`)
+              .join(', ') || '-'
+          : '-';
+        md += `| ${index + 1} | ${call.component} | ${call.purpose.substring(0, 40)}${call.purpose.length > 40 ? '...' : ''} | ${(call.durationMs / 1000).toFixed(1)}s | ${call.tokensIn + call.tokensOut} | ${impact} |\n`;
+      });
+      md += `\n`;
+
+      // Summary
+      const totalSchemas = calls.reduce((sum: number, c) => sum + (c.impact?.schemasGenerated?.length || 0), 0);
+      const totalTests = calls.reduce((sum: number, c) => sum + (c.impact?.testsPlanned?.length || 0), 0);
+      const totalFiles = calls.reduce((sum: number, c) => sum + (c.impact?.filesImpacted?.length || 0), 0);
+      
+      if (totalSchemas > 0 || totalTests > 0 || totalFiles > 0) {
+        md += `### AI Call Impact Summary\n\n`;
+        if (totalSchemas > 0) md += `- Schemas Generated: ${totalSchemas}\n`;
+        if (totalTests > 0) md += `- Test Plans Created: ${totalTests}\n`;
+        if (totalFiles > 0) md += `- Files Impacted: ${totalFiles}\n`;
+        md += `\n`;
+      }
+
+      // Cost Analysis section
+      md += `## Cost Analysis\n\n`;
+      md += `### Cost by Phase\n\n`;
+      md += `| Phase | Calls | Tokens | Cost | Avg Cost/Call |\n`;
+      md += `|-------|-------|--------|------|---------------|\n`;
+
+      // Group by phase
+      const byPhase = new Map<string, { calls: number; tokens: number; cost: number }>();
+      for (const call of calls) {
+        const phase = call.phase || 'unknown';
+        const pricing = MODEL_PRICING[call.model || 'default'] || MODEL_PRICING['default'];
+        const cost = (call.tokensIn / 1000 * pricing.input) + (call.tokensOut / 1000 * pricing.output);
+
+        const existing = byPhase.get(phase) || { calls: 0, tokens: 0, cost: 0 };
+        existing.calls++;
+        existing.tokens += call.tokensIn + call.tokensOut;
+        existing.cost += cost;
+        byPhase.set(phase, existing);
+      }
+
+      for (const [phase, data] of byPhase) {
+        md += `| ${phase} | ${data.calls} | ${data.tokens.toLocaleString()} | $${data.cost.toFixed(4)} | $${(data.cost / data.calls).toFixed(4)} |\n`;
+      }
+      md += `\n`;
+
+      // Optimization suggestions
+      md += `### Optimization Suggestions\n\n`;
+      const totalCost = Array.from(byPhase.values()).reduce((s, d) => s + d.cost, 0);
+      if (totalCost > 0.10) {
+        md += `- Consider using faster models (haiku/gpt-4o-mini) for ambiguity analysis\n`;
+      }
+      if (calls.length > 5) {
+        md += `- Batch mode could reduce API calls (currently ${calls.length} calls)\n`;
+      }
+      if (calls.length <= 5 && totalCost <= 0.10) {
+        md += `- Current build is cost-efficient\n`;
+      }
+      md += `\n`;
+    }
+
+    // Build Comparison section
+    if (report.buildComparison && report.buildComparison.previousBuilds.length > 0) {
+      md += `## Build Comparison\n\n`;
+      md += `| Metric | Current | Previous | Change |\n`;
+      md += `|--------|---------|----------|--------|\n`;
+
+      const prev = report.buildComparison.previousBuilds[report.buildComparison.previousBuilds.length - 1];
+      const curr = report.buildComparison.current;
+
+      const pctChange = (c: number, p: number) => {
+        if (p === 0) return 'N/A';
+        const pct = ((c - p) / p * 100).toFixed(0);
+        return c < p ? `${pct}%` : `+${pct}%`;
+      };
+
+      md += `| Duration | ${(curr.durationMs / 60000).toFixed(1)}m | ${(prev.metrics.durationMs / 60000).toFixed(1)}m | ${pctChange(curr.durationMs, prev.metrics.durationMs)} |\n`;
+      md += `| AI Calls | ${curr.aiCalls} | ${prev.metrics.aiCalls} | ${pctChange(curr.aiCalls, prev.metrics.aiCalls)} |\n`;
+      md += `| Tokens | ${curr.tokensUsed.toLocaleString()} | ${prev.metrics.tokensUsed.toLocaleString()} | ${pctChange(curr.tokensUsed, prev.metrics.tokensUsed)} |\n`;
+      md += `| Cost | $${curr.estimatedCost.toFixed(4)} | $${prev.metrics.estimatedCost.toFixed(4)} | ${pctChange(curr.estimatedCost, prev.metrics.estimatedCost)} |\n`;
+      md += `\n`;
+
+      // Trend analysis
+      if (report.buildComparison.previousBuilds.length >= 2) {
+        const costs = report.buildComparison.previousBuilds.map(b => b.metrics.estimatedCost);
+        costs.push(curr.estimatedCost);
+        const improving = costs.every((c, i) => i === 0 || c <= costs[i - 1]);
+        const degrading = costs.every((c, i) => i === 0 || c >= costs[i - 1]);
+        
+        if (improving) {
+          md += `**Trend**: Improving (${report.buildComparison.previousBuilds.length + 1} consecutive builds with reduced or stable cost)\n\n`;
+        } else if (degrading) {
+          md += `**Trend**: Degrading (${report.buildComparison.previousBuilds.length + 1} consecutive builds with increasing cost)\n\n`;
+        } else {
+          md += `**Trend**: Variable (costs fluctuating between builds)\n\n`;
+        }
       }
     }
 
@@ -1502,6 +1761,7 @@ export class PrdReportGenerator {
       }));
 
       // Read each phase file to get task counts
+      // For PRD sets with split phases, tasks are under requirements.phases[0].tasks
       for (const phase of phases) {
         if (!phase.file) continue;
         const phasePath = path.join(prdSetDir, phase.file);
@@ -1512,7 +1772,19 @@ export class PrdReportGenerator {
             if (phaseParts.length >= 2) {
               const phaseFrontmatter = phaseParts[1];
               const phaseParsed = yaml.load(phaseFrontmatter);
-              phase.taskCount = phaseParsed?.requirements?.tasks?.length || 0;
+              // Tasks are nested under requirements.phases[0].tasks for split PRDs
+              const phaseRequirements = phaseParsed?.requirements?.phases;
+              if (phaseRequirements && Array.isArray(phaseRequirements) && phaseRequirements.length > 0) {
+                // Aggregate tasks from all phases in the phase file (usually just one)
+                let taskCount = 0;
+                for (const phaseReq of phaseRequirements) {
+                  taskCount += phaseReq?.tasks?.length || 0;
+                }
+                phase.taskCount = taskCount;
+              } else {
+                // Fallback: check for tasks directly under requirements
+                phase.taskCount = phaseParsed?.requirements?.tasks?.length || 0;
+              }
             }
           } catch {
             // Could not parse phase file

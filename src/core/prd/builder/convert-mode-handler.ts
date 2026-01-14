@@ -185,7 +185,20 @@ export class ConvertModeHandler {
       logger.debug('[ConvertModeHandler] Analyzing codebase');
       const analysisStart = Date.now();
       codebaseAnalysis = await this.codebaseAnalyzer.analyze('convert', parsedDoc.title);
-      buildMetrics.recordTiming('codebaseAnalysisMs', Date.now() - analysisStart);
+      const analysisTimeMs = Date.now() - analysisStart;
+      buildMetrics.recordTiming('codebaseAnalysisMs', analysisTimeMs);
+
+      // Record codebase analysis metrics for enhanced reporting
+      buildMetrics.recordCodebaseAnalysis({
+        framework: codebaseAnalysis.framework || 'unknown',
+        filesAnalyzed: codebaseAnalysis.relevantFiles?.length || 0,
+        patternsDetected: codebaseAnalysis.patterns?.length || 0,
+        schemaPatterns: codebaseAnalysis.schemaPatterns?.map(p => p.pattern) || [],
+        testPatterns: codebaseAnalysis.testPatterns?.map(p => p.framework) || [],
+        cacheHit: analysisTimeMs < 100, // Assume cache hit if very fast
+        analysisTimeMs,
+        contextSizeChars: codebaseAnalysis.codebaseContext?.length || 0,
+      });
     }
 
     // 3. Detect feature types

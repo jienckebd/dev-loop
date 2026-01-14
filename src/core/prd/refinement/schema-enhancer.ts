@@ -52,16 +52,7 @@ export interface SchemaEnhancerConfig {
   debug?: boolean;
   /**
    * Whether @codebase tag is being used for AI calls.
-   * When true, prompts will be minimal since Cursor provides indexed context.
-   * When false, full codebase context is included in prompts.
-   * 
-   * Default behavior:
-   * - For Cursor provider: true (uses Cursor's indexed codebase)
-   * - For API providers (Anthropic, OpenAI, etc.): false (include full context)
-   * 
-   * This can be explicitly set to override the default behavior.
    */
-  useCodebaseTag?: boolean;
 }
 
 /**
@@ -400,6 +391,10 @@ export class SchemaEnhancer {
         maxTokens: 2000,
         temperature: 0.3,
         systemPrompt: 'You are an expert at refining schema definitions based on codebase patterns.',
+      }, {
+        purpose: `Refine ${schema.type} schema using ${pattern.pattern} pattern`,
+        phase: 'schema-enhancement',
+        expectedImpact: `Updated schema for ${schema.type}`,
       });
 
       // Parse refined schema content (create minimal task-like object for parsing)
@@ -763,6 +758,10 @@ export class SchemaEnhancer {
         maxTokens: 8000, // Higher token limit for batch
         temperature: 0.3,
         systemPrompt: 'You are an expert at generating multiple schema definitions based on requirements and codebase patterns. Generate all schemas in the batch, separating each with clear markers.',
+      }, {
+        purpose: `Generate batch of ${needs.length} ${type} schemas`,
+        phase: 'schema-enhancement',
+        expectedImpact: `${needs.length} schema definitions`,
       });
 
       // Parse batch response
@@ -845,6 +844,10 @@ export class SchemaEnhancer {
           maxTokens: 2000,
           temperature: 0.3, // Lower temperature for more deterministic schema generation
           systemPrompt: 'You are an expert at generating schema definitions based on requirements and codebase patterns.',
+        }, {
+          purpose: `Generate ${need.type} schema for ${need.task.title || need.task.id}`,
+          phase: 'schema-enhancement',
+          expectedImpact: `Schema definition for ${need.type}`,
         });
 
         // Parse AI response to extract schema definition
@@ -902,76 +905,55 @@ export class SchemaEnhancer {
     parts.push(`Schema Type: ${need.type}`);
     parts.push('');
 
-    // Determine if we should include verbose codebase context
-    // When @codebase tag is used (Cursor provider), prompts can be minimal
-    // For API providers (Anthropic, OpenAI, etc.), always include full context
-    const isCursorProvider = this.config.aiProvider.name === 'cursor';
-    const useCodebaseTag = this.config.useCodebaseTag ?? isCursorProvider; // Default: true only for Cursor
+    // Always include full codebase context for all AI providers
+    // Dev-loop's CodebaseAnalyzer provides consistent context across all providers
     
-    // Framework context - always useful as a brief hint
+    // Framework context - always included
     if (this.config.codebaseAnalysis.frameworkPlugin) {
       parts.push('## Framework');
       parts.push(`Framework: ${this.config.codebaseAnalysis.frameworkPlugin.name}`);
-      // Only include description if not using @codebase (Cursor already knows this)
-      if (!useCodebaseTag) {
-        parts.push(`Description: ${this.config.codebaseAnalysis.frameworkPlugin.description}`);
+      parts.push(`Description: ${this.config.codebaseAnalysis.frameworkPlugin.description}`);
+      parts.push('');
+    }
+
+    // Full context - extracted schema patterns from existing schema files
+    if (schemaContext?.schemaPatterns && schemaContext.schemaPatterns.length > 0) {
+      parts.push('## Extracted Schema Patterns (Follow These Structures)');
+      for (const extractedPattern of schemaContext.schemaPatterns.slice(0, 5)) {
+        parts.push(`- Pattern: ${extractedPattern.pattern}`);
+        parts.push(`  File: ${path.basename(extractedPattern.file)}`);
+        if (extractedPattern.examples && extractedPattern.examples.length > 0) {
+          parts.push(`  Structure: ${extractedPattern.examples[0].substring(0, 200)}${extractedPattern.examples[0].length > 200 ? '...' : ''}`);
+        }
+      }
+      if (schemaContext.schemaPatterns.length > 5) {
+        parts.push(`... and ${schemaContext.schemaPatterns.length - 5} more patterns`);
+      }
+      parts.push('');
+      parts.push('**IMPORTANT**: Follow these existing schema structures when generating new schemas.');
+      parts.push('');
+    }
+
+    // File contexts for reference
+    if (schemaContext?.fileContexts && schemaContext.fileContexts.size > 0) {
+      parts.push('## Example Schema Files (Reference for Structure)');
+      let fileCount = 0;
+      for (const [filePath, fileContext] of schemaContext.fileContexts.entries()) {
+        if (fileCount >= 3) break;
+        parts.push(`- ${path.basename(filePath)}`);
+        if (fileContext.skeleton) {
+          parts.push(`  Structure: ${fileContext.skeleton.substring(0, 200)}${fileContext.skeleton.length > 200 ? '...' : ''}`);
+        }
+        fileCount++;
       }
       parts.push('');
     }
 
-    // When using @codebase, include only essential pattern hints
-    // Cursor's indexed codebase will provide full examples
-    if (useCodebaseTag) {
-      // Minimal hint: just mention pattern types to look for
-      if (schemaContext?.schemaPatterns && schemaContext.schemaPatterns.length > 0) {
-        parts.push('## Schema Patterns');
-        parts.push('Follow existing schema patterns in the codebase. Key patterns:');
-        for (const extractedPattern of schemaContext.schemaPatterns.slice(0, 2)) {
-          parts.push(`- ${extractedPattern.pattern} (see ${path.basename(extractedPattern.file)})`);
-        }
-        parts.push('');
-      }
-    } else {
-      // Full context when @codebase is not available
-      // Extracted schema patterns from existing schema files
-      if (schemaContext?.schemaPatterns && schemaContext.schemaPatterns.length > 0) {
-        parts.push('## Extracted Schema Patterns (Follow These Structures)');
-        for (const extractedPattern of schemaContext.schemaPatterns.slice(0, 5)) {
-          parts.push(`- Pattern: ${extractedPattern.pattern}`);
-          parts.push(`  File: ${path.basename(extractedPattern.file)}`);
-          if (extractedPattern.examples && extractedPattern.examples.length > 0) {
-            parts.push(`  Structure: ${extractedPattern.examples[0].substring(0, 200)}${extractedPattern.examples[0].length > 200 ? '...' : ''}`);
-          }
-        }
-        if (schemaContext.schemaPatterns.length > 5) {
-          parts.push(`... and ${schemaContext.schemaPatterns.length - 5} more patterns`);
-        }
-        parts.push('');
-        parts.push('**IMPORTANT**: Follow these existing schema structures when generating new schemas.');
-        parts.push('');
-      }
-
-      // File contexts for reference
-      if (schemaContext?.fileContexts && schemaContext.fileContexts.size > 0) {
-        parts.push('## Example Schema Files (Reference for Structure)');
-        let fileCount = 0;
-        for (const [filePath, fileContext] of schemaContext.fileContexts.entries()) {
-          if (fileCount >= 3) break;
-          parts.push(`- ${path.basename(filePath)}`);
-          if (fileContext.skeleton) {
-            parts.push(`  Structure: ${fileContext.skeleton.substring(0, 200)}${fileContext.skeleton.length > 200 ? '...' : ''}`);
-          }
-          fileCount++;
-        }
-        parts.push('');
-      }
-
-      // Codebase context summary - only when @codebase not available
-      if (this.config.codebaseAnalysis.codebaseContext) {
-        parts.push('## Codebase Context');
-        parts.push(this.config.codebaseAnalysis.codebaseContext.substring(0, 2000)); // Limit context size
-        parts.push('');
-      }
+    // Codebase context summary
+    if (this.config.codebaseAnalysis.codebaseContext) {
+      parts.push('## Codebase Context');
+      parts.push(this.config.codebaseAnalysis.codebaseContext.substring(0, 2000)); // Limit context size
+      parts.push('');
     }
 
     // Codebase patterns context - brief reference for both modes

@@ -29,6 +29,13 @@ let globalChatOpener: CursorChatOpener | null = null;
 let globalChatOpenerConfig: CursorChatOpenerConfig | null = null;
 
 /**
+ * Session metrics tracking for reporting
+ */
+let sessionReuseCount = 0;
+let sessionCreationCount = 0;
+let currentSessionId = 'default-session';
+
+/**
  * Get or create singleton CursorChatOpener
  * Compares config to determine if a new opener is needed
  */
@@ -43,11 +50,40 @@ function getGlobalChatOpener(config: CursorChatOpenerConfig): CursorChatOpener {
     logger.debug('[CursorProvider] Creating new singleton CursorChatOpener');
     globalChatOpener = new CursorChatOpener(config);
     globalChatOpenerConfig = { ...config };
+    sessionCreationCount++;
   } else {
     logger.debug('[CursorProvider] Reusing existing singleton CursorChatOpener');
+    sessionReuseCount++;
   }
 
   return globalChatOpener;
+}
+
+/**
+ * Get session management metrics for reporting
+ */
+export function getSessionMetrics(): {
+  sessionId: string;
+  reuseCount: number;
+  creationCount: number;
+  avgCallsPerSession: number;
+} {
+  const totalCalls = sessionReuseCount + sessionCreationCount;
+  return {
+    sessionId: currentSessionId,
+    reuseCount: sessionReuseCount,
+    creationCount: sessionCreationCount,
+    avgCallsPerSession: sessionCreationCount > 0 ? totalCalls / sessionCreationCount : 0,
+  };
+}
+
+/**
+ * Reset session metrics (for testing or new builds)
+ */
+export function resetSessionMetrics(): void {
+  sessionReuseCount = 0;
+  sessionCreationCount = 0;
+  currentSessionId = 'default-session';
 }
 
 /**
@@ -57,6 +93,21 @@ export function resetGlobalChatOpener(): void {
   globalChatOpener = null;
   globalChatOpenerConfig = null;
   logger.debug('[CursorProvider] Reset singleton CursorChatOpener');
+}
+
+/**
+ * Generate a session ID for PRD builds to enable chat continuity
+ * Sessions are scoped to PRD + phase to allow session reuse within related operations
+ */
+function getBuildSessionId(context?: { prdId?: string; phase?: string; taskId?: string }): string {
+  if (context?.prdId) {
+    const phaseId = context.phase || 'main';
+    return `prd-build-${context.prdId}-${phaseId}`;
+  }
+  if (context?.taskId) {
+    return `task-${context.taskId}`;
+  }
+  return `session-${Date.now()}`;
 }
 
 /**
@@ -93,11 +144,20 @@ export class CursorProvider implements AIProvider {
   public name = 'cursor';
   private config: AIProviderConfig & { model?: string };
   private observationTracker: ObservationTracker;
+  private lastTokens: { input?: number; output?: number } = {};
 
   constructor(config: AIProviderConfig, observationTracker?: ObservationTracker) {
     this.config = config as any;
     // Create a default ObservationTracker if not provided
     this.observationTracker = observationTracker || new ObservationTracker();
+  }
+
+  /**
+   * Get last token usage from the most recent API call
+   * Cursor tracks tokens via ParallelMetrics, we estimate based on response length
+   */
+  public getLastTokens(): { input?: number; output?: number } {
+    return { ...this.lastTokens };
   }
 
   async generateCode(prompt: string, context: TaskContext): Promise<CodeChanges> {
@@ -719,7 +779,12 @@ export class CursorProvider implements AIProvider {
    * Generate text without expecting JSON CodeChanges format
    * Used for PRD building (schemas, test plans, etc.) where plain text output is expected
    */
-  async generateText(prompt: string, options?: { maxTokens?: number; temperature?: number; systemPrompt?: string }): Promise<string> {
+  async generateText(prompt: string, options?: { 
+    maxTokens?: number; 
+    temperature?: number; 
+    systemPrompt?: string;
+    sessionContext?: { prdId?: string; phase?: string; taskId?: string };
+  }): Promise<string> {
     const model = (this.config as any).model || 'auto';
     const cursorConfig = (this.config as any).cursor || {};
     const agentsConfig = cursorConfig.agents || {};
@@ -730,7 +795,13 @@ export class CursorProvider implements AIProvider {
       ? `${options.systemPrompt}\n\n${prompt}`
       : prompt;
 
-    const chatOpener = new CursorChatOpener({
+    // Generate session ID for chat continuity within related operations
+    const sessionId = getBuildSessionId(options?.sessionContext);
+
+    // Use singleton CursorChatOpener for session persistence
+    // This avoids creating a new opener for each AI call, allowing
+    // session/chat reuse and avoiding workspace re-indexing overhead
+    const chatOpener = getGlobalChatOpener({
       useBackgroundAgent: true,
       agentOutputFormat: 'text',  // Request text output, not JSON
       openStrategy: 'agent',
@@ -746,10 +817,15 @@ export class CursorProvider implements AIProvider {
       mode: 'Ask' as const,
       status: 'pending' as const,
       createdAt: new Date().toISOString(),
-      context: { taskId: 'text-generation' },
+      context: { 
+        taskId: options?.sessionContext?.taskId || 'text-generation',
+        sessionId,
+        prdId: options?.sessionContext?.prdId,
+        phase: options?.sessionContext?.phase,
+      },
     };
 
-    logger.info(`[CursorProvider] generateText: Using background agent for text generation`);
+    logger.info(`[CursorProvider] generateText: Using background agent for text generation (session: ${sessionId})`);
 
     const startTime = Date.now();
     const buildMetrics = getBuildMetrics();
@@ -772,29 +848,26 @@ export class CursorProvider implements AIProvider {
           text = JSON.stringify(result.response);
         }
         
-        // Record successful AI call to build metrics
-        if (hasBuild) {
-          buildMetrics.recordAICall('cursor-generateText', true, durationMs, {
-            input: fullPrompt.length,
-            output: text.length,
-          });
-        }
+        // Store token counts for getLastTokens()
+        this.lastTokens = {
+          input: fullPrompt.length,
+          output: text.length,
+        };
+        
+        // Note: We don't record metrics here anymore - TextGenerationAdapter will do it
+        // with proper context when available. This avoids double-recording.
         
         logger.info(`[CursorProvider] generateText: Successfully received text response (${text.length} chars)`);
         return text;
       }
 
-      // Record failed AI call
-      if (hasBuild) {
-        buildMetrics.recordAICall('cursor-generateText', false, durationMs);
-      }
+      // Clear token data on failure
+      this.lastTokens = {};
 
       throw new Error(`Text generation failed: ${result.message || 'No response'}`);
     } catch (error) {
-      const durationMs = Date.now() - startTime;
-      if (hasBuild) {
-        buildMetrics.recordAICall('cursor-generateText', false, durationMs);
-      }
+      // Clear token data on error
+      this.lastTokens = {};
       throw error;
     }
   }

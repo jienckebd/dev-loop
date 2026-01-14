@@ -72,18 +72,6 @@ export interface TestPlannerConfig {
   promptSelector: PromptSelector;
   testGenerator?: TestGenerator; // Optional: leverage existing TestGenerator
   debug?: boolean;
-  /**
-   * Whether @codebase tag is being used for AI calls.
-   * When true, prompts will be minimal since Cursor provides indexed context.
-   * When false, full codebase context is included in prompts.
-   * 
-   * Default behavior:
-   * - For Cursor provider: true (uses Cursor's indexed codebase)
-   * - For API providers (Anthropic, OpenAI, etc.): false (include full context)
-   * 
-   * This can be explicitly set to override the default behavior.
-   */
-  useCodebaseTag?: boolean;
 }
 
 /**
@@ -296,6 +284,10 @@ export class TestPlanner {
           maxTokens: 6000, // More tokens for batch response
           temperature: 0.4,
           systemPrompt: 'You are an expert at generating test plans. Generate test cases for ALL tasks provided.',
+        }, {
+          purpose: `Generate batch test plans for ${tasks.length} tasks`,
+          phase: 'test-planning',
+          expectedImpact: `Test plans for ${tasks.length} tasks`,
         });
 
         if (!response || response.trim().length < 50) {
@@ -790,6 +782,10 @@ export class TestPlanner {
         maxTokens: 3000,
         temperature: 0.4,
         systemPrompt: 'You are an expert at refining test plans based on codebase patterns.',
+      }, {
+        purpose: `Refine test plan using ${pattern.pattern || 'codebase'} patterns`,
+        phase: 'test-planning',
+        expectedImpact: 'Refined test specifications',
       });
 
       // Parse refined test cases (pass a ParsedTask-like object)
@@ -987,6 +983,10 @@ export class TestPlanner {
           maxTokens: 3000,
           temperature: 0.4,
           systemPrompt: 'You are an expert at generating test plans and test cases for software requirements.',
+        }, {
+          purpose: `Generate test cases for task: ${task.title || task.id}`,
+          phase: 'test-planning',
+          expectedImpact: `Test cases for ${task.title || task.id}`,
         });
 
         // Parse AI response to extract test cases
@@ -1040,94 +1040,70 @@ export class TestPlanner {
       parts.push('');
     }
 
-    // Determine if we should include verbose context
-    // When @codebase tag is used (Cursor provider), prompts can be minimal
-    // For API providers (Anthropic, OpenAI, etc.), always include full context
-    const isCursorProvider = this.config.aiProvider.name === 'cursor';
-    const useCodebaseTag = this.config.useCodebaseTag ?? isCursorProvider; // Default: true only for Cursor
+    // Always include full codebase context for all AI providers
+    // Dev-loop's CodebaseAnalyzer provides consistent context across all providers
 
-    // Framework context - always useful as a brief hint
+    // Framework context - always included
     if (this.config.codebaseAnalysis.frameworkPlugin) {
       parts.push('## Framework');
       parts.push(`Framework: ${this.config.codebaseAnalysis.frameworkPlugin.name}`);
       parts.push('');
     }
 
-    if (useCodebaseTag) {
-      // Minimal context when @codebase is available
-      // Just hint at what to look for, Cursor's index provides the rest
-      if (testContext?.helperMethods && testContext.helperMethods.length > 0) {
-        parts.push('## Helper Methods');
-        parts.push('Use existing helper methods from the test suite. Key helpers:');
-        for (const method of testContext.helperMethods.slice(0, 3)) {
-          parts.push(`- ${method}`);
-        }
-        parts.push('');
+    // Full context - helper methods from existing test files
+    if (testContext?.helperMethods && testContext.helperMethods.length > 0) {
+      parts.push('## Available Helper Methods (Use These in Tests)');
+      for (const method of testContext.helperMethods.slice(0, 10)) {
+        parts.push(`- ${method}`);
       }
+      if (testContext.helperMethods.length > 10) {
+        parts.push(`... and ${testContext.helperMethods.length - 10} more`);
+      }
+      parts.push('');
+      parts.push('**IMPORTANT**: Use these existing helper methods in generated test cases. Do not create duplicate helper methods.');
+      parts.push('');
+    }
 
-      if (this.config.codebaseAnalysis.testPatterns && this.config.codebaseAnalysis.testPatterns.length > 0) {
-        parts.push('## Test Patterns');
-        parts.push('Follow existing test patterns in the codebase. Framework:');
-        parts.push(`- ${this.config.codebaseAnalysis.testPatterns[0].framework}`);
-        parts.push('');
+    // Test patterns from existing test files
+    if (testContext?.testPatterns && testContext.testPatterns.length > 0) {
+      parts.push('## Existing Test Patterns (Follow These Structures)');
+      for (const pattern of testContext.testPatterns.slice(0, 5)) {
+        parts.push(`- ${pattern.name}`);
+        parts.push(`  Structure: ${pattern.structure}`);
+        parts.push(`  Location: Line ${pattern.lineNumber}`);
       }
-    } else {
-      // Full context when @codebase is not available
-      // Helper methods from existing test files
-      if (testContext?.helperMethods && testContext.helperMethods.length > 0) {
-        parts.push('## Available Helper Methods (Use These in Tests)');
-        for (const method of testContext.helperMethods.slice(0, 10)) {
-          parts.push(`- ${method}`);
-        }
-        if (testContext.helperMethods.length > 10) {
-          parts.push(`... and ${testContext.helperMethods.length - 10} more`);
-        }
-        parts.push('');
-        parts.push('**IMPORTANT**: Use these existing helper methods in generated test cases. Do not create duplicate helper methods.');
-        parts.push('');
+      if (testContext.testPatterns.length > 5) {
+        parts.push(`... and ${testContext.testPatterns.length - 5} more patterns`);
       }
+      parts.push('');
+    }
 
-      // Test patterns from existing test files
-      if (testContext?.testPatterns && testContext.testPatterns.length > 0) {
-        parts.push('## Existing Test Patterns (Follow These Structures)');
-        for (const pattern of testContext.testPatterns.slice(0, 5)) {
-          parts.push(`- ${pattern.name}`);
-          parts.push(`  Structure: ${pattern.structure}`);
-          parts.push(`  Location: Line ${pattern.lineNumber}`);
-        }
-        if (testContext.testPatterns.length > 5) {
-          parts.push(`... and ${testContext.testPatterns.length - 5} more patterns`);
+    // Test patterns from codebase analysis
+    if (this.config.codebaseAnalysis.testPatterns && this.config.codebaseAnalysis.testPatterns.length > 0) {
+      parts.push('## Detected Test Framework Patterns');
+      for (const pattern of this.config.codebaseAnalysis.testPatterns.slice(0, 3)) {
+        parts.push(`- Framework: ${pattern.framework}`);
+        parts.push(`  Structure: ${pattern.structure}`);
+        if (pattern.examples && pattern.examples.length > 0) {
+          parts.push(`  Example: ${pattern.examples[0]}`);
         }
         parts.push('');
       }
+    }
 
-      // Test patterns from codebase analysis
-      if (this.config.codebaseAnalysis.testPatterns && this.config.codebaseAnalysis.testPatterns.length > 0) {
-        parts.push('## Detected Test Framework Patterns');
-        for (const pattern of this.config.codebaseAnalysis.testPatterns.slice(0, 3)) {
-          parts.push(`- Framework: ${pattern.framework}`);
-          parts.push(`  Structure: ${pattern.structure}`);
-          if (pattern.examples && pattern.examples.length > 0) {
-            parts.push(`  Example: ${pattern.examples[0]}`);
-          }
-          parts.push('');
+    // File contexts for reference
+    if (testContext?.fileContexts && testContext.fileContexts.size > 0) {
+      parts.push('## Example Test Files (Reference for Structure)');
+      let fileCount = 0;
+      for (const [filePath, fileContext] of testContext.fileContexts.entries()) {
+        if (fileCount >= 3) break;
+        parts.push(`- ${path.basename(filePath)}`);
+        if (fileContext.skeleton) {
+          parts.push(`  Structure: ${fileContext.skeleton.substring(0, 200)}${fileContext.skeleton.length > 200 ? '...' : ''}`);
         }
+        fileCount++;
       }
-
-      // File contexts for reference
-      if (testContext?.fileContexts && testContext.fileContexts.size > 0) {
-        parts.push('## Example Test Files (Reference for Structure)');
-        let fileCount = 0;
-        for (const [filePath, fileContext] of testContext.fileContexts.entries()) {
-          if (fileCount >= 3) break;
-          parts.push(`- ${path.basename(filePath)}`);
-          if (fileContext.skeleton) {
-            parts.push(`  Structure: ${fileContext.skeleton.substring(0, 200)}${fileContext.skeleton.length > 200 ? '...' : ''}`);
-          }
-          fileCount++;
-        }
-        parts.push('');
-      }
+      parts.push('');
     }
 
     // Leverage existing TestGenerator templates if available

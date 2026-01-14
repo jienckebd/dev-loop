@@ -23,6 +23,7 @@ import { FileDiscoveryService } from '../../core/prd/builder/file-discovery-serv
 import { BuildMode } from '../../core/conversation/types';
 import { logger } from '../../core/utils/logger';
 import { killAllChildProcesses } from '../../providers/ai/cursor-chat-opener';
+import { getSessionMetrics, resetSessionMetrics } from '../../providers/ai/cursor';
 import { BuildMetrics, setBuildMetrics } from '../../core/metrics/build';
 import { PrdReportGenerator } from '../../core/reporting/prd-report-generator';
 
@@ -403,6 +404,22 @@ async function buildPrdSet(input: string | undefined, options: BuildPrdSetOption
     if (result.success) {
       spinner.succeed('PRD set built successfully');
 
+      // Record session metrics before finishing build
+      try {
+        const sessionMetrics = getSessionMetrics();
+        logger.debug(`[BuildPrdSet] Recording session metrics: reuse=${sessionMetrics.reuseCount}, creations=${sessionMetrics.creationCount}`);
+        buildMetrics.recordSessionMetrics({
+          sessionId: sessionMetrics.sessionId,
+          reuseCount: sessionMetrics.reuseCount,
+          newSessionCreations: sessionMetrics.creationCount,
+          workspaceIndexingEvents: 0, // Not tracked yet
+          avgCallsPerSession: sessionMetrics.avgCallsPerSession,
+        });
+      } catch (e) {
+        logger.debug(`[BuildPrdSet] Session metrics not available: ${e}`);
+        // Session metrics not available (non-Cursor provider)
+      }
+
       // Complete build metrics
       const buildResult = buildMetrics.finishBuild(
         'completed',
@@ -467,6 +484,23 @@ async function buildPrdSet(input: string | undefined, options: BuildPrdSetOption
           });
           console.log(chalk.cyan('Report:'), reportPath);
           console.log('');
+
+          // Save build comparison data for historical tracking
+          if (buildResult.sourceFile) {
+            buildMetrics.saveBuildComparison({
+              buildId: buildResult.buildId,
+              timestamp: buildResult.endTime || new Date().toISOString(),
+              sourceFile: buildResult.sourceFile,
+              prdSetId: buildResult.prdSetId,
+              metrics: {
+                durationMs: buildResult.duration || 0,
+                aiCalls: buildResult.aiCalls.total,
+                tokensUsed: buildResult.tokens.totalInput + buildResult.tokens.totalOutput,
+                estimatedCost: buildResult.tokens.estimatedCost || 0,
+                executabilityScore: buildResult.quality.executabilityScore,
+              },
+            });
+          }
         } catch (reportError) {
           if (debug) {
             logger.warn(`[BuildPrdSet] Failed to generate report: ${reportError}`);

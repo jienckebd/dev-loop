@@ -9,6 +9,7 @@ import {
   TechDebtIndicator,
   PrdConcept,
   PrdInferenceResult,
+  FrameworkCLICommand,
 } from '../interface';
 
 /**
@@ -563,6 +564,201 @@ ${forbiddenExamples}
       services: 'docroot/modules/share/*/*.services.yml',
       hooks: 'docroot/modules/share/*/*.module',
     };
+  }
+
+  // ===== CLI Commands (For Agentic Execution) =====
+
+  /**
+   * Get Drupal-specific CLI commands for agentic execution.
+   * These enable dev-loop to perform module management, cache operations,
+   * service verification, and other Drupal operations autonomously.
+   */
+  getCLICommands(): FrameworkCLICommand[] {
+    return [
+      // Module Management
+      {
+        name: 'module-enable',
+        command: 'ddev exec drush en {module} -y',
+        purpose: 'module-enable',
+        description: 'Enable a Drupal module',
+        placeholders: ['module'],
+        example: 'ddev exec drush en bd_cache_manager -y',
+        idempotent: true,
+        requiresConfirmation: false,
+        outputFormat: 'text',
+        timeout: 60000,
+      },
+      {
+        name: 'module-disable',
+        command: 'ddev exec drush pmu {module} -y',
+        purpose: 'module-disable',
+        description: 'Uninstall a Drupal module',
+        placeholders: ['module'],
+        example: 'ddev exec drush pmu bd_cache_manager -y',
+        idempotent: true,
+        requiresConfirmation: false,
+        outputFormat: 'text',
+        timeout: 60000,
+      },
+      {
+        name: 'module-list',
+        command: 'ddev exec drush pm:list --status=enabled --format=json',
+        purpose: 'code-check',
+        description: 'List all enabled modules',
+        idempotent: true,
+        requiresConfirmation: false,
+        outputFormat: 'json',
+        timeout: 30000,
+      },
+
+      // Cache Operations
+      {
+        name: 'cache-rebuild',
+        command: 'ddev exec drush cr',
+        purpose: 'cache-clear',
+        description: 'Rebuild all Drupal caches',
+        idempotent: true,
+        requiresConfirmation: false,
+        outputFormat: 'text',
+        timeout: 120000,
+      },
+
+      // Service Verification
+      {
+        name: 'service-exists',
+        command: 'ddev exec drush ev "echo \\Drupal::hasService(\'{service}\') ? \'EXISTS\' : \'NOT_FOUND\';"',
+        purpose: 'service-check',
+        description: 'Check if a service exists in the Drupal container',
+        placeholders: ['service'],
+        example: 'ddev exec drush ev "echo \\Drupal::hasService(\'bd.entity_type.builder\') ? \'EXISTS\' : \'NOT_FOUND\';"',
+        idempotent: true,
+        requiresConfirmation: false,
+        outputFormat: 'boolean',
+        timeout: 30000,
+      },
+
+      // Entity Type Verification
+      {
+        name: 'entity-type-exists',
+        command: 'ddev exec drush ev "echo \\Drupal::entityTypeManager()->hasDefinition(\'{entity_type}\') ? \'EXISTS\' : \'NOT_FOUND\';"',
+        purpose: 'entity-check',
+        description: 'Check if an entity type is defined',
+        placeholders: ['entity_type'],
+        example: 'ddev exec drush ev "echo \\Drupal::entityTypeManager()->hasDefinition(\'node\') ? \'EXISTS\' : \'NOT_FOUND\';"',
+        idempotent: true,
+        requiresConfirmation: false,
+        outputFormat: 'boolean',
+        timeout: 30000,
+      },
+
+      // Config Operations
+      {
+        name: 'config-get',
+        command: 'ddev exec drush cget {config_name} --format=yaml',
+        purpose: 'config-export',
+        description: 'Get a configuration value',
+        placeholders: ['config_name'],
+        example: 'ddev exec drush cget system.site --format=yaml',
+        idempotent: true,
+        requiresConfirmation: false,
+        outputFormat: 'yaml',
+        timeout: 30000,
+      },
+      {
+        name: 'config-set',
+        command: 'ddev exec drush cset {config_name} {key} {value} -y',
+        purpose: 'config-import',
+        description: 'Set a configuration value',
+        placeholders: ['config_name', 'key', 'value'],
+        idempotent: false,
+        requiresConfirmation: true,
+        outputFormat: 'text',
+        timeout: 30000,
+      },
+      {
+        name: 'config-export',
+        command: 'ddev exec drush cex -y',
+        purpose: 'config-export',
+        description: 'Export all configuration to files',
+        idempotent: true,
+        requiresConfirmation: false,
+        outputFormat: 'text',
+        timeout: 120000,
+      },
+      {
+        name: 'config-import',
+        command: 'ddev exec drush cim -y',
+        purpose: 'config-import',
+        description: 'Import configuration from files',
+        idempotent: false,
+        requiresConfirmation: true,
+        outputFormat: 'text',
+        timeout: 120000,
+      },
+
+      // Database Operations
+      {
+        name: 'sql-query',
+        command: 'ddev exec drush sqlq "{query}"',
+        purpose: 'database-query',
+        description: 'Run a SQL query',
+        placeholders: ['query'],
+        example: 'ddev exec drush sqlq "SELECT name FROM config LIMIT 5"',
+        idempotent: false,
+        requiresConfirmation: true,
+        outputFormat: 'text',
+        timeout: 60000,
+      },
+
+      // Health Checks
+      {
+        name: 'login-url',
+        command: 'ddev exec drush uli',
+        purpose: 'health-check',
+        description: 'Generate a one-time login URL',
+        idempotent: true,
+        requiresConfirmation: false,
+        outputFormat: 'text',
+        timeout: 30000,
+      },
+      {
+        name: 'status',
+        command: 'ddev exec drush status --format=json',
+        purpose: 'health-check',
+        description: 'Get Drupal status information',
+        idempotent: true,
+        requiresConfirmation: false,
+        outputFormat: 'json',
+        timeout: 30000,
+      },
+
+      // Code Generation / Scaffolding
+      {
+        name: 'generate-module',
+        command: 'ddev exec drush generate module --name="{name}" --machine-name={machine_name} --no-interaction',
+        purpose: 'scaffold',
+        description: 'Generate a new module scaffold',
+        placeholders: ['name', 'machine_name'],
+        example: 'ddev exec drush generate module --name="Cache Manager" --machine-name=bd_cache_manager --no-interaction',
+        idempotent: false,
+        requiresConfirmation: false,
+        outputFormat: 'text',
+        timeout: 60000,
+      },
+
+      // Testing
+      {
+        name: 'run-tests',
+        command: 'ddev exec drush test:run {test_class}',
+        purpose: 'test-run',
+        description: 'Run PHPUnit tests for a specific class',
+        placeholders: ['test_class'],
+        idempotent: true,
+        requiresConfirmation: false,
+        outputFormat: 'text',
+        timeout: 300000,
+      },
+    ];
   }
 
   // ===== PRD Content Analysis (For Spec-Kit Integration) =====

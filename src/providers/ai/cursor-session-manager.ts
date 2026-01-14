@@ -202,7 +202,7 @@ export class CursorSessionManager extends BaseSessionManager implements SessionM
       logger.debug(`[CursorSessionManager] Resumed session ${sessionId}`);
       return session;
     }
-    logger.warn(`[CursorSessionManager] Session ${sessionId} not found`);
+    logger.debug(`[CursorSessionManager] Session ${sessionId} not found (will create new session)`);
     return null;
   }
 

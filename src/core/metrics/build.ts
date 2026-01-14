@@ -11,6 +11,93 @@ import { logger } from '../utils/logger';
 import { getEventStream } from '../utils/event-stream';
 
 /**
+ * Individual AI call detail for reporting
+ */
+export interface AICallDetail {
+  id: string;
+  component: string;           // e.g., 'ambiguity-analyzer', 'schema-enhancer', 'test-planner'
+  purpose: string;             // e.g., 'Generate entity type schema for content_workflow'
+  promptSummary: string;       // First 200 chars of prompt
+  responseSummary: string;     // First 200 chars of response
+  durationMs: number;
+  tokensIn: number;
+  tokensOut: number;
+  success: boolean;
+  timestamp: string;
+  phase?: string;              // For timing attribution
+  model?: string;              // For cost calculation
+  impact?: {
+    schemasGenerated?: string[];
+    testsPlanned?: string[];
+    clarificationsResolved?: string[];
+    filesImpacted?: string[];
+  };
+}
+
+/**
+ * Model-specific pricing per 1000 tokens
+ */
+export const MODEL_PRICING: Record<string, { input: number; output: number }> = {
+  // Anthropic
+  'claude-sonnet-4-20250514': { input: 0.003, output: 0.015 },
+  'claude-3-5-sonnet-latest': { input: 0.003, output: 0.015 },
+  'claude-3-5-haiku-latest': { input: 0.0008, output: 0.004 },
+  // OpenAI
+  'gpt-4o': { input: 0.005, output: 0.015 },
+  'gpt-4o-mini': { input: 0.00015, output: 0.0006 },
+  // Gemini
+  'gemini-2.0-flash': { input: 0.0001, output: 0.0004 },
+  'gemini-1.5-pro': { input: 0.00125, output: 0.005 },
+  // Cursor (uses Claude pricing as proxy)
+  'cursor': { input: 0.003, output: 0.015 },
+  'auto': { input: 0.003, output: 0.015 },
+  // Default fallback
+  'default': { input: 0.01, output: 0.01 },
+};
+
+/**
+ * Build comparison data for historical tracking
+ */
+export interface BuildComparison {
+  buildId: string;
+  timestamp: string;
+  sourceFile: string;
+  prdSetId: string;
+  metrics: {
+    durationMs: number;
+    aiCalls: number;
+    tokensUsed: number;
+    estimatedCost: number;
+    executabilityScore: number;
+  };
+}
+
+/**
+ * Session management metrics
+ */
+export interface SessionMetrics {
+  sessionId: string;
+  reuseCount: number;              // How many times session was reused
+  newSessionCreations: number;     // Should be 1 ideally
+  workspaceIndexingEvents: number; // Should be 0 after first
+  avgCallsPerSession: number;
+}
+
+/**
+ * Codebase analysis metrics
+ */
+export interface CodebaseAnalysisMetrics {
+  framework: string;
+  filesAnalyzed: number;
+  patternsDetected: number;
+  schemaPatterns: string[];
+  testPatterns: string[];
+  cacheHit: boolean;
+  analysisTimeMs: number;
+  contextSizeChars: number;
+}
+
+/**
  * Build metrics data structure
  */
 export interface BuildMetricsData {
@@ -84,6 +171,18 @@ export interface BuildMetricsData {
     totalTasks: number;
     fallbacks: number;
   };
+
+  // NEW: Individual AI call details for reporting
+  aiCallDetails?: AICallDetail[];
+
+  // NEW: Session management metrics
+  sessionManagement?: SessionMetrics;
+
+  // NEW: Codebase analysis metrics
+  codebaseAnalysis?: CodebaseAnalysisMetrics;
+
+  // NEW: AI time breakdown by phase
+  aiTimeByPhase?: Record<string, number>;
 }
 
 /**
@@ -430,6 +529,88 @@ export class BuildMetrics {
   }
 
   /**
+   * Record an AI call with full details for enhanced reporting
+   */
+  recordAICallWithDetails(
+    component: string,
+    success: boolean,
+    durationMs: number,
+    tokens: { input: number; output: number },
+    detail: {
+      purpose: string;
+      promptSummary: string;
+      responseSummary: string;
+      phase?: string;
+      model?: string;
+      impact?: AICallDetail['impact'];
+    }
+  ): void {
+    // First record the basic AI call
+    this.recordAICall(component, success, durationMs, tokens);
+
+    if (!this.currentBuild) return;
+
+    // Initialize aiCallDetails array if needed
+    if (!this.currentBuild.aiCallDetails) {
+      this.currentBuild.aiCallDetails = [];
+    }
+
+    // Track AI time by phase
+    if (detail.phase) {
+      if (!this.currentBuild.aiTimeByPhase) {
+        this.currentBuild.aiTimeByPhase = {};
+      }
+      this.currentBuild.aiTimeByPhase[detail.phase] =
+        (this.currentBuild.aiTimeByPhase[detail.phase] || 0) + durationMs;
+    }
+
+    // Add the detailed record
+    const callDetail: AICallDetail = {
+      id: `call-${Date.now()}-${Math.random().toString(36).substr(2, 6)}`,
+      component,
+      purpose: detail.purpose,
+      promptSummary: detail.promptSummary.substring(0, 200),
+      responseSummary: detail.responseSummary.substring(0, 200),
+      durationMs,
+      tokensIn: tokens.input,
+      tokensOut: tokens.output,
+      success,
+      timestamp: new Date().toISOString(),
+      phase: detail.phase,
+      model: detail.model,
+      impact: detail.impact,
+    };
+
+    this.currentBuild.aiCallDetails.push(callDetail);
+  }
+
+  /**
+   * Record session management metrics
+   */
+  recordSessionMetrics(metrics: SessionMetrics): void {
+    if (!this.currentBuild) {
+      logger.warn('[BuildMetrics] No active build to record session metrics');
+      return;
+    }
+
+    this.currentBuild.sessionManagement = metrics;
+    logger.debug(`[BuildMetrics] Recorded session metrics: reuse=${metrics.reuseCount}, creations=${metrics.newSessionCreations}`);
+  }
+
+  /**
+   * Record codebase analysis metrics
+   */
+  recordCodebaseAnalysis(metrics: CodebaseAnalysisMetrics): void {
+    if (!this.currentBuild) {
+      logger.warn('[BuildMetrics] No active build to record codebase analysis');
+      return;
+    }
+
+    this.currentBuild.codebaseAnalysis = metrics;
+    logger.debug(`[BuildMetrics] Recorded codebase analysis: framework=${metrics.framework}, files=${metrics.filesAnalyzed}, cacheHit=${metrics.cacheHit}`);
+  }
+
+  /**
    * Record validation iteration
    */
   recordValidation(iteration: number, score: number, fixes: string[], errors?: number, warnings?: number): void {
@@ -711,6 +892,53 @@ export class BuildMetrics {
       avgExecutabilityScore,
       byMode,
     };
+  }
+
+  /**
+   * Save build comparison data for historical tracking
+   */
+  saveBuildComparison(comparison: BuildComparison): void {
+    const comparisonPath = path.join(path.dirname(this.metricsPath), 'build-comparisons.json');
+    let comparisons: BuildComparison[] = [];
+
+    try {
+      if (fs.existsSync(comparisonPath)) {
+        comparisons = JSON.parse(fs.readFileSync(comparisonPath, 'utf-8'));
+      }
+    } catch {
+      comparisons = [];
+    }
+
+    // Keep last 50 comparisons per source file
+    const filtered = comparisons
+      .filter(c => c.sourceFile === comparison.sourceFile)
+      .slice(-49);
+    filtered.push(comparison);
+
+    // Replace comparisons for this source file
+    comparisons = comparisons
+      .filter(c => c.sourceFile !== comparison.sourceFile)
+      .concat(filtered);
+
+    fs.writeFileSync(comparisonPath, JSON.stringify(comparisons, null, 2));
+  }
+
+  /**
+   * Get previous builds for comparison
+   */
+  getPreviousBuilds(sourceFile: string, limit: number = 5): BuildComparison[] {
+    const comparisonPath = path.join(path.dirname(this.metricsPath), 'build-comparisons.json');
+    try {
+      if (fs.existsSync(comparisonPath)) {
+        const comparisons: BuildComparison[] = JSON.parse(fs.readFileSync(comparisonPath, 'utf-8'));
+        return comparisons
+          .filter(c => c.sourceFile === sourceFile)
+          .slice(-limit);
+      }
+    } catch {
+      // Ignore errors
+    }
+    return [];
   }
 }
 

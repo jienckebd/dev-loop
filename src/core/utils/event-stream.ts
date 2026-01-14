@@ -102,7 +102,14 @@ export type EventType =
   | 'pattern:injected'
   | 'pattern:prevented'
   | 'pattern:matched'
-  | 'pattern:learned';
+  | 'pattern:learned'
+  // CLI command events
+  | 'cli:command_executed'
+  | 'cli:command_failed'
+  // Recovery system events
+  | 'recovery:attempted'
+  | 'recovery:succeeded'
+  | 'recovery:failed';
 
 export type EventSeverity = 'info' | 'warn' | 'error' | 'critical';
 
