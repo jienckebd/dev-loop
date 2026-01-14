@@ -19,12 +19,52 @@ export interface JsonParsingContext {
 }
 
 /**
+ * Recursively extract result text from nested result objects
+ * 
+ * Handles cases like: {"type": "result", "result": "{\"type\": \"result\", \"result\": \"...\"}"}
+ * This fixes the issue where Cursor AI returns narrative text wrapped in multiple layers of result objects.
+ * 
+ * @param data - Data that might be a result object or contain nested result objects
+ * @param maxDepth - Maximum recursion depth (default: 5 to prevent infinite loops)
+ * @returns Extracted text or the original data if not a result object
+ */
+function extractResultTextRecursively(data: any, maxDepth: number = 5): any {
+  if (maxDepth <= 0) {
+    logger.warn('[json-parser] Maximum recursion depth reached in extractResultTextRecursively');
+    return data;
+  }
+
+  if (typeof data === 'string') {
+    try {
+      const parsed = JSON.parse(data);
+      if (parsed && typeof parsed === 'object' && parsed.type === 'result' && parsed.result !== undefined) {
+        // Found a nested result object, recurse
+        return extractResultTextRecursively(parsed.result, maxDepth - 1);
+      }
+    } catch {
+      // Not JSON, return original string
+    }
+    return data;
+  }
+
+  if (data && typeof data === 'object' && !Array.isArray(data)) {
+    if (data.type === 'result' && data.result !== undefined) {
+      // Found a result object, recurse into result field
+      return extractResultTextRecursively(data.result, maxDepth - 1);
+    }
+  }
+
+  return data;
+}
+
+/**
  * Extract CodeChanges from various response formats
  *
  * Supports:
  * - Direct CodeChanges objects
  * - Text responses containing JSON (including markdown code blocks)
  * - Response objects with 'text' or 'result' fields
+ * - Recursively nested result objects (e.g., {"type":"result","result":"{\"type\":\"result\",\"result\":\"...\"}"})
  *
  * @param response - The AI provider response (can be object or string)
  * @param observationTracker - Optional observation tracker for logging
@@ -40,22 +80,79 @@ export function extractCodeChanges(
     return null;
   }
 
+  // Handle direct CodeChanges object
+  if (response && typeof response === 'object' && response.files && Array.isArray(response.files)) {
+    return response as CodeChanges;
+  }
+
+  // Handle result objects - recursively extract nested result structures
+  if (response && typeof response === 'object' && response.type === 'result' && response.result !== undefined) {
+    const extractedResult = extractResultTextRecursively(response.result);
+    
+    // Try to parse extracted result as JSON if it's a string
+    if (typeof extractedResult === 'string') {
+      try {
+        const parsed = JSON.parse(extractedResult);
+        if (parsed && parsed.files && Array.isArray(parsed.files)) {
+          return parsed as CodeChanges;
+        }
+        // If parsed is still a result object, recurse
+        if (parsed && typeof parsed === 'object' && parsed.type === 'result') {
+          return extractCodeChanges(parsed, observationTracker, context);
+        }
+      } catch {
+        // Not valid JSON, continue to text extraction
+      }
+    } else if (extractedResult && typeof extractedResult === 'object' && extractedResult.files && Array.isArray(extractedResult.files)) {
+      // Extracted result is already a CodeChanges object
+      return extractedResult as CodeChanges;
+    } else if (extractedResult && typeof extractedResult === 'object' && extractedResult.type === 'result') {
+      // Extracted result is still a result object, recurse
+      return extractCodeChanges(extractedResult, observationTracker, context);
+    }
+    
+    // If extracted result is still a string, try text extraction
+    const resultText = typeof extractedResult === 'string' ? extractedResult : JSON.stringify(extractedResult);
+    return parseCodeChangesFromText(resultText, observationTracker, context);
+  }
+
   // Convert response to text for schema validation
   let textToValidate: string = '';
   
   if (typeof response === 'string') {
     textToValidate = response;
   } else if (response && typeof response === 'object') {
-    // Handle direct CodeChanges object
-    if (response.files && Array.isArray(response.files)) {
-      return response as CodeChanges;
-    }
-    
     // Extract text from common fields
     if (response.text && typeof response.text === 'string') {
-      textToValidate = response.text;
+      // Check if text contains nested result objects
+      try {
+        const parsedText = JSON.parse(response.text);
+        if (parsedText && typeof parsedText === 'object' && parsedText.type === 'result' && parsedText.result !== undefined) {
+          // Recursively extract from nested result objects
+          const extractedResult = extractResultTextRecursively(parsedText.result);
+          textToValidate = typeof extractedResult === 'string' ? extractedResult : JSON.stringify(extractedResult);
+        } else {
+          textToValidate = response.text;
+        }
+      } catch {
+        // Not JSON, proceed with direct text parsing
+        textToValidate = response.text;
+      }
     } else if (response.result && typeof response.result === 'string') {
-      textToValidate = response.result;
+      // Check if result contains nested result objects
+      try {
+        const parsedResult = JSON.parse(response.result);
+        if (parsedResult && typeof parsedResult === 'object' && parsedResult.type === 'result' && parsedResult.result !== undefined) {
+          // Recursively extract from nested result objects
+          const extractedResult = extractResultTextRecursively(parsedResult.result);
+          textToValidate = typeof extractedResult === 'string' ? extractedResult : JSON.stringify(extractedResult);
+        } else {
+          textToValidate = response.result;
+        }
+      } catch {
+        // Not JSON, proceed with direct text parsing
+        textToValidate = response.result;
+      }
     } else if (response.response && typeof response.response === 'string') {
       textToValidate = response.response;
     } else {
