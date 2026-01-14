@@ -85,6 +85,11 @@ All notable changes to dev-loop will be documented in this file.
 - **Narrative Response Handling** - Stricter prompts reduce narrative text responses
 - **Error Messages** - More actionable error messages with debugging information
 
+- **PatternLoader Version Warnings** - Updated patterns.json version format from numeric `1` to string `"2.0"` to match schema expectations, eliminating validation warnings
+- **CursorSessionManager Session Warnings** - Changed "session not found" warnings to debug level for expected new session creation, reducing log noise
+- **Background Agent SIGTERM Handling** - Improved timeout kill detection to distinguish expected timeout kills (code 143) from unexpected failures, logging timeouts as warnings instead of errors
+- **PRD Set Task Counting** - Fixed task counting in build reports to correctly aggregate tasks from `requirements.phases[].tasks` in split PRD structure, maintaining backward compatibility with `requirements.tasks`
+
 ## [Previous Versions]
 
 See git history for earlier changes.

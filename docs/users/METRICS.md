@@ -114,6 +114,15 @@ Session metrics track provider-agnostic session usage:
 - Context snapshotting effectiveness
 - Session lifecycle statistics
 
+**Session Creation Logging:**
+
+Session management uses appropriate log levels to reduce noise:
+- **New session creation**: Logged at debug level (expected behavior)
+- **Session resume**: Logged at debug level when successful
+- **Session errors**: Logged at warning/error level only for actual issues
+
+To see session creation logs, enable debug logging in your configuration. This helps distinguish between expected session lifecycle events and actual problems.
+
 ### Intervention Metrics
 
 Intervention metrics track all automated interventions performed by the proactive event monitoring system and their outcomes. These metrics enable analysis and continuous improvement of intervention strategies.

@@ -112,6 +112,36 @@ requirements:
 
 The `file` field is required when there are multiple phases (PRD set structure). The child PRD file should exist in the same directory as `index.md.yml`.
 
+**Task Structure in Child PRDs:**
+
+For child PRD files in a split PRD set, tasks are nested under `requirements.phases[].tasks`, not directly under `requirements.tasks`:
+
+```yaml
+# phase1_phase_1.md.yml (child PRD)
+requirements:
+  idPattern: TASK-{id}
+  phases:
+    - id: 1
+      name: Phase 1
+      parallel: false
+      tasks:
+        - id: REQ-1.1
+          title: Task 1
+          priority: should
+          type: functional
+          description: "Task description"
+          acceptanceCriteria:
+            - Criterion 1
+            - Criterion 2
+        - id: REQ-1.2
+          title: Task 2
+          # ...
+```
+
+**Important**: Build reports correctly aggregate tasks from `requirements.phases[].tasks` across all phase files. This structure ensures accurate task counting in PRD set reports.
+
+**Backward Compatibility**: Non-split PRDs can still use `requirements.tasks` directly, but split PRDs must use the nested structure.
+
 **Relationships Format:**
 
 The `relationships.dependedOnBy` field uses object format for PRD sets:

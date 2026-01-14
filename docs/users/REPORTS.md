@@ -75,6 +75,37 @@ dev-loop report --prd browser_validation_test --compare previous_prd
 - Metrics at each level
 - Success rates
 
+### PRD Set Task Counting
+
+For PRD sets (split PRDs), task counts are correctly aggregated from all phase files:
+
+- **Split PRD structure**: Tasks are nested under `requirements.phases[].tasks` in each phase file
+- **Task aggregation**: Build reports sum tasks across all phase files
+- **Backward compatibility**: Non-split PRDs with `requirements.tasks` are still supported
+
+**Example PRD set structure:**
+```yaml
+# index.md.yml (parent)
+prd:
+  status: split
+requirements:
+  phases:
+    - id: 1
+      file: phase1_phase_1.md.yml
+    - id: 2
+      file: phase2_phase_2.md.yml
+
+# phase1_phase_1.md.yml (child)
+requirements:
+  phases:
+    - id: 1
+      tasks:
+        - id: REQ-1.1
+        - id: REQ-1.2
+```
+
+Build reports will correctly show the total task count across all phases.
+
 ### Feature Usage
 
 Comprehensive feature usage statistics:

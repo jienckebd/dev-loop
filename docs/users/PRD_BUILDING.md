@@ -105,6 +105,24 @@ dev-loop build-prd-set \
    - `index.md.yml` - Parent PRD with status `split`
    - `phase{N}_{name}.md.yml` - Child PRD files (one per phase)
 
+**Build Reports:**
+
+Build reports generated after conversion correctly aggregate task counts from all phase files. For split PRDs, tasks are counted from `requirements.phases[].tasks` in each phase file, ensuring accurate metrics in the build report.
+
+**Example build report output:**
+```
+## PRD Set Structure
+
+- **Total Phases**: 5
+- **Total Tasks**: 22
+
+| Phase | Name | File | Tasks |
+|-------|------|------|-------|
+| 1 | Phase 1 | phase1_phase_1.md.yml | 3 |
+| 2 | Phase 2 | phase2_phase_2.md.yml | 4 |
+...
+```
+
 ### Enhance Mode
 
 Enhance existing PRD sets by adding missing schemas, test plans, or configuration.

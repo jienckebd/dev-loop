@@ -602,6 +602,14 @@ Session boundaries are explicitly defined for all execution scenarios:
 
 **Location:** `src/providers/ai/session-manager.ts` and `src/providers/ai/cursor-session-manager.ts`
 
+**Logging Levels:**
+
+The session management system uses appropriate log levels:
+- **Debug level**: Expected session lifecycle events (new session creation, session resume)
+- **Warning/Error level**: Actual issues requiring attention (session corruption, persistence failures)
+
+This reduces log noise while maintaining visibility for debugging. Enable debug logging to see all session lifecycle events.
+
 ## Context Discovery System
 
 Enhanced context discovery with PRD/phase scoping and relevance ranking:
@@ -642,7 +650,15 @@ Provider-agnostic timeout handler:
 - Heartbeat monitoring to detect idle processes
 - Default timeout: 5 minutes (configurable via `config.cursor.agents.backgroundAgentTimeout`)
 
-**Location:** `src/providers/ai/timeout-handler.ts`
+**Timeout Kill Handling:**
+
+Background agents that exceed timeout limits are gracefully terminated with SIGTERM (exit code 143). The system distinguishes between:
+- **Expected timeout kills**: Logged as warnings with `timeout: true` in result
+- **Unexpected failures**: Logged as errors for investigation
+
+This distinction helps identify normal timeout scenarios vs actual process failures requiring attention.
+
+**Location:** `src/providers/ai/timeout-handler.ts` and `src/providers/ai/cursor-chat-opener.ts`
 
 ### Retry Logic
 

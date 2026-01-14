@@ -89,6 +89,23 @@ cursor: {
 }
 ```
 
+**Timeout Kill Handling:**
+
+When background agents exceed their timeout limit, dev-loop gracefully terminates them with SIGTERM (exit code 143). These timeout kills are **expected behavior** and are logged as warnings, not errors:
+
+- **Expected timeout kills**: Logged as warnings with `timeout: true` in result
+- **Unexpected failures**: Logged as errors for investigation
+- **Timeout tracking**: The system tracks whether a process was killed due to timeout vs other causes
+
+This distinction helps identify:
+- Normal timeout scenarios (agents taking longer than expected)
+- Actual process failures requiring investigation
+
+**Example timeout warning:**
+```
+[WARN] [CursorChatOpener] Background agent timed out and was terminated (code 143)
+```
+
 ### Retry Logic
 
 Cursor provider includes automatic retry logic:
@@ -169,6 +186,23 @@ cursor: {
 - **Fix tasks**: Reuse original task's session with appended history
 - **Cross-PRD dependencies**: Isolated sessions with selective context injection
 - **Context snapshotting**: Module-scoped file system state snapshot at task start
+
+**Session Creation Logging:**
+
+When creating new sessions, dev-loop first attempts to resume an existing session. If no session exists (expected for new sessions), this is logged at **debug level**, not warning level:
+
+- **New session creation**: Logged at debug level (expected behavior)
+- **Session resume**: Logged at debug level when successful
+- **Session errors**: Logged at warning/error level only for actual issues
+
+This reduces log noise while maintaining visibility into session lifecycle for debugging.
+
+**Example debug log:**
+```
+[DEBUG] [CursorSessionManager] Session session-xxx not found (will create new session)
+```
+
+To see session creation logs, enable debug logging in your configuration.
 
 See [`docs/contributing/ARCHITECTURE.md`](contributing/ARCHITECTURE.md) for detailed session management architecture.
 
