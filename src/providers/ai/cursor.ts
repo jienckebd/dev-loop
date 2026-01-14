@@ -686,16 +686,57 @@ export class CursorProvider implements AIProvider {
   /**
    * Infer task type from task title and description
    * Similar to TaskMasterBridge.inferTaskType but implemented here for cursor provider
+   * 
+   * IMPORTANT: "Complete phase" tasks and tasks with no target files are treated as
+   * analysis tasks to prevent unnecessary retries and JSON PARSING HALT errors.
+   * These are meta-tasks that don't require actual code generation.
    */
   private inferTaskTypeFromTask(task: Task): TaskType {
-    // Return explicit task type if set
-    if (task.taskType) {
-      return task.taskType;
-    }
-
+    // Return explicit task type if set (but override for known meta-task patterns)
     const title = (task.title || '').toLowerCase();
     const description = (task.description || '').toLowerCase();
     const combined = `${title} ${description}`;
+    
+    // "Complete phase" tasks are meta-tasks that don't require code generation
+    // They represent phase completion markers, not actual implementation tasks
+    if (title.includes('complete phase') || description.includes('complete phase')) {
+      logger.debug(`[CursorProvider] inferTaskTypeFromTask: "${task.title}" is a phase completion meta-task, treating as analysis`);
+      return 'analysis';
+    }
+    
+    // Check for empty target files - these can't generate code without knowing where
+    // Parse task details to check targetFiles
+    try {
+      const details = (task as any).details;
+      if (details) {
+        const parsedDetails = typeof details === 'string' ? JSON.parse(details) : details;
+        const targetFiles = parsedDetails?.targetFiles || [];
+        
+        // If no target files AND title doesn't indicate specific file work, treat as analysis
+        if (targetFiles.length === 0) {
+          // Check if task mentions specific files or code to create
+          const mentionsFiles = combined.includes('.php') || 
+                               combined.includes('.yml') || 
+                               combined.includes('.ts') ||
+                               combined.includes('.js') ||
+                               combined.includes('create file') ||
+                               combined.includes('create the') ||
+                               combined.includes('implement');
+          
+          if (!mentionsFiles) {
+            logger.debug(`[CursorProvider] inferTaskTypeFromTask: "${task.title}" has no target files and no specific file mentions, treating as analysis`);
+            return 'analysis';
+          }
+        }
+      }
+    } catch (e) {
+      // Failed to parse details, continue with normal inference
+    }
+    
+    // Return explicit task type if set (after meta-task checks)
+    if (task.taskType && task.taskType !== 'generate') {
+      return task.taskType;
+    }
 
     // Investigation/analysis tasks
     if (
