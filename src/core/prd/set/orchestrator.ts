@@ -228,12 +228,7 @@ export class PrdSetOrchestrator {
     await this.coordinator.coordinatePrdSet(discoveredSet.prdSet);
 
     // Set active.prdSetId in execution state so task filtering works correctly
-    await this.stateManager.initialize();
-    await this.stateManager.updateExecutionState((draft) => {
-      draft.active.prdSetId = discoveredSet.setId;
-      draft.active.workflowState = 'fetching-task';
-      draft.active.startedAt = new Date().toISOString();
-    });
+    await this.coordinator.setActivePrdSetId(discoveredSet.setId);
     logger.info(`[PrdSetOrchestrator] Set active PRD set: ${discoveredSet.setId}`);
 
     // Build dependency graph

@@ -189,9 +189,17 @@ export class TaskMasterBridge {
       const tasks = await this.loadTasks();
 
       // Get active prdSetId from execution state to filter by PRD set
-      await this.stateManager.initialize();
-      const state = await this.stateManager.getExecutionState();
-      const activePrdSetId = state.active?.prdSetId;
+      // Read directly from file to handle both UnifiedStateManager and PrdCoordinator formats
+      let activePrdSetId: string | undefined;
+      try {
+        const stateFilePath = path.resolve(process.cwd(), '.devloop/execution-state.json');
+        if (await fs.pathExists(stateFilePath)) {
+          const stateData = await fs.readJson(stateFilePath);
+          activePrdSetId = stateData.active?.prdSetId;
+        }
+      } catch (err) {
+        console.warn('[TaskBridge] Could not read active prdSetId from execution state:', err);
+      }
 
       // Filter by active prdSetId if one is set
       let filteredTasks = tasks;

@@ -246,15 +246,36 @@ export class PrdCoordinator {
   /**
    * Save state to file.
    */
-  private async saveState(state: { prdStates: Map<string, PrdState>; sharedState: Record<string, any> }): Promise<void> {
+  private async saveState(state: { prdStates: Map<string, PrdState>; sharedState: Record<string, any>; activePrdSetId?: string }): Promise<void> {
     try {
       await fs.ensureDir(path.dirname(this.statePath));
+      
+      // Load existing state to preserve fields we don't manage (e.g., active, prds, sessions)
+      let existingData: any = {};
+      try {
+        if (await fs.pathExists(this.statePath)) {
+          existingData = await fs.readJson(this.statePath);
+        }
+      } catch {
+        // Ignore read errors, start fresh
+      }
+
       // Convert Map to object for JSON serialization
       const prdStatesObj: Record<string, PrdState> = {};
       for (const [key, value] of state.prdStates.entries()) {
         prdStatesObj[key] = value;
       }
+
+      // Ensure active field exists
+      const active = existingData.active || {};
+      if (state.activePrdSetId) {
+        active.prdSetId = state.activePrdSetId;
+      }
+
+      // Merge our state with existing state, preserving fields we don't manage
       await fs.writeJson(this.statePath, {
+        ...existingData,  // Preserve existing fields (prds, sessions, etc.)
+        active,           // Preserve and update active context
         prdStates: prdStatesObj,
         sharedState: state.sharedState,
       }, { spaces: 2 });
@@ -262,6 +283,17 @@ export class PrdCoordinator {
       if (this.debug) {
         logger.debug(`[PrdCoordinator] Failed to save state: ${error.message}`);
       }
+    }
+  }
+
+  /**
+   * Set the active PRD set ID for task filtering
+   */
+  async setActivePrdSetId(prdSetId: string): Promise<void> {
+    const state = await this.loadState();
+    await this.saveState({ ...state, activePrdSetId: prdSetId });
+    if (this.debug) {
+      logger.debug(`[PrdCoordinator] Set active PRD set: ${prdSetId}`);
     }
   }
 }
