@@ -72,15 +72,16 @@ export class CursorSessionManager extends BaseSessionManager implements SessionM
         const data = JSON.parse(content);
 
         if (Array.isArray(data.sessions)) {
+          // Legacy array format
           for (const session of data.sessions) {
             // Validate session structure
             if (session.sessionId && session.context) {
               this.sessions.set(session.sessionId, session as CursorSession);
             }
           }
-        } else if (typeof data === 'object') {
-          // Handle old format where sessions were stored as object
-          for (const [sessionId, session] of Object.entries(data)) {
+        } else if (data.sessions && typeof data.sessions === 'object') {
+          // New record format (matches ExecutionState schema)
+          for (const [sessionId, session] of Object.entries(data.sessions)) {
             if (typeof session === 'object' && session !== null) {
               const s = session as any;
               if (s.sessionId || sessionId) {
@@ -105,10 +106,27 @@ export class CursorSessionManager extends BaseSessionManager implements SessionM
       const dir = path.dirname(this.sessionsPath);
       fs.ensureDirSync(dir);
 
+      // Convert Map to record (object) format to match ExecutionState schema
+      const sessionsRecord: Record<string, any> = {};
+      for (const [key, value] of this.sessions.entries()) {
+        sessionsRecord[key] = value;
+      }
+
+      // Read existing execution state and merge sessions
+      let existingData: any = {};
+      try {
+        if (fs.pathExistsSync(this.sessionsPath)) {
+          existingData = fs.readJsonSync(this.sessionsPath);
+        }
+      } catch {
+        // Ignore read errors, start fresh
+      }
+
       const data = {
-        version: '1.0',
+        ...existingData,  // Preserve other fields (active, prdStates, etc.)
+        version: existingData.version || '1.0',
         updatedAt: new Date().toISOString(),
-        sessions: Array.from(this.sessions.values()),
+        sessions: sessionsRecord,  // Record format, not array
       };
 
       fs.writeFileSync(this.sessionsPath, JSON.stringify(data, null, 2), 'utf-8');
