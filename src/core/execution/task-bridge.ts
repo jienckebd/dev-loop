@@ -187,10 +187,30 @@ export class TaskMasterBridge {
   async getPendingTasks(): Promise<Task[]> {
     try {
       const tasks = await this.loadTasks();
+
+      // Get active prdSetId from execution state to filter by PRD set
+      await this.stateManager.initialize();
+      const state = await this.stateManager.getExecutionState();
+      const activePrdSetId = state.active?.prdSetId;
+
+      // Filter by active prdSetId if one is set
+      let filteredTasks = tasks;
+      if (activePrdSetId) {
+        filteredTasks = tasks.filter(t => {
+          try {
+            const details = t.details ? JSON.parse(t.details) : {};
+            return details.prdSetId === activePrdSetId;
+          } catch {
+            return false; // Skip tasks with invalid details
+          }
+        });
+        console.log(`[TaskBridge] Filtered to ${filteredTasks.length} tasks for active PRD set: ${activePrdSetId}`);
+      }
+
       // Filter out tasks with null/undefined IDs before processing
-      const validTasks = tasks.filter((t) => t.id != null);
-      if (validTasks.length < tasks.length) {
-        console.warn(`[TaskBridge] Filtered out ${tasks.length - validTasks.length} tasks with null/undefined IDs`);
+      const validTasks = filteredTasks.filter((t) => t.id != null);
+      if (validTasks.length < filteredTasks.length) {
+        console.warn(`[TaskBridge] Filtered out ${filteredTasks.length - validTasks.length} tasks with null/undefined IDs`);
       }
       // Include both "pending" and "in-progress" tasks (in-progress means it was interrupted)
       const pending = validTasks.filter((t) => t.status === 'pending' || t.status === 'in-progress');

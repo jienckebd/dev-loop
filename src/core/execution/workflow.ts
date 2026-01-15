@@ -105,6 +105,9 @@ export class WorkflowEngine {
   private investigationAttempts: Map<string, { attempts: number; firstAttempt: number; lastAttempt: number; learnings: string[]; testSignature: string }> = new Map();
   // Phase 7: Token budget tracking - track cumulative token usage per PRD execution
   private tokenUsage: Map<string, { cumulativeTokens: number; startTime: number; lastUpdated: number }> = new Map();
+  // Task-level stall detection: track consecutive failures per task
+  private taskFailureCount: Map<string, number> = new Map();
+  private readonly maxConsecutiveTaskFailures = 3;
   // Spec-kit context for injecting clarifications, research, and constitution into prompts
   private specKitContext?: SpecKitContext;
 
@@ -671,8 +674,15 @@ export class WorkflowEngine {
             // If task completed successfully, continue
             if (workflowResult.completed) {
               logger.info(`[WorkflowEngine] Task ${task.id} completed successfully`);
+              // Clear stall counter on success
+              this.checkForTaskStall(task.id, true);
             } else if (workflowResult.error) {
               logger.warn(`[WorkflowEngine] Task ${task.id} failed: ${workflowResult.error}`);
+              // Check for stall - if task has failed too many times, mark as blocked
+              if (this.checkForTaskStall(task.id, false)) {
+                await this.taskBridge.updateTaskStatus(task.id, 'blocked');
+                logger.info(`[WorkflowEngine] Task ${task.id} marked as blocked due to stall (${this.maxConsecutiveTaskFailures} consecutive failures)`);
+              }
             }
             // Return first result (for backward compatibility with single-task execution)
             if (i === 0) {
@@ -680,6 +690,11 @@ export class WorkflowEngine {
             }
           } else {
             logger.error(`[WorkflowEngine] Task ${task.id} execution rejected: ${result.reason}`);
+            // Check for stall on rejected tasks too
+            if (this.checkForTaskStall(task.id, false)) {
+              await this.taskBridge.updateTaskStatus(task.id, 'blocked');
+              logger.info(`[WorkflowEngine] Task ${task.id} marked as blocked due to stall (${this.maxConsecutiveTaskFailures} consecutive failures)`);
+            }
             // Return error for first failed task
             if (i === 0) {
               return {
@@ -5656,6 +5671,36 @@ export class WorkflowEngine {
         });
       }
     }
+  }
+
+  /**
+   * Task-level stall detection: Check if a task has failed too many times consecutively
+   * @returns true if task should be blocked due to stall, false otherwise
+   */
+  private checkForTaskStall(taskId: string, success: boolean): boolean {
+    if (success) {
+      // Task succeeded, clear failure count
+      this.taskFailureCount.delete(taskId);
+      return false;
+    }
+
+    // Increment failure count
+    const count = (this.taskFailureCount.get(taskId) || 0) + 1;
+    this.taskFailureCount.set(taskId, count);
+
+    if (count >= this.maxConsecutiveTaskFailures) {
+      logger.warn(`[WorkflowEngine] STALL DETECTED: Task ${taskId} failed ${count} consecutive times`);
+      emitEvent('task:stalled', {
+        taskId,
+        consecutiveFailures: count,
+        action: 'marking-blocked',
+        timestamp: new Date().toISOString(),
+      }, {
+        severity: 'warn',
+      });
+      return true;
+    }
+    return false;
   }
 
   /**

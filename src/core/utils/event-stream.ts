@@ -59,6 +59,8 @@ export type EventType =
   | 'contribution:agent_reset'
   // Test stall detection
   | 'test:stalled'
+  // Task stall detection
+  | 'task:stalled'
   // Progress tracking
   | 'progress:stalled'
   // Investigation consolidation

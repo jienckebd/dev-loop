@@ -17,6 +17,7 @@ import * as path from 'path';
 import { TaskMasterBridge } from '../../execution/task-bridge';
 import { SpecKitContext, ResolvedClarification, ResearchFinding, ConstitutionRules } from '../parser/planning-doc-parser';
 import { emitEvent } from '../../utils/event-stream';
+import { UnifiedStateManager } from '../../state/StateManager';
 
 export interface PrdSetMetadata {
   setId: string;
@@ -55,6 +56,7 @@ export class PrdSetOrchestrator {
   private progressTracker: PrdSetProgressTracker;
   private errorHandler: PrdSetErrorHandler;
   private prdSetMetrics: PrdSetMetrics;
+  private stateManager: UnifiedStateManager;
   private debug: boolean;
 
   constructor(config: Config, debug: boolean = false) {
@@ -62,6 +64,7 @@ export class PrdSetOrchestrator {
     this.configContext = createConfigContext(config);
     this.workflowEngine = new WorkflowEngine(config);
     this.coordinator = new PrdCoordinator('.devloop/execution-state.json', debug);
+    this.stateManager = new UnifiedStateManager(process.cwd());
     this.graphBuilder = new DependencyGraphBuilder(debug);
     this.prerequisiteValidator = new PrerequisiteValidator(
       new ValidationScriptExecutor(debug),
@@ -223,6 +226,15 @@ export class PrdSetOrchestrator {
 
     // Initialize PRD set coordination
     await this.coordinator.coordinatePrdSet(discoveredSet.prdSet);
+
+    // Set active.prdSetId in execution state so task filtering works correctly
+    await this.stateManager.initialize();
+    await this.stateManager.updateExecutionState((draft) => {
+      draft.active.prdSetId = discoveredSet.setId;
+      draft.active.workflowState = 'fetching-task';
+      draft.active.startedAt = new Date().toISOString();
+    });
+    logger.info(`[PrdSetOrchestrator] Set active PRD set: ${discoveredSet.setId}`);
 
     // Build dependency graph
     const graph = this.graphBuilder.buildGraph(discoveredSet.prdSet);
