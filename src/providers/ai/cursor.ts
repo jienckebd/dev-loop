@@ -255,13 +255,27 @@ export class CursorProvider implements AIProvider {
                                             summary.includes('already complete') ||
                                             summary.includes('meets all requirements') ||
                                             summary.includes('no changes needed') ||
-                                            summary.includes('no changes required');
+                                            summary.includes('no changes required') ||
+                                            summary.includes('properly defined') ||
+                                            summary.includes('is implemented') ||
+                                            summary.includes('is complete') ||
+                                            summary.includes('looks complete') ||
+                                            summary.includes('structure looks') ||
+                                            summary.includes('no additional') ||
+                                            summary.includes('verified') ||
+                                            summary.includes('matches') ||
+                                            summary.includes('correct');
               
               if (indicatesAlreadyExists) {
                 // Verify target files actually exist before accepting
                 const targetFiles = await this.verifyTargetFilesExist(context, codeChanges.summary);
                 if (targetFiles.allExist) {
                   logger.info(`[CursorProvider] Code generation task: files already exist (verified). Summary: ${codeChanges.summary?.substring(0, 100) || 'no summary'}`);
+                  return codeChanges;
+                } else if (targetFiles.allExist === false && targetFiles.missing.length === 0) {
+                  // No target files specified in task (allExist=false but missing=[] means no files to check)
+                  // Trust the AI's completion assessment
+                  logger.info(`[CursorProvider] No target files to verify, AI confirms complete: ${codeChanges.summary?.substring(0, 100) || 'no summary'}`);
                   return codeChanges;
                 } else {
                   logger.warn(`[CursorProvider] AI said files exist but verification failed. Missing: ${targetFiles.missing.join(', ')}. Will retry.`);
@@ -344,11 +358,24 @@ export class CursorProvider implements AIProvider {
                                                   summary.includes('already complete') ||
                                                   summary.includes('meets all requirements') ||
                                                   summary.includes('no changes needed') ||
-                                                  summary.includes('no changes required');
+                                                  summary.includes('no changes required') ||
+                                                  summary.includes('properly defined') ||
+                                                  summary.includes('is implemented') ||
+                                                  summary.includes('is complete') ||
+                                                  summary.includes('looks complete') ||
+                                                  summary.includes('structure looks') ||
+                                                  summary.includes('no additional') ||
+                                                  summary.includes('verified') ||
+                                                  summary.includes('matches') ||
+                                                  summary.includes('correct');
                     if (indicatesAlreadyExists) {
                       const targetFiles = await this.verifyTargetFilesExist(context, retryChanges.summary);
                       if (targetFiles.allExist) {
                         logger.info(`[CursorProvider] Retry ${retryAttempt}: files already exist (verified)`);
+                        return retryChanges;
+                      } else if (targetFiles.allExist === false && targetFiles.missing.length === 0) {
+                        // No target files specified in task - trust the AI's completion assessment
+                        logger.info(`[CursorProvider] Retry ${retryAttempt}: No target files to verify, AI confirms complete`);
                         return retryChanges;
                       }
                     }
@@ -411,7 +438,7 @@ export class CursorProvider implements AIProvider {
             // Before halting, check if target files already exist (final check)
             // This handles cases where all JSON parsing attempts failed but files were actually created
             if (!isAnalysisTask) {
-              logger.info(`[CursorProvider] All JSON parsing attempts failed. Performing final check: do target files exist?`);
+              logger.info(`[CursorProvider] Code generation task returned empty files after retries. Performing final check: do target files exist?`);
               const targetFiles = await this.verifyTargetFilesExist(context);
               if (targetFiles.allExist && targetFiles.missing.length === 0) {
                 logger.info(`[CursorProvider] Target files exist despite all JSON parsing failures. Marking task as complete.`);
@@ -707,6 +734,23 @@ export class CursorProvider implements AIProvider {
     if (title.includes('complete phase') || description.includes('complete phase')) {
       logger.debug(`[CursorProvider] inferTaskTypeFromTask: "${task.title}" is a phase completion meta-task, treating as analysis`);
       return 'analysis';
+    }
+
+    // "Define" tasks without explicit target files are often schema/config definition tasks
+    // that may result in no code changes if the definition already exists
+    if (title.startsWith('define ') && !combined.includes('.php') && !combined.includes('.ts') && !combined.includes('.js')) {
+      try {
+        const details = (task as any).details;
+        if (details) {
+          const parsedDetails = typeof details === 'string' ? JSON.parse(details) : details;
+          if (!parsedDetails?.targetFiles?.length) {
+            logger.debug(`[CursorProvider] inferTaskTypeFromTask: "${task.title}" is a definition task with no target files, treating as analysis`);
+            return 'analysis';
+          }
+        }
+      } catch {
+        // Failed to parse details, continue with normal inference
+      }
     }
     
     // Check for empty target files - these can't generate code without knowing where

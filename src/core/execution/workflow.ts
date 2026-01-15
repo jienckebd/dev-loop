@@ -107,7 +107,7 @@ export class WorkflowEngine {
   private tokenUsage: Map<string, { cumulativeTokens: number; startTime: number; lastUpdated: number }> = new Map();
   // Task-level stall detection: track consecutive failures per task
   private taskFailureCount: Map<string, number> = new Map();
-  private readonly maxConsecutiveTaskFailures = 3;
+  private readonly maxConsecutiveTaskFailures = 5;
   // Spec-kit context for injecting clarifications, research, and constitution into prompts
   private specKitContext?: SpecKitContext;
 
