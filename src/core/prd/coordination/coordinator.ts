@@ -81,8 +81,11 @@ export class PrdCoordinator {
       }
     }
 
-    // Save state
-    await this.saveState(result);
+    // Save state, preserving activePrdSetId if it exists
+    await this.saveState({
+      ...result,
+      activePrdSetId: existingState.activePrdSetId,
+    });
 
     return result;
   }
@@ -215,7 +218,7 @@ export class PrdCoordinator {
   /**
    * Load state from file.
    */
-  private async loadState(): Promise<{ prdStates: Map<string, PrdState>; sharedState: Record<string, any> }> {
+  private async loadState(): Promise<{ prdStates: Map<string, PrdState>; sharedState: Record<string, any>; activePrdSetId?: string }> {
     try {
       if (await fs.pathExists(this.statePath)) {
         const data = await fs.readJson(this.statePath);
@@ -229,6 +232,7 @@ export class PrdCoordinator {
         return {
           prdStates,
           sharedState: data.sharedState || {},
+          activePrdSetId: data.active?.prdSetId,  // Preserve existing activePrdSetId
         };
       }
     } catch (error: any) {
