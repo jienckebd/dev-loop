@@ -10,6 +10,8 @@ import {
   PrdConcept,
   PrdInferenceResult,
   FrameworkCLICommand,
+  InitQuestionnaire,
+  PRDRefinementQuestions,
 } from '../interface';
 
 /**
@@ -855,5 +857,301 @@ ${forbiddenExamples}
     }
 
     return { concepts, schemaType };
+  }
+
+  // ===== Init Questionnaire (For Enhanced Init Command) =====
+
+  /**
+   * Get Drupal-specific init questionnaire.
+   * Allows the init command to ask framework-specific questions.
+   */
+  getInitQuestionnaire(): InitQuestionnaire {
+    return {
+      questions: [
+        {
+          id: 'use-ddev',
+          category: 'detection',
+          question: 'Do you use DDEV for local development?',
+          type: 'confirm',
+          default: true,
+          impact: {
+            configPath: 'drupal.cacheCommand',
+            generatesCode: false,
+          },
+          frameworkSpecific: true,
+        },
+        {
+          id: 'cache-command',
+          category: 'configuration',
+          question: 'Cache clear command:',
+          type: 'open-ended',
+          default: 'ddev exec drush cr',
+          dependsOn: 'use-ddev',
+          impact: {
+            configPath: 'hooks.preTest',
+          },
+          frameworkSpecific: true,
+        },
+        {
+          id: 'health-check-url',
+          category: 'validation',
+          question: 'Site health check URL:',
+          type: 'open-ended',
+          default: 'https://sysf.ddev.site',
+          dependsOn: 'use-ddev',
+          impact: {
+            configPath: 'validation.baseUrl',
+          },
+          frameworkSpecific: true,
+        },
+        {
+          id: 'custom-modules-path',
+          category: 'configuration',
+          question: 'Custom modules path:',
+          type: 'multiple-choice',
+          options: ['docroot/modules/share/', 'docroot/modules/custom/', 'web/modules/custom/'],
+          default: 'docroot/modules/share/',
+          impact: {
+            configPath: 'codebase.editablePaths',
+          },
+          frameworkSpecific: true,
+        },
+        {
+          id: 'use-bd-module',
+          category: 'configuration',
+          question: 'Use bd module patterns for entity/plugin development?',
+          type: 'confirm',
+          default: true,
+          impact: {
+            configPath: 'framework.rules',
+            generatesCode: false,
+          },
+          frameworkSpecific: true,
+        },
+        {
+          id: 'enable-config-export',
+          category: 'optimization',
+          question: 'Auto-export config after changes?',
+          type: 'confirm',
+          default: false,
+          impact: {
+            configPath: 'hooks.postApply',
+          },
+          frameworkSpecific: true,
+        },
+      ],
+      validationRules: [
+        {
+          questionIds: ['use-ddev', 'cache-command'],
+          validate: (answers) => {
+            if (answers['use-ddev'] && !answers['cache-command']) {
+              return 'Cache command is required when using DDEV';
+            }
+            return true;
+          },
+        },
+        {
+          questionIds: ['use-ddev', 'health-check-url'],
+          validate: (answers) => {
+            if (answers['use-ddev'] && !answers['health-check-url']) {
+              return 'Health check URL is required when using DDEV';
+            }
+            return true;
+          },
+        },
+      ],
+      configGenerators: [
+        {
+          questionIds: ['cache-command'],
+          generate: (answers, _framework) => ({
+            hooks: {
+              preTest: [answers['cache-command'] as string],
+              postApply: [answers['cache-command'] as string],
+            },
+          }),
+        },
+        {
+          questionIds: ['health-check-url'],
+          generate: (answers, _framework) => ({
+            validation: {
+              enabled: true,
+              baseUrl: answers['health-check-url'] as string,
+              urls: ['/', '/admin', '/node'],
+              timeout: 15000,
+            },
+          }),
+        },
+        {
+          questionIds: ['custom-modules-path'],
+          generate: (answers, _framework) => ({
+            codebase: {
+              editablePaths: [answers['custom-modules-path'] as string],
+              searchDirs: [answers['custom-modules-path'] as string, 'config/default', 'tests/playwright'],
+            },
+          }),
+        },
+        {
+          questionIds: ['use-bd-module'],
+          generate: (answers, _framework) => {
+            if (answers['use-bd-module']) {
+              return {
+                framework: {
+                  rules: [
+                    'NEVER create custom PHP entity classes - use bd.entity_type.*.yml config',
+                    'MUST extend Drupal\\bd\\Plugin\\EntityPluginBase for all plugins',
+                    'MUST use config_schema_subform for configuration forms',
+                  ],
+                },
+              };
+            }
+            return {};
+          },
+        },
+        {
+          questionIds: ['enable-config-export'],
+          generate: (answers, _framework) => {
+            if (answers['enable-config-export']) {
+              return {
+                hooks: {
+                  postApply: ['ddev exec drush cr', 'ddev exec drush cex -y'],
+                },
+              };
+            }
+            return {};
+          },
+        },
+      ],
+    };
+  }
+
+  // ===== PRD Refinement Questions (For Build-PRD-Set Integration) =====
+
+  /**
+   * Get Drupal-specific PRD refinement questions.
+   */
+  getPRDRefinementQuestions(): PRDRefinementQuestions {
+    return {
+      questions: [
+        {
+          id: 'generate-entity-schemas',
+          concept: 'entity_type',
+          question: 'Should I generate bd.entity_type.*.yml schemas for the detected entity types?',
+          type: 'confirm',
+          autoAnswer: {
+            confidence: 0.85,
+            infer: (prd, _codebaseAnalysis) => {
+              const prdText = JSON.stringify(prd).toLowerCase();
+              const hasEntityMentions = prdText.includes('entity type') || prdText.includes('bundle');
+              return {
+                answer: hasEntityMentions,
+                confidence: hasEntityMentions ? 0.9 : 0.3,
+                reasoning: hasEntityMentions
+                  ? 'PRD mentions entity types - schema generation is appropriate'
+                  : 'No entity type mentions found in PRD',
+              };
+            },
+          },
+          generatesSchemas: true,
+        },
+        {
+          id: 'generate-plugin-annotations',
+          concept: 'plugin_type',
+          question: 'Should I generate plugin annotations with proper derivers?',
+          type: 'confirm',
+          autoAnswer: {
+            confidence: 0.80,
+            infer: (prd, _codebaseAnalysis) => {
+              const prdText = JSON.stringify(prd).toLowerCase();
+              const hasPluginMentions = prdText.includes('plugin') || prdText.includes('deriver');
+              return {
+                answer: hasPluginMentions,
+                confidence: hasPluginMentions ? 0.85 : 0.4,
+                reasoning: hasPluginMentions
+                  ? 'PRD mentions plugins - annotation generation is appropriate'
+                  : 'No plugin mentions found in PRD',
+              };
+            },
+          },
+          generatesSchemas: false,
+        },
+        {
+          id: 'prioritize-entity-types',
+          concept: 'entity_type',
+          question: 'Which entity types should be implemented first?',
+          type: 'prioritize',
+          autoAnswer: {
+            confidence: 0.75,
+            infer: (prd, _codebaseAnalysis) => {
+              // Extract entity types mentioned in first phase
+              const firstPhase = prd.phases?.[0];
+              const entities: string[] = [];
+              if (firstPhase) {
+                for (const task of firstPhase.tasks || []) {
+                  const entityMatch = (task.title || '').match(/entity.type[:\s]+(\w+)/gi);
+                  if (entityMatch) {
+                    entities.push(...entityMatch);
+                  }
+                }
+              }
+              return {
+                answer: entities.slice(0, 3),
+                confidence: entities.length > 0 ? 0.8 : 0.5,
+                reasoning: entities.length > 0
+                  ? `Found ${entities.length} entity types in first phase`
+                  : 'Could not determine priority from PRD structure',
+              };
+            },
+          },
+          generatesSchemas: true,
+        },
+      ],
+      conceptEnhancements: [
+        {
+          concept: 'entity_type',
+          extraction: {
+            enhancedPatterns: [
+              /content\s+type[:\s]+["']?(\w+)["']?/gi,
+              /taxonomy[:\s]+["']?(\w+)["']?/gi,
+              /media\s+type[:\s]+["']?(\w+)["']?/gi,
+            ],
+            contextualRules: [
+              {
+                condition: (prd) => {
+                  const text = JSON.stringify(prd).toLowerCase();
+                  return text.includes('content type');
+                },
+                extract: (_prd) => ['node'],
+              },
+              {
+                condition: (prd) => {
+                  const text = JSON.stringify(prd).toLowerCase();
+                  return text.includes('media');
+                },
+                extract: (_prd) => ['media'],
+              },
+            ],
+          },
+        },
+        {
+          concept: 'plugin_type',
+          extraction: {
+            enhancedPatterns: [
+              /block[:\s]+["']?(\w+)["']?/gi,
+              /field\s+formatter[:\s]+["']?(\w+)["']?/gi,
+              /field\s+widget[:\s]+["']?(\w+)["']?/gi,
+            ],
+            contextualRules: [
+              {
+                condition: (prd) => {
+                  const text = JSON.stringify(prd).toLowerCase();
+                  return text.includes('block plugin');
+                },
+                extract: (_prd) => ['block'],
+              },
+            ],
+          },
+        },
+      ],
+    };
   }
 }

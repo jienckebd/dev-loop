@@ -26,6 +26,7 @@ import { killAllChildProcesses } from '../../providers/ai/cursor-chat-opener';
 import { getSessionMetrics, resetSessionMetrics } from '../../providers/ai/cursor';
 import { BuildMetrics, setBuildMetrics } from '../../core/metrics/build';
 import { PrdReportGenerator } from '../../core/reporting/prd-report-generator';
+import { ExecutionIntelligenceCollector, PRDGenerationResult } from '../../core/analysis/execution-intelligence-collector';
 
 interface BuildPrdSetOptions {
   convert?: string; // Planning doc path (convert mode)
@@ -120,7 +121,7 @@ async function buildPrdSet(input: string | undefined, options: BuildPrdSetOption
 
     // Initialize services
     spinner.start('Initializing services');
-    
+
     // Get code generation AI provider (not pattern provider)
     const aiProvider = AIProviderFactory.createWithFallback(config);
 
@@ -177,7 +178,7 @@ async function buildPrdSet(input: string | undefined, options: BuildPrdSetOption
     // This ensures prompt libraries don't interfere with immediate exit
     // Use module-level flag so it can be checked from anywhere (including orchestrator)
     const exitingFlag = { value: false };
-    
+
     const handleExit = (signal: string, code: number) => {
       if (exitingFlag.value) {
         // Force exit immediately if already exiting (second Ctrl+C)
@@ -185,18 +186,18 @@ async function buildPrdSet(input: string | undefined, options: BuildPrdSetOption
         return;
       }
       exitingFlag.value = true;
-      
+
       // Stop spinner immediately
       if (spinner) {
         spinner.stop();
       }
-      
+
       // Kill all child processes synchronously
       killAllChildProcesses('SIGTERM');
-      
+
       // Write directly to stderr to bypass any buffering
       process.stderr.write('\n\n⚠ Interrupted by user\n\n');
-      
+
       // Exit immediately (synchronous - don't wait for anything)
       process.exit(code);
     };
@@ -208,7 +209,7 @@ async function buildPrdSet(input: string | undefined, options: BuildPrdSetOption
     process.removeAllListeners('SIGTERM');
     process.prependListener('SIGINT', () => handleExit('SIGINT', 130));
     process.prependListener('SIGTERM', () => handleExit('SIGTERM', 143));
-    
+
     // Export exiting flag so orchestrator can check it
     (global as any).__devloop_exiting = exitingFlag;
 
@@ -247,7 +248,7 @@ async function buildPrdSet(input: string | undefined, options: BuildPrdSetOption
     // If mode is selected but no path provided, discover and prompt for selection
     if (mode === 'convert' && !selectedPath) {
       spinner.start(`Scanning ${preProductionDir} for planning documents...`);
-      
+
       // Ensure directory exists
       const dirExists = await fileDiscovery.ensureDirectoryExists(preProductionDir, false);
       if (!dirExists) {
@@ -259,7 +260,7 @@ async function buildPrdSet(input: string | undefined, options: BuildPrdSetOption
 
       // Discover planning documents
       const documents = await fileDiscovery.discoverPlanningDocuments(preProductionDir);
-      
+
       if (documents.length === 0) {
         spinner.fail(`No planning documents found in ${preProductionDir}`);
         console.error(chalk.red(`\nError: No *.md files found in ${preProductionDir}`));
@@ -286,7 +287,7 @@ async function buildPrdSet(input: string | undefined, options: BuildPrdSetOption
       }
     } else if (mode === 'enhance' && !selectedPath) {
       spinner.start(`Scanning ${preProductionDir} for PRD sets...`);
-      
+
       // Ensure directory exists
       const dirExists = await fileDiscovery.ensureDirectoryExists(preProductionDir, false);
       if (!dirExists) {
@@ -298,7 +299,7 @@ async function buildPrdSet(input: string | undefined, options: BuildPrdSetOption
 
       // Discover PRD sets
       const prdSets = await fileDiscovery.discoverPrdSets(preProductionDir);
-      
+
       if (prdSets.length === 0) {
         spinner.fail(`No PRD sets found in ${preProductionDir}`);
         console.error(chalk.red(`\nError: No PRD sets (index.md.yml) found in ${preProductionDir}`));
@@ -504,6 +505,34 @@ async function buildPrdSet(input: string | undefined, options: BuildPrdSetOption
         } catch (reportError) {
           if (debug) {
             logger.warn(`[BuildPrdSet] Failed to generate report: ${reportError}`);
+          }
+        }
+
+        // Record PRD generation to execution intelligence
+        try {
+          const intelligenceCollector = new ExecutionIntelligenceCollector({
+            projectRoot: process.cwd(),
+            debug,
+          });
+
+          const prdResult: PRDGenerationResult = {
+            prdId: buildResult.prdSetId,
+            phaseCount: buildResult.output.phasesCount,
+            taskCount: buildResult.output.tasksCount,
+            refinementIterations: buildResult.validation?.iterations || 0,
+            executabilityScore: buildResult.quality.executabilityScore / 100, // Normalize to 0-1
+            concepts: [], // TODO: Extract concepts from result when available
+            durationMs: buildResult.duration || buildDuration,
+          };
+
+          await intelligenceCollector.recordPRDGeneration(prdResult);
+
+          if (debug) {
+            logger.debug(`[BuildPrdSet] Recorded PRD generation to execution intelligence: ${buildResult.prdSetId}`);
+          }
+        } catch (intelligenceError) {
+          if (debug) {
+            logger.warn(`[BuildPrdSet] Failed to record execution intelligence: ${intelligenceError}`);
           }
         }
       }

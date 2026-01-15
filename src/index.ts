@@ -51,6 +51,8 @@ program
   .command('init')
   .description('Interactive wizard to create devloop.config.js')
   .option('-t, --template <template>', 'Template source to use (builtin, ai-dev-tasks, custom)')
+  .option('--dry-run', 'Preview generated config without writing to file')
+  .option('--debug', 'Enable debug mode')
   .action(initCommand);
 
 program

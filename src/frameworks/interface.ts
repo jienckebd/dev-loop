@@ -425,6 +425,24 @@ export interface FrameworkPlugin {
    * @example For Drupal: [{ name: 'cache-rebuild', command: 'ddev exec drush cr', purpose: 'cache-clear' }]
    */
   getCLICommands?(): FrameworkCLICommand[];
+
+  // ===== Init Questionnaire (For Enhanced Init Command) =====
+
+  /**
+   * Get framework-specific init questionnaire.
+   * Allows frameworks to declaratively define init-specific questions.
+   * @returns Init questionnaire with questions, validation rules, and config generators
+   */
+  getInitQuestionnaire?(): InitQuestionnaire;
+
+  // ===== PRD Refinement Questions (For Build-PRD-Set Integration) =====
+
+  /**
+   * Get framework-specific PRD refinement questions.
+   * Allows frameworks to declaratively define PRD refinement questions.
+   * @returns PRD refinement questions with auto-answer capabilities
+   */
+  getPRDRefinementQuestions?(): PRDRefinementQuestions;
 }
 
 /**
@@ -499,6 +517,115 @@ export interface FrameworkDefaultConfig {
 
   /** Any additional framework-specific defaults */
   [key: string]: any;
+}
+
+// ===== Init Questionnaire Schema (For Enhanced Init Command) =====
+
+/**
+ * Question to ask during init command
+ */
+export interface InitQuestion {
+  /** Unique question identifier */
+  id: string;
+  /** Question category */
+  category: 'detection' | 'configuration' | 'validation' | 'optimization';
+  /** Question text */
+  question: string;
+  /** Question type */
+  type: 'confirm' | 'multiple-choice' | 'open-ended';
+  /** Options for multiple-choice questions */
+  options?: string[];
+  /** Default value */
+  default?: string | boolean;
+  /** Question ID this depends on (show only if dependency is truthy) */
+  dependsOn?: string;
+  /** Impact of this question's answer */
+  impact: {
+    /** Which config path this affects (e.g., "hooks.preTest") */
+    configPath: string;
+    /** Whether this triggers code generation */
+    generatesCode?: boolean;
+  };
+  /** Whether this question is framework-specific */
+  frameworkSpecific: boolean;
+}
+
+/**
+ * Init questionnaire for framework-specific configuration
+ */
+export interface InitQuestionnaire {
+  /** Questions to ask during init (framework-specific) */
+  questions: InitQuestion[];
+
+  /** Validation rules based on answers */
+  validationRules: Array<{
+    questionIds: string[];
+    validate: (answers: Record<string, any>) => boolean | string;
+  }>;
+
+  /** Config generation from answers */
+  configGenerators: Array<{
+    questionIds: string[];
+    generate: (answers: Record<string, any>, framework: FrameworkPlugin) => Record<string, any>;
+  }>;
+}
+
+// ===== PRD Refinement Questions Schema (For Build-PRD-Set Integration) =====
+
+/**
+ * PRD refinement question tied to framework concepts
+ */
+export interface PRDRefinementQuestion {
+  /** Unique question identifier */
+  id: string;
+  /** Ties to PrdConcept.name */
+  concept: string;
+  /** Question text */
+  question: string;
+  /** Question type */
+  type: 'confirm' | 'multiple-choice' | 'prioritize';
+  /** Auto-answer configuration */
+  autoAnswer: {
+    /** Confidence threshold for auto-answering (0-1) */
+    confidence: number;
+    /** Inference function */
+    infer: (prd: any, codebaseAnalysis: any) => {
+      answer: any;
+      confidence: number;
+      reasoning: string;
+    };
+  };
+  /** Whether this triggers schema generation */
+  generatesSchemas: boolean;
+}
+
+/**
+ * Concept extraction enhancement
+ */
+export interface ConceptEnhancement {
+  /** Concept name (matches PrdConcept.name) */
+  concept: string;
+  /** Enhanced extraction rules */
+  extraction: {
+    /** Additional patterns beyond PrdConcept.extractPattern */
+    enhancedPatterns: RegExp[];
+    /** Context-based extraction rules */
+    contextualRules: Array<{
+      condition: (prd: any) => boolean;
+      extract: (prd: any) => string[];
+    }>;
+  };
+}
+
+/**
+ * PRD refinement questions for framework-specific PRD building
+ */
+export interface PRDRefinementQuestions {
+  /** Framework-specific questions to ask during PRD refinement */
+  questions: PRDRefinementQuestion[];
+
+  /** Concept extraction enhancements */
+  conceptEnhancements: ConceptEnhancement[];
 }
 
 /**

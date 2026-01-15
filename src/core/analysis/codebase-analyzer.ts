@@ -14,6 +14,7 @@ import { CodeContextProvider, FileContext } from './code/context-provider';
 import { FrameworkLoader, FrameworkPlugin } from '../../frameworks';
 import { logger } from '../utils/logger';
 import { BuildMode } from '../conversation/types';
+import { PatternLibraryManager } from './pattern-library-manager';
 
 /**
  * Codebase Analysis Result
@@ -106,7 +107,9 @@ export class CodebaseAnalyzer {
   private semanticDiscovery?: SemanticFileDiscovery;
   private contextProvider: CodeContextProvider;
   private frameworkLoader: FrameworkLoader;
+  private patternLibraryManager: PatternLibraryManager;
   private debug: boolean;
+  private frameworkPlugin?: FrameworkPlugin; // Cached framework plugin for pattern persistence
 
   constructor(config: CodebaseAnalyzerConfig) {
     this.config = {
@@ -123,6 +126,10 @@ export class CodebaseAnalyzer {
     this.debug = this.config.debug;
     this.contextProvider = new CodeContextProvider(this.debug);
     this.frameworkLoader = new FrameworkLoader(this.config.projectRoot, this.debug);
+    this.patternLibraryManager = new PatternLibraryManager({
+      projectRoot: this.config.projectRoot,
+      debug: this.debug,
+    });
   }
 
   /**
@@ -160,7 +167,7 @@ export class CodebaseAnalyzer {
         logger.debug(`[CodebaseAnalyzer] Available project config keys: ${Object.keys(this.config.projectConfig).join(', ')}`);
       }
     }
-    
+
     let frameworkPlugin = await this.frameworkLoader.loadFramework(frameworkType);
     let framework = frameworkPlugin?.name || 'generic';
 
@@ -172,7 +179,7 @@ export class CodebaseAnalyzer {
         `CompositePlugin was loaded due to multiple frameworks detected. Extracting configured framework '${frameworkType}' ` +
         `from composite to ensure questions reference the correct framework.`
       );
-      
+
       // Try to get the configured framework plugin from the composite
       const compositePlugin = frameworkPlugin as any;
       if (compositePlugin.hasFramework && typeof compositePlugin.hasFramework === 'function') {
@@ -188,7 +195,7 @@ export class CodebaseAnalyzer {
           }
         }
       }
-      
+
       // If we couldn't extract from composite, try loading the configured framework directly from built-in
       if (framework === 'composite' && frameworkType) {
         const builtinFramework = this.frameworkLoader.getBuiltinFramework(frameworkType);
@@ -216,8 +223,11 @@ export class CodebaseAnalyzer {
         framework = frameworkType;
       }
     }
-    
+
     logger.debug(`[CodebaseAnalyzer] Final framework: ${framework}${frameworkType ? ` (configured: ${frameworkType}, plugin: ${frameworkPlugin?.name || 'none'})` : ` (plugin: ${frameworkPlugin?.name || 'none'}, auto-detected)`}`);
+
+    // Cache framework plugin for pattern persistence
+    this.frameworkPlugin = frameworkPlugin;
 
     // 2. Discover relevant files
     const relevantFiles = await this.discoverRelevantFiles(query, frameworkPlugin, targetModule);
@@ -254,6 +264,9 @@ export class CodebaseAnalyzer {
     // Save to cache
     await this.saveCache(cacheKey, result);
 
+    // Persist discovered patterns to pattern library
+    await this.persistPatternsToLibrary(result);
+
     return result;
   }
 
@@ -284,7 +297,7 @@ export class CodebaseAnalyzer {
   private deserializeAnalysisResult(result: any): CodebaseAnalysisResult {
     // Reconstruct fileContexts Map from serialized data
     let fileContexts: Map<string, FileContext>;
-    
+
     if (result.fileContexts instanceof Map) {
       // Already a Map (shouldn't happen from JSON, but handle it)
       fileContexts = result.fileContexts;
@@ -323,7 +336,7 @@ export class CodebaseAnalyzer {
     try {
       const cacheFile = path.join(this.config.projectRoot, '.devloop', 'cache', 'analysis.json');
       await fs.ensureDir(path.dirname(cacheFile));
-      
+
       const currentHash = await this.computeSourceHash();
       const cached: CachedAnalysis = {
         hash: currentHash,
@@ -347,6 +360,77 @@ export class CodebaseAnalyzer {
     } catch (error) {
       logger.debug(`[CodebaseAnalyzer] Failed to save cache: ${error}`);
       // Don't throw - caching is optional
+    }
+  }
+
+  /**
+   * Persist discovered patterns to the pattern library for cross-session learning
+   */
+  private async persistPatternsToLibrary(result: CodebaseAnalysisResult): Promise<void> {
+    try {
+      // Load existing pattern library
+      await this.patternLibraryManager.load();
+
+      // Convert discovered patterns to pattern library format
+      const now = new Date().toISOString();
+      let addedCodePatterns = 0;
+      let addedSchemaPatterns = 0;
+      let addedTestPatterns = 0;
+
+      // Process code patterns
+      if (result.patterns && result.patterns.length > 0) {
+        for (const pattern of result.patterns) {
+          this.patternLibraryManager.addCodePattern({
+            id: `code-${pattern.type}-${pattern.signature.slice(0, 20).replace(/[^a-zA-Z0-9]/g, '-')}`,
+            type: pattern.type as 'schema' | 'plugin' | 'service' | 'test' | 'config',
+            signature: pattern.signature,
+            files: pattern.files,
+            occurrences: pattern.occurrences,
+            discoveredAt: now,
+            lastUsedAt: now,
+            frameworkHints: this.frameworkPlugin ? [this.frameworkPlugin.name] : undefined,
+          });
+          addedCodePatterns++;
+        }
+      }
+
+      // Process schema patterns
+      if (result.schemaPatterns && result.schemaPatterns.length > 0) {
+        for (const pattern of result.schemaPatterns) {
+          this.patternLibraryManager.addSchemaPattern({
+            id: `schema-${pattern.type}-${pattern.pattern.slice(0, 20).replace(/[^a-zA-Z0-9]/g, '-')}`,
+            type: pattern.type,
+            pattern: pattern.pattern,
+            exampleFiles: pattern.examples, // Map from 'examples' to 'exampleFiles'
+            framework: this.frameworkPlugin?.name || 'generic',
+          });
+          addedSchemaPatterns++;
+        }
+      }
+
+      // Process test patterns
+      if (result.testPatterns && result.testPatterns.length > 0) {
+        for (const pattern of result.testPatterns) {
+          this.patternLibraryManager.addTestPattern({
+            id: `test-${pattern.framework}-${pattern.structure.slice(0, 20).replace(/[^a-zA-Z0-9]/g, '-')}`,
+            framework: pattern.framework,
+            structure: pattern.structure,
+            exampleFiles: pattern.examples, // Map from 'examples' to 'exampleFiles'
+            successRate: undefined, // Will be populated by execution intelligence
+          });
+          addedTestPatterns++;
+        }
+      }
+
+      // Save updated library
+      await this.patternLibraryManager.save();
+
+      if (addedCodePatterns + addedSchemaPatterns + addedTestPatterns > 0) {
+        logger.debug(`[CodebaseAnalyzer] Persisted ${addedCodePatterns} code patterns, ${addedSchemaPatterns} schema patterns, ${addedTestPatterns} test patterns to library`);
+      }
+    } catch (error) {
+      logger.debug(`[CodebaseAnalyzer] Failed to persist patterns to library: ${error}`);
+      // Don't throw - pattern persistence is optional
     }
   }
 
@@ -377,7 +461,7 @@ export class CodebaseAnalyzer {
       ];
 
       const hasher = crypto.createHash('sha256');
-      
+
       for (const file of hashFiles) {
         if (await fs.pathExists(file)) {
           const content = await fs.readFile(file, 'utf-8');
@@ -900,7 +984,7 @@ export class CodebaseAnalyzer {
 
       // Get patterns from cached analysis if available
       const patterns: string[] = [];
-      
+
       // Extract constraints from framework plugin
       const constraints = frameworkPlugin?.getConstraints?.() || [];
 

@@ -680,6 +680,144 @@ const configSchemaBase = z.object({
     backupBeforeApply: z.boolean().default(true),
   }).optional(),
 
+  // Project Profile - Learned project characteristics for improved suggestions
+  projectProfile: z.object({
+    // Project characteristics (learned over time)
+    characteristics: z.object({
+      complexity: z.enum(['simple', 'moderate', 'complex']).optional().describe('Overall project complexity'),
+      moduleCount: z.number().optional().describe('Number of modules/packages'),
+      testCoverage: z.number().optional().describe('Test coverage percentage (0-1)'),
+      architecturePatterns: z.array(z.string()).optional().describe('e.g., plugin-based, config-driven'),
+      commonTaskTypes: z.array(z.string()).optional().describe('e.g., entity-creation, schema-definition'),
+      preferredAbstractions: z.array(z.string()).optional().describe('What patterns work well'),
+    }).optional(),
+    // Execution history insights
+    executionInsights: z.object({
+      averageTasksPerPRD: z.number().optional(),
+      commonFailurePatterns: z.array(z.object({
+        pattern: z.string(),
+        frequency: z.number(),
+        lastOccurred: z.string().optional(),
+        suggestedFix: z.string().optional(),
+      })).optional(),
+      successfulPatterns: z.array(z.object({
+        pattern: z.string(),
+        successRate: z.number(),
+        examples: z.array(z.string()).optional(),
+      })).optional(),
+    }).optional(),
+    // Config preferences (learned from manual edits)
+    configPreferences: z.object({
+      preferredProviders: z.array(z.string()).optional(),
+      preferredModels: z.record(z.string(), z.string()).optional(),
+      typicalTimeout: z.number().optional(),
+      commonLogSources: z.array(z.string()).optional(),
+    }).optional(),
+  }).optional(),
+
+  // Execution Intelligence - Track what works and what doesn't
+  executionIntelligence: z.object({
+    // Task execution patterns
+    taskExecution: z.object({
+      successfulTaskPatterns: z.array(z.object({
+        taskType: z.string(),
+        taskPattern: z.string(),
+        successRate: z.number(),
+        averageIterations: z.number(),
+        commonApproaches: z.array(z.string()).optional(),
+      })).optional(),
+      problematicTaskPatterns: z.array(z.object({
+        taskType: z.string(),
+        taskPattern: z.string(),
+        failureRate: z.number(),
+        commonErrors: z.array(z.string()).optional(),
+        suggestedWorkarounds: z.array(z.string()).optional(),
+      })).optional(),
+    }).optional(),
+    // PRD generation insights
+    prdGeneration: z.object({
+      typicalPhaseCount: z.number().optional(),
+      averageTasksPerPhase: z.number().optional(),
+      commonConcepts: z.array(z.string()).optional(),
+      refinementIterations: z.number().optional(),
+      executabilityAchievement: z.number().optional(),
+    }).optional(),
+    // Config effectiveness
+    configEffectiveness: z.object({
+      providerPerformance: z.record(z.string(), z.object({
+        avgResponseTime: z.number(),
+        successRate: z.number(),
+        preferredForTaskTypes: z.array(z.string()).optional(),
+      })).optional(),
+      modelPerformance: z.record(z.string(), z.object({
+        avgQuality: z.number(),
+        avgTokens: z.number(),
+        bestForConcepts: z.array(z.string()).optional(),
+      })).optional(),
+    }).optional(),
+  }).optional(),
+
+  // Constitution Analysis - Structured representation of constitution insights
+  constitutionAnalysis: z.object({
+    // Analyzed constraints
+    constraints: z.array(z.object({
+      original: z.string(),
+      category: z.enum(['path-restriction', 'pattern-requirement', 'tool-requirement', 'architecture']),
+      implications: z.array(z.string()).optional(),
+      configImpact: z.array(z.string()).optional(),
+      severity: z.enum(['critical', 'high', 'medium', 'low']).optional(),
+    })).optional(),
+    // Extracted patterns
+    patterns: z.array(z.object({
+      pattern: z.string(),
+      when: z.string(),
+      configSuggestions: z.record(z.string(), z.any()).optional(),
+      filePathHints: z.array(z.string()).optional(),
+    })).optional(),
+    // Code location rules
+    codeLocations: z.object({
+      editable: z.array(z.string()).optional(),
+      protected: z.array(z.string()).optional(),
+      documentation: z.array(z.string()).optional(),
+      tests: z.array(z.string()).optional(),
+    }).optional(),
+    // Framework hints
+    frameworkHints: z.array(z.object({
+      hint: z.string(),
+      confidence: z.number(),
+      suggestedFramework: z.string().optional(),
+    })).optional(),
+  }).optional(),
+
+  // Config Evolution - Track config changes and learn from them
+  configEvolution: z.object({
+    // Version history
+    versions: z.array(z.object({
+      version: z.string(),
+      changes: z.array(z.object({
+        path: z.string(),
+        from: z.any(),
+        to: z.any(),
+        reason: z.string().optional(),
+        source: z.enum(['manual', 'init', 'auto-optimization']),
+      })),
+      timestamp: z.string(),
+    })).optional(),
+    // Learned preferences (from manual edits)
+    learnedPreferences: z.object({
+      commonOverrides: z.record(z.string(), z.any()).optional(),
+      ignoredFeatures: z.array(z.string()).optional(),
+      alwaysEnabled: z.array(z.string()).optional(),
+    }).optional(),
+    // Migration suggestions
+    migrations: z.array(z.object({
+      fromVersion: z.string(),
+      toVersion: z.string(),
+      changes: z.array(z.string()),
+      automatic: z.boolean(),
+    })).optional(),
+  }).optional(),
+
   // Archive configuration
   archive: z.object({
     defaultPath: z.string().optional().default('.devloop/archive').describe('Default archive directory path'),

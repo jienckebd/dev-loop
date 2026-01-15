@@ -1,5 +1,10 @@
 import inquirer from 'inquirer';
 import { AIProviderName, TestRunnerName, TemplateSource } from '../types';
+import { PROVIDER_MODELS, getDefaultModel } from './utils/model-list';
+import { InteractivePromptSystem } from '../core/prd/builder/interactive-prompt-system';
+import { FrameworkPlugin } from '../frameworks/index';
+import type { CodebaseAnalysisResult } from '../core/analysis/codebase-analyzer';
+import type { Config } from '../config/schema/core';
 
 export interface InitAnswers {
   aiProvider: AIProviderName;
@@ -15,10 +20,228 @@ export interface InitAnswers {
   interventionMode: 'autonomous' | 'review' | 'hybrid';
   approvalRequired: string | string[];
   tasksPath: string;
+  testing?: Config['testing'];
+  logs?: Config['logs'];
 }
 
-export async function promptInitConfig(): Promise<InitAnswers> {
-  const answers = await inquirer.prompt<InitAnswers>([
+export interface PromptInitConfigOptions {
+  suggestions?: Partial<Config>;
+  framework?: FrameworkPlugin;
+  codebaseAnalysis?: CodebaseAnalysisResult;
+  interactivePrompts?: InteractivePromptSystem;
+}
+
+/**
+ * Prompt for init config using InteractivePromptSystem or fallback to inquirer
+ */
+export async function promptInitConfig(options: PromptInitConfigOptions = {}): Promise<InitAnswers> {
+  const { suggestions, framework, interactivePrompts } = options;
+
+  // Use InteractivePromptSystem if provided, otherwise fallback to inquirer
+  if (interactivePrompts) {
+    return await promptWithInteractiveSystem(interactivePrompts, suggestions, framework);
+  } else {
+    return await promptWithInquirer(suggestions, framework);
+  }
+}
+
+/**
+ * Prompt using InteractivePromptSystem
+ */
+async function promptWithInteractiveSystem(
+  prompts: InteractivePromptSystem,
+  suggestions?: Partial<Config>,
+  framework?: FrameworkPlugin
+): Promise<InitAnswers> {
+  // 1. Select AI provider
+  const aiProvider = (await prompts.askQuestion({
+    id: 'ai-provider',
+    type: 'multiple-choice',
+    text: 'Select AI provider:',
+    options: [
+      'anthropic',
+      'openai',
+      'gemini',
+      'ollama',
+      'cursor',
+    ],
+    default: suggestions?.ai?.provider || 'cursor',
+    required: true,
+  })) as AIProviderName;
+
+  // 2. Get provider-specific models
+  const models = PROVIDER_MODELS[aiProvider] || [];
+  const modelOptions = models.map(m => m.value);
+  const modelNames = models.map(m => m.name);
+
+  // 3. Select model for provider
+  const aiModel = (await prompts.askQuestion({
+    id: 'ai-model',
+    type: 'multiple-choice',
+    text: `Select ${aiProvider} model:`,
+    options: modelOptions,
+    default: suggestions?.ai?.model || getDefaultModel(aiProvider),
+    required: true,
+  })) as string;
+
+  // 4. Optional fallback
+  const useFallback = (await prompts.askQuestion({
+    id: 'use-fallback',
+    type: 'confirm',
+    text: 'Use fallback provider?',
+    default: !!suggestions?.ai?.fallback,
+    required: true,
+  })) as boolean;
+
+  let aiFallback: string | undefined;
+  if (useFallback) {
+    const fallbackProvider = (await prompts.askQuestion({
+      id: 'fallback-provider',
+      type: 'multiple-choice',
+      text: 'Select fallback provider:',
+      options: ['anthropic', 'openai', 'gemini', 'ollama', 'cursor'],
+      default: 'openai',
+      required: true,
+    })) as AIProviderName;
+
+    const fallbackModels = PROVIDER_MODELS[fallbackProvider] || [];
+    const fallbackModel = (await prompts.askQuestion({
+      id: 'fallback-model',
+      type: 'multiple-choice',
+      text: `Select fallback ${fallbackProvider} model:`,
+      options: fallbackModels.map(m => m.value),
+      default: getDefaultModel(fallbackProvider),
+      required: true,
+    })) as string;
+
+    aiFallback = `${fallbackProvider}:${fallbackModel}`;
+  }
+
+  // 5. Template source
+  const templateSource = (await prompts.askQuestion({
+    id: 'template-source',
+    type: 'multiple-choice',
+    text: 'Select template source:',
+    options: ['builtin', 'ai-dev-tasks', 'custom'],
+    default: suggestions?.templates?.source || 'builtin',
+    required: true,
+  })) as TemplateSource;
+
+  let customTemplatePath: string | undefined;
+  if (templateSource === 'custom') {
+    customTemplatePath = (await prompts.askQuestion({
+      id: 'custom-template-path',
+      type: 'open-ended',
+      text: 'Enter custom template directory path:',
+      default: suggestions?.templates?.customPath || '',
+      required: true,
+    })) as string;
+  }
+
+  // 6. Test runner (pre-fill from suggestions if available)
+  const testRunner = (await prompts.askQuestion({
+    id: 'test-runner',
+    type: 'multiple-choice',
+    text: 'Select test runner:',
+    options: ['playwright', 'cypress'],
+    default: (suggestions?.testing?.runner as string) || 'playwright',
+    required: true,
+  })) as TestRunnerName;
+
+  // 7. Test command
+  const testCommand = (await prompts.askQuestion({
+    id: 'test-command',
+    type: 'open-ended',
+    text: 'Enter test command:',
+    default: suggestions?.testing?.command || (framework?.getDefaultConfig().testCommand) || 'npm test',
+    required: true,
+  })) as string;
+
+  // 8. Test timeout
+  const testTimeoutStr = (await prompts.askQuestion({
+    id: 'test-timeout',
+    type: 'open-ended',
+    text: 'Enter test timeout (ms):',
+    default: String(suggestions?.testing?.timeout || 300000),
+    required: true,
+  })) as string;
+  const testTimeout = parseInt(testTimeoutStr, 10) || 300000;
+
+  // 9. Artifacts directory
+  const artifactsDir = (await prompts.askQuestion({
+    id: 'artifacts-dir',
+    type: 'open-ended',
+    text: 'Enter artifacts directory:',
+    default: suggestions?.testing?.artifactsDir || 'test-results',
+    required: true,
+  })) as string;
+
+  // 10. Intervention mode
+  const interventionMode = (await prompts.askQuestion({
+    id: 'intervention-mode',
+    type: 'multiple-choice',
+    text: 'Select intervention mode:',
+    options: ['autonomous', 'review', 'hybrid'],
+    default: 'autonomous',
+    required: true,
+  })) as 'autonomous' | 'review' | 'hybrid';
+
+  let approvalRequired: string[] = [];
+  if (interventionMode === 'hybrid') {
+    const approvalStr = (await prompts.askQuestion({
+      id: 'approval-required',
+      type: 'open-ended',
+      text: 'Enter operations requiring approval (comma-separated):',
+      default: 'delete,schema-change',
+      required: false,
+    })) as string;
+    approvalRequired = approvalStr
+      .split(',')
+      .map(s => s.trim())
+      .filter(s => s.length > 0);
+  }
+
+  // 11. Tasks path
+  const tasksPath = (await prompts.askQuestion({
+    id: 'tasks-path',
+    type: 'open-ended',
+    text: 'Enter task-master-ai tasks path:',
+    default: suggestions?.taskMaster?.tasksPath || '.taskmaster/tasks/tasks.json',
+    required: true,
+  })) as string;
+
+  // Initialize empty log sources (can be configured later via suggestions)
+  const logSources: Array<{ type: 'file' | 'command'; path?: string; command?: string }> =
+    suggestions?.logs?.sources || [];
+
+  return {
+    aiProvider,
+    aiModel,
+    aiFallback,
+    templateSource,
+    customTemplatePath,
+    testRunner,
+    testCommand,
+    testTimeout,
+    artifactsDir,
+    logSources,
+    interventionMode,
+    approvalRequired,
+    tasksPath,
+    testing: suggestions?.testing,
+    logs: suggestions?.logs,
+  };
+}
+
+/**
+ * Prompt using inquirer (fallback)
+ */
+async function promptWithInquirer(
+  suggestions?: Partial<Config>,
+  framework?: FrameworkPlugin
+): Promise<InitAnswers> {
+  // Select provider first
+  const providerAnswer = await inquirer.prompt([
     {
       type: 'list',
       name: 'aiProvider',
@@ -28,33 +251,32 @@ export async function promptInitConfig(): Promise<InitAnswers> {
         { name: 'OpenAI GPT', value: 'openai' },
         { name: 'Google Gemini', value: 'gemini' },
         { name: 'Ollama (Local)', value: 'ollama' },
+        { name: 'Cursor AI', value: 'cursor' },
       ],
-      default: 'anthropic',
+      default: suggestions?.ai?.provider || 'cursor',
     },
+  ]);
+
+  // Get provider-specific models
+  const models = PROVIDER_MODELS[providerAnswer.aiProvider as AIProviderName] || [];
+
+  // Select model
+  const modelAnswer = await inquirer.prompt([
     {
-      type: 'input',
+      type: 'list',
       name: 'aiModel',
-      message: 'Enter AI model name:',
-      default: (answers: Partial<InitAnswers>) => {
-        switch (answers.aiProvider) {
-          case 'anthropic':
-            return 'claude-sonnet-4-20250514';
-          case 'openai':
-            return 'gpt-4o';
-          case 'gemini':
-            return 'gemini-pro';
-          case 'ollama':
-            return 'llama2';
-          default:
-            return '';
-        }
-      },
+      message: `Select ${providerAnswer.aiProvider} model:`,
+      choices: models.map(m => ({ name: m.name, value: m.value })),
+      default: suggestions?.ai?.model || getDefaultModel(providerAnswer.aiProvider as AIProviderName),
     },
+  ]);
+
+  const answers = await inquirer.prompt<InitAnswers>([
     {
       type: 'input',
       name: 'aiFallback',
       message: 'Enter fallback provider (optional, format: provider:model):',
-      default: '',
+      default: suggestions?.ai?.fallback || '',
     },
     {
       type: 'list',
@@ -65,7 +287,7 @@ export async function promptInitConfig(): Promise<InitAnswers> {
         { name: 'ai-dev-tasks (bundled)', value: 'ai-dev-tasks' },
         { name: 'Custom (user-provided)', value: 'custom' },
       ],
-      default: 'builtin',
+      default: suggestions?.templates?.source || 'builtin',
     },
     {
       type: 'input',
@@ -87,25 +309,25 @@ export async function promptInitConfig(): Promise<InitAnswers> {
         { name: 'Playwright', value: 'playwright' },
         { name: 'Cypress', value: 'cypress' },
       ],
-      default: 'playwright',
+      default: (suggestions?.testing?.runner as string) || 'playwright',
     },
     {
       type: 'input',
       name: 'testCommand',
       message: 'Enter test command:',
-      default: 'npm test',
+      default: suggestions?.testing?.command || (framework?.getDefaultConfig().testCommand) || 'npm test',
     },
     {
       type: 'number',
       name: 'testTimeout',
       message: 'Enter test timeout (ms):',
-      default: 300000,
+      default: suggestions?.testing?.timeout || 300000,
     },
     {
       type: 'input',
       name: 'artifactsDir',
       message: 'Enter artifacts directory:',
-      default: 'test-results',
+      default: suggestions?.testing?.artifactsDir || 'test-results',
     },
     {
       type: 'list',
@@ -129,9 +351,13 @@ export async function promptInitConfig(): Promise<InitAnswers> {
       type: 'input',
       name: 'tasksPath',
       message: 'Enter task-master-ai tasks path:',
-      default: '.taskmaster/tasks/tasks.json',
+      default: suggestions?.taskMaster?.tasksPath || '.taskmaster/tasks/tasks.json',
     },
   ]);
+
+  // Merge provider and model answers
+  answers.aiProvider = providerAnswer.aiProvider;
+  answers.aiModel = modelAnswer.aiModel;
 
   // Parse fallback
   if (answers.aiFallback) {
@@ -153,9 +379,10 @@ export async function promptInitConfig(): Promise<InitAnswers> {
       .filter((s: string) => s.length > 0);
   }
 
-  // Initialize empty log sources (can be configured later)
-  answers.logSources = [];
+  // Initialize empty log sources (can be configured later via suggestions)
+  answers.logSources = suggestions?.logs?.sources || [];
+  answers.testing = suggestions?.testing;
+  answers.logs = suggestions?.logs;
 
   return answers;
 }
-
