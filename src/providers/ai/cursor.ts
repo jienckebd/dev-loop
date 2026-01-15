@@ -237,7 +237,10 @@ export class CursorProvider implements AIProvider {
             codeChanges = this.extractCodeChangesFromResponse(result.response, context);
           }
           
-          const taskType = context.task.taskType || this.inferTaskTypeFromTask(context.task);
+          // Always call inferTaskTypeFromTask to catch meta-task patterns (like "Complete phase")
+          // even when task.taskType is explicitly set - meta-tasks should never be treated as generate
+          const inferredType = this.inferTaskTypeFromTask(context.task);
+          const taskType = inferredType !== 'generate' ? inferredType : (context.task.taskType || inferredType);
           const isAnalysisTask = taskType === 'analysis' || taskType === 'investigate';
           
           if (codeChanges) {
