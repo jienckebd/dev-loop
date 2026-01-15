@@ -4,6 +4,7 @@ import { PrdSetDiscovery } from "../../core/prd/set/discovery";
 import { PrdSetValidator } from "../../core/prd/set/validator";
 import { PrdSetOrchestrator } from "../../core/prd/set/orchestrator";
 import { loadConfig } from '../../config/loader';
+import { writePidFileForPrdSet, removePidFileForPrdSet } from './stop';
 
 /**
  * PRD set execute command - One-shot execution for PRD sets
@@ -80,12 +81,21 @@ export async function prdSetExecuteCommand(options: {
     const orchestrator = new PrdSetOrchestrator(config, debug);
     spinner.succeed('Orchestrator initialized');
 
+    // Write PID file so this process can be stopped with "npx dev-loop stop"
+    await writePidFileForPrdSet(discoveredSet.setId);
+
     spinner.start('Creating tasks from PRD set');
-    const result = await orchestrator.executePrdSet(discoveredSet, {
-      parallel: options.parallel ?? true,
-      maxConcurrent: options.maxConcurrent ?? 2,
-    });
-    spinner.succeed(`Tasks created for ${result.completedPrds.length} PRD(s)`);
+    let result;
+    try {
+      result = await orchestrator.executePrdSet(discoveredSet, {
+        parallel: options.parallel ?? true,
+        maxConcurrent: options.maxConcurrent ?? 2,
+      });
+      spinner.succeed(`Tasks created for ${result.completedPrds.length} PRD(s)`);
+    } finally {
+      // Always remove PID file when done
+      await removePidFileForPrdSet(discoveredSet.setId);
+    }
 
     console.log('\n');
 
