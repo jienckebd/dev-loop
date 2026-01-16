@@ -35,27 +35,6 @@ export interface AICallDetail {
 }
 
 /**
- * Model-specific pricing per 1000 tokens
- */
-export const MODEL_PRICING: Record<string, { input: number; output: number }> = {
-  // Anthropic
-  'claude-sonnet-4-20250514': { input: 0.003, output: 0.015 },
-  'claude-3-5-sonnet-latest': { input: 0.003, output: 0.015 },
-  'claude-3-5-haiku-latest': { input: 0.0008, output: 0.004 },
-  // OpenAI
-  'gpt-4o': { input: 0.005, output: 0.015 },
-  'gpt-4o-mini': { input: 0.00015, output: 0.0006 },
-  // Gemini
-  'gemini-2.0-flash': { input: 0.0001, output: 0.0004 },
-  'gemini-1.5-pro': { input: 0.00125, output: 0.005 },
-  // Cursor (uses Claude pricing as proxy)
-  'cursor': { input: 0.003, output: 0.015 },
-  'auto': { input: 0.003, output: 0.015 },
-  // Default fallback
-  'default': { input: 0.01, output: 0.01 },
-};
-
-/**
  * Build comparison data for historical tracking
  */
 export interface BuildComparison {
@@ -470,7 +449,8 @@ export class BuildMetrics {
     success: boolean,
     durationMs?: number,
     tokens?: { input: number; output: number },
-    retried?: boolean
+    retried?: boolean,
+    costUsd?: number
   ): void {
     if (!this.currentBuild) {
       logger.warn('[BuildMetrics] No active build to record AI call');
@@ -507,9 +487,14 @@ export class BuildMetrics {
       this.currentBuild.tokens.totalInput += tokens.input;
       this.currentBuild.tokens.totalOutput += tokens.output;
 
-      // Estimate cost (rough estimate: $0.01 per 1K tokens)
-      this.currentBuild.tokens.estimatedCost =
-        ((this.currentBuild.tokens.totalInput + this.currentBuild.tokens.totalOutput) / 1000) * 0.01;
+      // Use provider-native cost calculation if provided, otherwise estimate
+      if (costUsd !== undefined) {
+        this.currentBuild.tokens.estimatedCost = (this.currentBuild.tokens.estimatedCost || 0) + costUsd;
+      } else {
+        // Fallback estimate: $0.01 per 1K tokens (used when provider doesn't calculate cost)
+        this.currentBuild.tokens.estimatedCost =
+          ((this.currentBuild.tokens.totalInput + this.currentBuild.tokens.totalOutput) / 1000) * 0.01;
+      }
 
       // Track by component
       if (!this.currentBuild.tokens.byComponent[component]) {

@@ -46,6 +46,41 @@ export const schemaPatternSchema = z.object({
 });
 
 /**
+ * Error pattern learned from validation/test failures
+ * (from PatternLearningSystem - v1 schema)
+ */
+export const errorPatternSchema = z.object({
+  id: z.string().describe('Unique error pattern identifier'),
+  pattern: z.string().describe('Error signature or pattern (regex)'),
+  guidance: z.string().describe('Guidance on how to avoid or fix this error'),
+  occurrences: z.number().describe('Number of times this error pattern was seen'),
+  lastSeen: z.string().describe('ISO date when pattern was last seen'),
+  files: z.array(z.string()).optional().describe('Files where this pattern was seen'),
+  projectTypes: z.array(z.string()).optional().describe('Project types where pattern was seen (e.g., "drupal", "react")'),
+  injectionCount: z.number().optional().describe('Times this pattern was injected into prompts'),
+  preventionCount: z.number().optional().describe('Times this pattern helped prevent an error'),
+  lastInjected: z.string().optional().describe('ISO date when pattern was last injected'),
+});
+
+/**
+ * PRD pattern entry from learning files
+ * (from PatternLoader - v2 schema)
+ */
+export const prdPatternSchema = z.object({
+  id: z.string().describe('Unique PRD pattern identifier'),
+  createdAt: z.string().describe('ISO date when pattern was created'),
+  lastUsedAt: z.string().describe('ISO date when pattern was last used'),
+  relevanceScore: z.number().describe('Relevance score 0-1'),
+  expiresAt: z.string().nullable().optional().describe('ISO date when pattern expires (null if doesn\'t expire)'),
+  prdId: z.string().optional().describe('PRD ID where pattern was learned'),
+  framework: z.string().optional().describe('Framework type (e.g., "drupal", "react")'),
+  category: z.string().describe('Pattern category (e.g., "schema", "test", "feature", "error-pattern")'),
+  pattern: z.string().describe('The actual pattern/text'),
+  examples: z.array(z.string()).optional().describe('Example uses of this pattern'),
+  metadata: z.record(z.string(), z.any()).optional().describe('Additional metadata'),
+});
+
+/**
  * Pattern library metadata
  */
 export const patternLibraryMetadataSchema = z.object({
@@ -68,6 +103,12 @@ export const patternLibrarySchema = z.object({
   // Schema patterns (framework-specific)
   schemaPatterns: z.array(schemaPatternSchema).optional(),
 
+  // Error patterns learned from validation/test failures (from PatternLearningSystem)
+  errorPatterns: z.array(errorPatternSchema).optional(),
+
+  // PRD patterns from learning files (from PatternLoader)
+  prdPatterns: z.array(prdPatternSchema).optional(),
+
   // Learning metadata
   metadata: patternLibraryMetadataSchema.optional(),
 });
@@ -78,6 +119,8 @@ export const patternLibrarySchema = z.object({
 export type CodePattern = z.infer<typeof codePatternSchema>;
 export type TestPattern = z.infer<typeof testPatternSchema>;
 export type SchemaPattern = z.infer<typeof schemaPatternSchema>;
+export type ErrorPattern = z.infer<typeof errorPatternSchema>;
+export type PrdPattern = z.infer<typeof prdPatternSchema>;
 export type PatternLibraryMetadata = z.infer<typeof patternLibraryMetadataSchema>;
 export type PatternLibrary = z.infer<typeof patternLibrarySchema>;
 
@@ -96,6 +139,8 @@ export function createEmptyPatternLibrary(): PatternLibrary {
     codePatterns: [],
     testPatterns: [],
     schemaPatterns: [],
+    errorPatterns: [],
+    prdPatterns: [],
     metadata: {
       lastAnalyzed: new Date().toISOString(),
       totalPatterns: 0,

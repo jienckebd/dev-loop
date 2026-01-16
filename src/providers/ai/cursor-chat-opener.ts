@@ -11,7 +11,7 @@ import { spawn, execSync, exec, ChildProcess } from 'child_process';
 import { promisify } from 'util';
 import { logger } from "../../core/utils/logger";
 import { ChatRequest, Config, CodeChanges } from '../../types';
-import { CursorSessionManager } from './cursor-session-manager';
+import { GenericSessionManager } from './generic-session-manager';
 import { SessionContext } from './session-manager';
 import { extractCodeChanges, parseCodeChangesFromText, JsonParsingContext } from './json-parser';
 import { ObservationTracker } from "../../core/tracking/observation-tracker";
@@ -98,7 +98,7 @@ export interface CursorChatOpenerConfig {
 export class CursorChatOpener {
   private config: CursorChatOpenerConfig;
   private cursorPath: string | null = null;
-  private sessionManager: CursorSessionManager | null = null;
+  private sessionManager: GenericSessionManager | null = null;
   private observationTracker: ObservationTracker;
   private ipcServer: AgentIPCServer | null = null;
   /** Chat ID for session resumption - reuses existing Cursor agent session */
@@ -142,11 +142,12 @@ export class CursorChatOpener {
     // Initialize session manager if enabled (defaults to true)
     const sessionEnabled = this.config.sessionManagement?.enabled !== false;
     if (sessionEnabled) {
-      this.sessionManager = new CursorSessionManager({
+      this.sessionManager = new GenericSessionManager({
+        providerName: 'cursor',
         enabled: this.config.sessionManagement?.enabled !== false,
         maxSessionAge: this.config.sessionManagement?.maxSessionAge,
         maxHistoryItems: this.config.sessionManagement?.maxHistoryItems,
-        sessionsPath: this.config.sessionManagement?.sessionsPath,
+        sessionsPath: this.config.sessionManagement?.sessionsPath || '.devloop/execution-state.json',
       });
     }
   }
@@ -163,14 +164,6 @@ export class CursorChatOpener {
     const strategy = this.config.openStrategy || 'agent';
 
     logger.info(`[CursorChatOpener] Opening chat for request ${request.id} with strategy: ${strategy}`);
-
-    // Try IDE strategy explicitly (deprecated - kept for backward compatibility)
-    // NOTE: IDE strategy is deprecated. Background agents (agent strategy) are the primary execution method.
-    // This path is only used if explicitly set to 'ide' strategy, which is not the default.
-    if (strategy === 'ide') {
-      logger.warn('[CursorChatOpener] IDE strategy is deprecated. Use agent strategy with background agents instead.');
-      return this.openForIdeComposer(request);
-    }
 
     // Try agent strategy
     if (strategy === 'auto' || strategy === 'agent') {
@@ -202,257 +195,6 @@ export class CursorChatOpener {
     };
   }
 
-  /**
-   * Open a composer-ready prompt file for IDE chat panel integration
-   *
-   * DEPRECATED: This method is only used by the deprecated 'ide' strategy.
-   * Primary execution uses background agents (--print mode) which don't require IDE interaction.
-   *
-   * This creates a .prompt.md file that users can easily copy-paste into
-   * Cursor's composer (Cmd+L / Ctrl+L).
-   */
-  async openForIdeComposer(request: ChatRequest): Promise<ChatOpenResult> {
-    if (!this.cursorPath) {
-      return {
-        success: false,
-        method: 'ide',
-        message: 'Cursor CLI not found',
-      };
-    }
-
-    try {
-      // Create the composer-ready prompt file
-      const promptFilePath = await this.createComposerPromptFile(request);
-
-      // Open the prompt file in Cursor
-      const child = spawn(this.cursorPath, ['-r', promptFilePath], {
-        detached: true,
-        stdio: 'ignore',
-      });
-      // Register child process for cleanup
-      activeChildProcesses.add(child);
-      child.unref();
-
-      // Try keyboard automation if enabled (macOS only)
-      if (this.config.keyboardAutomation && process.platform === 'darwin') {
-        await this.triggerComposerShortcut();
-      }
-
-      const instructions = this.getIdeInstructions(promptFilePath);
-
-      logger.info(`[CursorChatOpener] Opened prompt file for IDE composer: ${path.basename(promptFilePath)}`);
-
-      return {
-        success: true,
-        method: 'ide',
-        promptFilePath,
-        message: `Opened prompt file: ${path.basename(promptFilePath)}`,
-        instructions,
-        command: `cursor -r "${promptFilePath}"`,
-      };
-    } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : String(error);
-      logger.error(`[CursorChatOpener] IDE method failed: ${errorMessage}`);
-      return {
-        success: false,
-        method: 'ide',
-        message: errorMessage,
-      };
-    }
-  }
-
-  /**
-   * Open composer with full automation (no file opening required)
-   *
-   * DEPRECATED: This method is only used by the deprecated 'ide' strategy.
-   * Primary execution uses background agents (--print mode) which don't require IDE interaction.
-   *
-   * This method:
-   * 1. Extracts prompt text from request
-   * 2. Uses keyboard automation to open composer
-   * 3. Pastes prompt text automatically
-   * 4. Optionally sends the message
-   *
-   * Falls back to file opening if automation fails.
-   *
-   * @param request - Chat request to open
-   * @param autoSend - Whether to automatically send the message (default: false)
-   */
-  async openForIdeComposerAutomated(request: ChatRequest, autoSend: boolean = false): Promise<ChatOpenResult> {
-    // Check if automation is supported and enabled
-    if (!this.config.keyboardAutomation || process.platform !== 'darwin') {
-      logger.debug('[CursorChatOpener] Automation not enabled or not on macOS, falling back to file opening');
-      return this.openForIdeComposer(request);
-    }
-
-    try {
-      // Extract prompt text (text above --- separator)
-      const promptText = this.extractPromptText(request);
-
-      if (!promptText || promptText.trim().length === 0) {
-        logger.warn('[CursorChatOpener] No prompt text to extract, falling back to file opening');
-        return this.openForIdeComposer(request);
-      }
-
-      logger.info('[CursorChatOpener] Starting full automation workflow...');
-
-      // Import keyboard automation
-      const { fullComposerWorkflow } = await import('./cursor-keyboard-automation.js');
-
-      // Execute full automation workflow
-      const success = await fullComposerWorkflow(promptText, autoSend);
-
-      if (success) {
-        logger.info('[CursorChatOpener] Full automation workflow completed successfully');
-
-        // Optionally create prompt file as backup/fallback
-        let promptFilePath: string | undefined;
-        try {
-          promptFilePath = await this.createComposerPromptFile(request);
-        } catch (error) {
-          // Don't fail if file creation fails
-          logger.debug(`[CursorChatOpener] Could not create backup prompt file: ${error}`);
-        }
-
-        return {
-          success: true,
-          method: 'ide',
-          promptFilePath,
-          message: 'Chat opened automatically in composer with prompt pasted',
-          instructions: autoSend
-            ? 'Message was automatically sent to composer'
-            : 'Prompt is pasted in composer. Press Enter to send.',
-        };
-      } else {
-        logger.warn('[CursorChatOpener] Automation workflow failed, falling back to file opening');
-        return this.openForIdeComposer(request);
-      }
-    } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : String(error);
-      logger.error(`[CursorChatOpener] Automated IDE method failed: ${errorMessage}`);
-      // Fallback to file opening
-      return this.openForIdeComposer(request);
-    }
-  }
-
-  /**
-   * Create a composer-ready prompt file (.prompt.md)
-   *
-   * The file is formatted for easy copy-paste into Cursor's composer.
-   */
-  async createComposerPromptFile(request: ChatRequest): Promise<string> {
-    const instructionsDir = this.getPromptFilesDir();
-    await fs.promises.mkdir(instructionsDir, { recursive: true });
-
-    const fileName = `${request.id}.prompt.md`;
-    const filePath = path.join(instructionsDir, fileName);
-
-    const content = this.generateComposerPromptContent(request);
-    await fs.promises.writeFile(filePath, content, 'utf-8');
-
-    logger.debug(`[CursorChatOpener] Created composer prompt file: ${filePath}`);
-    return filePath;
-  }
-
-  /**
-   * Generate composer-ready prompt content
-   *
-   * Format is optimized for direct copy-paste into Cursor's composer.
-   */
-  private generateComposerPromptContent(request: ChatRequest): string {
-    const format = this.config.promptFileFormat || 'markdown';
-
-    if (format === 'plain') {
-      return this.generatePlainPromptContent(request);
-    }
-
-    return this.generateMarkdownPromptContent(request);
-  }
-
-  /**
-   * Generate markdown-formatted prompt content
-   */
-  private generateMarkdownPromptContent(request: ChatRequest): string {
-    const lines: string[] = [];
-
-    // Header with copy instructions
-    lines.push(`<!-- DEV-LOOP PROMPT FILE -->`);
-    lines.push(`<!-- Select all (Cmd+A), Copy (Cmd+C), then open Composer (Cmd+L) and Paste (Cmd+V) -->`);
-    lines.push(``);
-
-    // The actual prompt - formatted for composer
-    if (request.question) {
-      // Add @codebase tag if it seems like a code-related request
-      const prompt = request.question;
-      if (this.shouldAddCodebaseTag(prompt)) {
-        lines.push(`@codebase ${prompt}`);
-      } else {
-        lines.push(prompt);
-      }
-    }
-
-    // Add context as additional instructions
-    if (request.context) {
-      lines.push(``);
-      if (request.context.prdId) {
-        lines.push(`PRD: ${request.context.prdId}`);
-      }
-      if (request.context.taskId) {
-        lines.push(`Task ID: ${request.context.taskId}`);
-      }
-      if (request.context.taskTitle) {
-        lines.push(`Task: ${request.context.taskTitle}`);
-      }
-    }
-
-    // Add a separator and metadata (not part of the prompt)
-    lines.push(``);
-    lines.push(`---`);
-    lines.push(``);
-    lines.push(`**Request ID:** ${request.id}`);
-    lines.push(`**Agent:** ${request.agentName || 'DevLoopCodeGen'}`);
-    lines.push(`**Model:** ${request.model || 'Auto'}`);
-    lines.push(`**Created:** ${request.createdAt || new Date().toISOString()}`);
-    lines.push(``);
-    lines.push(`### Quick Start`);
-    lines.push(`1. Select all text above the --- line (Cmd+A won't work, select manually)`);
-    lines.push(`2. Copy (Cmd+C)`);
-    lines.push(`3. Open Composer: **Cmd+L** (Mac) or **Ctrl+L** (Windows/Linux)`);
-    lines.push(`4. Paste (Cmd+V)`);
-    lines.push(`5. Press Enter to send`);
-
-    return lines.join('\n');
-  }
-
-  /**
-   * Generate plain-text prompt content
-   */
-  private generatePlainPromptContent(request: ChatRequest): string {
-    const lines: string[] = [];
-
-    // Just the prompt, ready to copy
-    if (request.question) {
-      const prompt = request.question;
-      if (this.shouldAddCodebaseTag(prompt)) {
-        lines.push(`@codebase ${prompt}`);
-      } else {
-        lines.push(prompt);
-      }
-    }
-
-    // Add context
-    if (request.context) {
-      if (request.context.prdId) {
-        lines.push(``);
-        lines.push(`PRD: ${request.context.prdId}`);
-      }
-      if (request.context.taskId) {
-        lines.push(`Task: ${request.context.taskId}`);
-      }
-    }
-
-    return lines.join('\n');
-  }
 
   /**
    * Check if we should add @codebase tag to the prompt
@@ -474,96 +216,6 @@ export class CursorChatOpener {
     return codeKeywords.some(keyword => lowerPrompt.includes(keyword));
   }
 
-  /**
-   * Extract prompt text from a chat request
-   *
-   * Returns the text that would appear above the --- separator in the prompt file.
-   * This is the text that should be pasted into the composer.
-   *
-   * @param request - Chat request to extract prompt from
-   * @returns The prompt text ready for composer
-   */
-  extractPromptText(request: ChatRequest): string {
-    const lines: string[] = [];
-
-    // The actual prompt - formatted for composer
-    if (request.question) {
-      const prompt = request.question;
-      if (this.shouldAddCodebaseTag(prompt)) {
-        lines.push(`@codebase ${prompt}`);
-      } else {
-        lines.push(prompt);
-      }
-    }
-
-    // Add context as additional instructions
-    if (request.context) {
-      if (request.context.prdId) {
-        lines.push(``);
-        lines.push(`PRD: ${request.context.prdId}`);
-      }
-      if (request.context.taskId) {
-        lines.push(`Task ID: ${request.context.taskId}`);
-      }
-      if (request.context.taskTitle) {
-        lines.push(`Task: ${request.context.taskTitle}`);
-      }
-    }
-
-    return lines.join('\n').trim();
-  }
-
-  /**
-   * Get the directory for prompt files
-   */
-  private getPromptFilesDir(): string {
-    return path.join(process.cwd(), '.cursor', 'chat-prompts');
-  }
-
-  /**
-   * Get instructions for IDE chat usage
-   */
-  private getIdeInstructions(promptFilePath: string): string {
-    return [
-      `Prompt file opened in Cursor: ${path.basename(promptFilePath)}`,
-      ``,
-      `To use with Cursor Composer:`,
-      `  1. Select the prompt text (above the --- line)`,
-      `  2. Copy: Cmd+C (Mac) / Ctrl+C (Windows)`,
-      `  3. Open Composer: Cmd+L (Mac) / Ctrl+L (Windows)`,
-      `  4. Paste and send`,
-    ].join('\n');
-  }
-
-  /**
-   * Trigger Cursor composer shortcut via AppleScript (macOS only)
-   */
-  private async triggerComposerShortcut(): Promise<boolean> {
-    if (process.platform !== 'darwin') {
-      return false;
-    }
-
-    try {
-      // Wait a moment for the file to open
-      await new Promise(resolve => setTimeout(resolve, 500));
-
-      // Use AppleScript to simulate Cmd+L
-      const script = `
-        tell application "System Events"
-          tell process "Cursor"
-            keystroke "l" using command down
-          end tell
-        end tell
-      `;
-
-      await execAsync(`osascript -e '${script}'`);
-      logger.info('[CursorChatOpener] Triggered Cmd+L via AppleScript');
-      return true;
-    } catch (error) {
-      logger.debug(`[CursorChatOpener] AppleScript automation failed: ${error}`);
-      return false;
-    }
-  }
 
   /**
    * Create a new chat using `cursor agent create-chat`
@@ -652,6 +304,11 @@ export class CursorChatOpener {
       child.unref();
 
       logger.info(`[CursorChatOpener] Started Cursor agent for chat ${createResult.chatId}`);
+      
+      // Store chatId for potential future use
+      if (createResult.chatId) {
+        this.currentChatId = createResult.chatId;
+      }
 
       return {
         success: true,
@@ -729,6 +386,10 @@ export class CursorChatOpener {
       ];
 
       // Add --resume flag if we have a chatId from a previous call (session reuse for performance)
+      // First try to get from session if not already set
+      if (!this.currentChatId && session && this.sessionManager) {
+        this.currentChatId = this.sessionManager.getResumeId(session.sessionId) || null;
+      }
       if (this.currentChatId) {
         args.push('--resume', this.currentChatId);
         logger.info(`[CursorChatOpener] Resuming session with chatId: ${this.currentChatId}`);
@@ -917,6 +578,10 @@ export class CursorChatOpener {
                     // Extract chatId for session resumption (performance optimization)
                     if (parsed.chatId && typeof parsed.chatId === 'string') {
                       this.currentChatId = parsed.chatId;
+                      // Store chatId in session as providerSessionId
+                      if (session && this.sessionManager) {
+                        this.sessionManager.setProviderSessionId(session.sessionId, parsed.chatId);
+                      }
                       logger.debug(`[CursorChatOpener] Captured chatId for session reuse: ${parsed.chatId}`);
                     }
                   } else {

@@ -1,6 +1,7 @@
 import { AIProvider, AIProviderConfig } from './interface';
 import { CodeChanges, TaskContext, LogAnalysis } from '../../types';
-import { extractCodeChanges, JsonParsingContext } from './json-parser';
+import { JsonParsingContext } from './json-parser';
+import { CodeChangesValidator } from './code-changes-validator';
 import { GenericSessionManager } from './generic-session-manager';
 import { Session, SessionContext } from './session-manager';
 import { logger } from '../../core/utils/logger';
@@ -53,6 +54,13 @@ export class OllamaProvider implements AIProvider {
    */
   supportsSessions(): boolean {
     return this.sessionManager !== null;
+  }
+
+  /**
+   * Calculate cost in USD for token usage (Ollama is free, returns 0)
+   */
+  calculateCost(tokens: { input?: number; output?: number }): number {
+    return 0; // Ollama is free/local
   }
 
   async generateCode(prompt: string, context: TaskContext): Promise<CodeChanges> {
@@ -117,12 +125,12 @@ ${prompt}`;
         prdId: context.prdId,
         phaseId: context.phaseId ?? undefined,
       };
-      const codeChanges = extractCodeChanges(text, undefined, parsingContext);
-      if (codeChanges) {
-        return codeChanges;
-      }
+        const validationResult = CodeChangesValidator.validate(text, parsingContext);
+        if (validationResult.valid && validationResult.codeChanges) {
+          return validationResult.codeChanges;
+        }
 
-      // Fallback: create a single file
+        // Fallback: create a single file
       return {
         files: [
           {

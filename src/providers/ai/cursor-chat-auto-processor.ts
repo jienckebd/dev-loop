@@ -17,7 +17,6 @@ import { ChatRequest, ChatInstruction, Config } from '../../types';
 import { listPendingChatRequests, markRequestProcessed, markRequestFailed } from './cursor-chat-requests';
 import { logger } from "../../core/utils/logger";
 import { CursorChatOpener, ChatOpenResult, OpenStrategy, PromptFileFormat } from './cursor-chat-opener';
-import { KeyboardAutomation, isKeyboardAutomationSupported } from './cursor-keyboard-automation';
 
 export interface ProcessResult {
   requestId: string;
@@ -44,7 +43,6 @@ export class ChatRequestAutoProcessor {
   private keyboardAutomation: boolean;
   private promptFileFormat: PromptFileFormat;
   private chatOpener: CursorChatOpener;
-  private keyboardAutomator: KeyboardAutomation | null = null;
 
   constructor(config: Config) {
     this.config = config;
@@ -79,12 +77,6 @@ export class ChatRequestAutoProcessor {
       useBackgroundAgent: useBackgroundAgent,
       agentOutputFormat: agentOutputFormat,
     });
-
-    // Initialize keyboard automation if enabled and supported
-    if (this.keyboardAutomation && isKeyboardAutomationSupported()) {
-      this.keyboardAutomator = new KeyboardAutomation({ enabled: true });
-      logger.info('[ChatAutoProcessor] Keyboard automation enabled (macOS)');
-    }
   }
 
   /**

@@ -4,7 +4,8 @@ import * as path from 'path';
 import { AIProvider, AIProviderConfig } from './interface';
 import { CodeChanges, TaskContext, LogAnalysis, FrameworkConfig } from '../../types';
 import { logger } from "../../core/utils/logger";
-import { extractCodeChanges, JsonParsingContext } from './json-parser';
+import { JsonParsingContext } from './json-parser';
+import { CodeChangesValidator } from './code-changes-validator';
 import { GenericSessionManager, GenericSession } from './generic-session-manager';
 import { Session, SessionContext } from './session-manager';
 
@@ -18,6 +19,15 @@ export class AnthropicProvider implements AIProvider {
   private debug = false;
   private lastTokens: { input?: number; output?: number } = {};
   private sessionManager: GenericSessionManager | null = null;
+
+  // Model pricing per 1M tokens (input, output)
+  private static readonly PRICING: Record<string, { input: number; output: number }> = {
+    'claude-sonnet-4-20250514': { input: 3.0, output: 15.0 },
+    'claude-3-5-sonnet-latest': { input: 3.0, output: 15.0 },
+    'claude-3-5-haiku-latest': { input: 0.8, output: 4.0 },
+    'claude-3-opus-latest': { input: 15.0, output: 75.0 },
+    'claude-3-5-sonnet-20241022': { input: 3.0, output: 15.0 },
+  };
 
   constructor(private config: AIProviderConfig) {
     if (!config.apiKey) {
@@ -76,6 +86,16 @@ export class AnthropicProvider implements AIProvider {
    */
   public getLastTokens(): { input?: number; output?: number } {
     return { ...this.lastTokens };
+  }
+
+  /**
+   * Calculate cost in USD for token usage (provider-native pricing)
+   */
+  calculateCost(tokens: { input?: number; output?: number }): number {
+    const pricing = AnthropicProvider.PRICING[this.config.model] || { input: 10.0, output: 10.0 };
+    const inputCost = ((tokens.input || 0) / 1_000_000) * pricing.input;
+    const outputCost = ((tokens.output || 0) / 1_000_000) * pricing.output;
+    return inputCost + outputCost;
   }
 
   /**
@@ -257,238 +277,23 @@ ${prompt}`;
           console.log('[DEBUG] ===== AI RESPONSE END =====\n');
         }
 
-        // Use shared JSON parser for consistent extraction (primary method)
+        // Use unified CodeChangesValidator for consistent extraction
         const parsingContext: JsonParsingContext = {
           providerName: 'anthropic',
           taskId: context.task.id,
           prdId: context.prdId,
           phaseId: context.phaseId ?? undefined,
         };
-        const sharedParserResult = extractCodeChanges(text, undefined, parsingContext);
-        if (sharedParserResult) {
-          return sharedParserResult;
-        }
-
-        // Fallback to Anthropic-specific parsing for complex/truncated cases
-        let jsonText: string | null = null;
-
-        // Try code block with json marker - use greedy matching to get the whole JSON
-        const codeBlockMatch = text.match(/```json\s*([\s\S]*?)\s*```/);
-        if (codeBlockMatch) {
-          // Extract just the JSON object from the code block content
-          const blockContent = codeBlockMatch[1].trim();
-          if (blockContent.startsWith('{')) {
-            jsonText = blockContent;
-          }
-        }
-
-        // Try code block without json marker (but with language hint)
-        if (!jsonText) {
-          const plainBlockMatch = text.match(/```(?:typescript|ts|javascript|js)?\s*([\s\S]*?)\s*```/);
-          if (plainBlockMatch) {
-            const blockContent = plainBlockMatch[1].trim();
-            // Check if it looks like JSON (starts with { and has "files" key)
-            if (blockContent.startsWith('{') && (blockContent.includes('"files"') || blockContent.includes("'files'"))) {
-              jsonText = blockContent;
-            }
-          }
-        }
-
-        // Try plain code block (no language marker)
-        if (!jsonText) {
-          const plainBlockMatch = text.match(/```\s*([\s\S]*?)\s*```/);
-          if (plainBlockMatch) {
-            const blockContent = plainBlockMatch[1].trim();
-            if (blockContent.startsWith('{') && blockContent.includes('"files"')) {
-              jsonText = blockContent;
-            }
-          }
-        }
-
-        // Handle truncated code blocks (no closing ```)
-        if (!jsonText) {
-          // Try with json marker
-          const truncatedMatch = text.match(/```json\s*([\s\S]*)$/);
-          if (truncatedMatch) {
-            const blockContent = truncatedMatch[1].trim();
-            if (blockContent.startsWith('{') && blockContent.includes('"files"')) {
-              console.warn('[Anthropic] Response appears truncated (no closing ```), attempting to repair JSON');
-              jsonText = blockContent;
-            }
-          }
-          
-          // Try without marker
-          if (!jsonText) {
-            const truncatedPlainMatch = text.match(/```\s*([\s\S]*)$/);
-            if (truncatedPlainMatch) {
-              const blockContent = truncatedPlainMatch[1].trim();
-              if (blockContent.startsWith('{') && blockContent.includes('"files"')) {
-                console.warn('[Anthropic] Response appears truncated (no closing ```), attempting to repair JSON');
-                jsonText = blockContent;
-              }
-            }
-          }
-        }
-
-        // Try to find JSON object with "files" key (our expected format) - improved regex
-        if (!jsonText) {
-          // More flexible matching for "files" array and "summary" field
-          // Allow for optional whitespace and flexible structure
-          const filesJsonMatch = text.match(/\{\s*"files"\s*:\s*\[[\s\S]*?\]\s*(?:,\s*"summary"\s*:\s*"[^"]*")?\s*\}/);
-          if (filesJsonMatch) {
-            jsonText = filesJsonMatch[0];
-          }
-        }
         
-        // Try to find JSON that starts with "files" key (alternative structure)
-        if (!jsonText) {
-          const altFilesMatch = text.match(/\{\s*"files"\s*:\s*\[/);
-          if (altFilesMatch && altFilesMatch.index !== undefined) {
-            // Find matching closing brace from the start
-            const startIdx = altFilesMatch.index;
-            let depth = 0;
-            let inString = false;
-            let escaped = false;
-            let endIdx = startIdx;
-            
-            for (let i = startIdx; i < text.length; i++) {
-              const char = text[i];
-              if (escaped) {
-                escaped = false;
-                continue;
-              }
-              if (char === '\\') {
-                escaped = true;
-                continue;
-              }
-              if (char === '"') {
-                inString = !inString;
-                continue;
-              }
-              if (!inString) {
-                if (char === '{') depth++;
-                if (char === '}') {
-                  depth--;
-                  if (depth === 0) {
-                    endIdx = i + 1;
-                    break;
-                  }
-                }
-              }
-            }
-            
-            if (endIdx > startIdx) {
-              jsonText = text.substring(startIdx, endIdx);
-            }
-          }
+        const validationResult = CodeChangesValidator.validate(text, parsingContext);
+        if (validationResult.valid && validationResult.codeChanges) {
+          logger.debug(`[Anthropic] Extracted CodeChanges using ${validationResult.method} method`);
+          return validationResult.codeChanges;
         }
 
-        // Fallback to finding any JSON object that contains "files" array
-        if (!jsonText) {
-          // Look for { followed by optional whitespace and "files"
-          const jsonStartMatch = text.match(/\{\s*"files"\s*:/);
-          if (jsonStartMatch && jsonStartMatch.index !== undefined) {
-            const startIndex = jsonStartMatch.index;
-            // Find the matching closing brace, handling strings properly
-            let depth = 0;
-            let inString = false;
-            let escaped = false;
-            let endIndex = startIndex;
-            for (let i = startIndex; i < text.length; i++) {
-              const char = text[i];
-              if (escaped) {
-                escaped = false;
-                continue;
-              }
-              if (char === '\\') {
-                escaped = true;
-                continue;
-              }
-              if (char === '"') {
-                inString = !inString;
-                continue;
-              }
-              if (!inString) {
-                if (char === '{') depth++;
-                if (char === '}') {
-                  depth--;
-                  if (depth === 0) {
-                    endIndex = i + 1;
-                    break;
-                  }
-                }
-              }
-            }
-            jsonText = text.substring(startIndex, endIndex);
-          }
-        }
-
-        if (jsonText) {
-          try {
-            const parsed = JSON.parse(jsonText);
-            return parsed as CodeChanges;
-          } catch (parseError) {
-            // Try to clean common JSON issues before repair
-            let cleaned = this.cleanJsonString(jsonText);
-
-            // Try parsing cleaned version
-            try {
-              const parsed = JSON.parse(cleaned);
-              console.log('[Anthropic] Successfully parsed after cleaning');
-              return parsed as CodeChanges;
-            } catch {
-              // Continue to repair attempt
-            }
-
-            // Try to repair truncated JSON by closing open structures
-            console.warn('[Anthropic] JSON parse failed, attempting repair...', parseError instanceof Error ? parseError.message : String(parseError));
-            const repaired = this.repairTruncatedJson(cleaned);
-            if (repaired) {
-              try {
-                const parsed = JSON.parse(repaired);
-                console.log('[Anthropic] Successfully repaired truncated JSON');
-                return parsed as CodeChanges;
-              } catch {
-                // Continue to other fallbacks
-              }
-            }
-
-            console.warn('[Anthropic] JSON repair failed, using extraction fallback');
-
-            // Try to extract file path and content from truncated JSON
-            // Look for "path": "..." and "content": "..."
-            const pathMatch = jsonText.match(/"path"\s*:\s*"([^"]+)"/);
-            const contentMatch = text.match(/"content"\s*:\s*"([\s\S]*?)(?:"\s*,\s*"operation"|"\s*}\s*]\s*}|$)/);
-
-            if (pathMatch && pathMatch[1].endsWith('.php')) {
-              // Extract PHP code from the content field
-              let phpContent = '';
-              if (contentMatch) {
-                // Unescape JSON string escapes
-                phpContent = contentMatch[1]
-                  .replace(/\\n/g, '\n')
-                  .replace(/\\t/g, '\t')
-                  .replace(/\\"/g, '"')
-                  .replace(/\\\\/g, '\\');
-              }
-
-              if (phpContent.includes('<?php')) {
-                console.log('[Anthropic] Extracted PHP content from truncated JSON for:', pathMatch[1]);
-                return {
-                  files: [
-                    {
-                      path: pathMatch[1],
-                      content: phpContent,
-                      operation: 'update' as const,
-                    },
-                  ],
-                  summary: 'PHP code extracted from truncated JSON response',
-                };
-              }
-            }
-          }
-        }
-
+        // If validation failed, log and use fallback
+        logger.warn(`[Anthropic] Failed to extract CodeChanges: ${validationResult.errors?.join(', ') || 'Unknown error'}`);
+        
         // Fallback: create a single file with the response for debugging
         const fileExtension = isFrameworkTask ? (this.frameworkConfig?.type === 'drupal' ? 'php' : 'ts') : 'ts';
         const filePath = `generated-code.${fileExtension}`;
@@ -658,146 +463,5 @@ Provide a JSON response with:
     }
 
     return false;
-  }
-
-  /**
-   * Clean common JSON syntax issues
-   */
-  private cleanJsonString(json: string): string {
-    let cleaned = json.trim();
-
-    // Remove trailing commas before closing brackets/braces (common JSON error)
-    cleaned = cleaned.replace(/,(\s*[}\]])/g, '$1');
-
-    // Note: We don't escape newlines/tabs here because they might be in string values
-    // The JSON parser should handle them correctly if the JSON is otherwise valid
-
-    return cleaned;
-  }
-
-  /**
-   * Attempts to repair truncated JSON by closing open structures
-   */
-  private repairTruncatedJson(json: string): string | null {
-    let repaired = json.trim();
-
-    // Count open brackets and braces
-    let openBraces = 0;
-    let openBrackets = 0;
-    let inString = false;
-    let escaped = false;
-    let lastStringStart = -1;
-
-    for (let i = 0; i < repaired.length; i++) {
-      const char = repaired[i];
-
-      if (escaped) {
-        escaped = false;
-        continue;
-      }
-
-      if (char === '\\') {
-        escaped = true;
-        continue;
-      }
-
-      if (char === '"') {
-        if (!inString) {
-          lastStringStart = i;
-        }
-        inString = !inString;
-        continue;
-      }
-
-      if (!inString) {
-        if (char === '{') openBraces++;
-        if (char === '}') openBraces--;
-        if (char === '[') openBrackets++;
-        if (char === ']') openBrackets--;
-      }
-    }
-
-    // Handle unterminated strings - close them properly
-    if (inString) {
-      // Check if we're in the middle of a string value (not a key)
-      // Look backwards from lastStringStart to see if it's a key or value
-      let isValue = false;
-      if (lastStringStart > 0) {
-        const beforeString = repaired.substring(0, lastStringStart).trim();
-        // If we see "key": before the string, it's a value
-        if (beforeString.endsWith(':') || beforeString.match(/:\s*$/)) {
-          isValue = true;
-        }
-      }
-      
-      // Close the string
-      repaired += '"';
-      
-      // If it was a value and we're in an object, add comma if needed
-      if (isValue && openBraces > 0) {
-        // Check if there's already content after (shouldn't be, but be safe)
-        const afterPos = repaired.length;
-        // Add comma only if we're not at the end of object
-        if (openBraces > 0) {
-          // Actually, don't add comma - let the brace closing handle it
-        }
-      }
-    }
-
-    // Close open brackets and braces
-    while (openBrackets > 0) {
-      repaired += ']';
-      openBrackets--;
-    }
-    while (openBraces > 0) {
-      repaired += '}';
-      openBraces--;
-    }
-
-    // Try to parse the repaired JSON
-    try {
-      JSON.parse(repaired);
-      return repaired;
-    } catch {
-      // If repair failed, try one more time with more aggressive fixes
-      return this.aggressiveJsonRepair(repaired);
-    }
-  }
-
-  /**
-   * More aggressive JSON repair for difficult cases
-   */
-  private aggressiveJsonRepair(json: string): string | null {
-    let repaired = json.trim();
-    
-    // Remove trailing commas before closing brackets/braces (common error)
-    repaired = repaired.replace(/,(\s*[}\]])/g, '$1');
-    
-    // Try to fix unterminated strings by finding the last quote and closing properly
-    const lastQuoteIndex = repaired.lastIndexOf('"');
-    if (lastQuoteIndex >= 0) {
-      const afterLastQuote = repaired.substring(lastQuoteIndex + 1);
-      // If there's content after last quote but no closing quote, add one
-      if (afterLastQuote.trim().length > 0 && !afterLastQuote.includes('"')) {
-        // Find where the string should end (before next : or , or })
-        const nextSpecial = afterLastQuote.search(/[,\}:]/);
-        if (nextSpecial > 0) {
-          // Insert closing quote before the special character
-          const insertPos = lastQuoteIndex + 1 + nextSpecial;
-          repaired = repaired.substring(0, insertPos) + '"' + repaired.substring(insertPos);
-        } else {
-          // Just close it at the end
-          repaired += '"';
-        }
-      }
-    }
-    
-    // Try parsing again
-    try {
-      JSON.parse(repaired);
-      return repaired;
-    } catch {
-      return null;
-    }
   }
 }

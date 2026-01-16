@@ -16,6 +16,8 @@ import { analyzeConstitutionForConfig, analysisToConfigSuggestions, Constitution
 import { buildCompleteConfigFromAnalysis, mergeConfigSuggestions } from '../utils/codebase-config-builder';
 import type { CodebaseAnalysisResult } from '../../core/analysis/codebase-analyzer';
 import type { AIProvider } from '../../providers/ai/interface';
+import { ExecutionIntelligenceCollector } from '../../core/analysis/execution-intelligence-collector';
+import { ConfigEvolutionTracker } from '../../core/config/evolution-tracker';
 
 /**
  * Get default answers for dry-run mode
@@ -395,6 +397,118 @@ export async function initCommand(options: InitCommandOptions = {}): Promise<voi
     if (constitutionAnalysis) {
       const constitutionSuggestions = analysisToConfigSuggestions(constitutionAnalysis);
       configSuggestions = mergeConfigSuggestions(configSuggestions, constitutionSuggestions);
+    }
+
+    // Apply execution intelligence insights (if available)
+    try {
+      const executionCollector = new ExecutionIntelligenceCollector({
+        projectRoot: process.cwd(),
+        debug: options.debug || false,
+      });
+      const intelligence = await executionCollector.analyze();
+
+      if (intelligence.configEffectiveness?.providerPerformance) {
+        // Suggest best provider based on historical performance
+        const topProvider = Object.entries(intelligence.configEffectiveness.providerPerformance)
+          .sort((a, b) => b[1].successRate - a[1].successRate)[0];
+
+        if (topProvider && topProvider[1].successRate > 0.8) {
+          if (!configSuggestions.ai) {
+            configSuggestions.ai = {
+              provider: topProvider[0] as any,
+              model: getDefaultModel(topProvider[0] as any),
+            };
+          } else {
+            configSuggestions.ai.provider = topProvider[0] as any;
+          }
+          if (options.debug) {
+            console.log(chalk.gray(`  → Suggested provider "${topProvider[0]}" based on ${(topProvider[1].successRate * 100).toFixed(0)}% success rate`));
+          }
+        }
+      }
+
+      if (intelligence.prdGeneration?.executabilityAchievement) {
+        // Suggest refinement settings based on historical PRD quality
+        if (!configSuggestions.prdBuilding) {
+          configSuggestions.prdBuilding = {
+            preProductionDir: '.taskmaster/planning',
+            productionDir: '.taskmaster/production',
+          };
+        }
+        if (!configSuggestions.prdBuilding.refinement) {
+          configSuggestions.prdBuilding.refinement = {
+            interactive: true,
+            askPrePhaseQuestions: true,
+            askMidPhaseQuestions: true,
+            askPostPhaseQuestions: true,
+            maxRefinementIterations: 3,
+            showCodebaseInsights: true,
+          };
+        }
+        // Adjust refinement iterations based on historical achievement
+        if (intelligence.prdGeneration.executabilityAchievement < 0.7) {
+          configSuggestions.prdBuilding.refinement!.maxRefinementIterations = 5;
+        }
+      }
+    } catch (error) {
+      // Execution intelligence not available (first run), continue without it
+      if (options.debug) {
+        console.log(chalk.gray('  → No execution intelligence available (first run)'));
+      }
+    }
+
+    // Apply learned preferences from config evolution
+    try {
+      const evolutionTracker = new ConfigEvolutionTracker({
+        projectRoot: process.cwd(),
+        debug: options.debug || false,
+      });
+      await evolutionTracker.load();
+      const learnedPreferences = await evolutionTracker.getLearnedPreferences();
+
+      if (learnedPreferences && learnedPreferences.commonOverrides && Object.keys(learnedPreferences.commonOverrides).length > 0) {
+        // Apply common overrides (skip count keys)
+        for (const [key, value] of Object.entries(learnedPreferences.commonOverrides)) {
+          if (!key.endsWith('::count') && value !== undefined && value !== null) {
+            // Apply learned override
+            const pathParts = key.split('.');
+            let target: any = configSuggestions;
+            for (let i = 0; i < pathParts.length - 1; i++) {
+              if (!target[pathParts[i]]) {
+                target[pathParts[i]] = {};
+              }
+              target = target[pathParts[i]];
+            }
+            target[pathParts[pathParts.length - 1]] = value;
+            if (options.debug) {
+              console.log(chalk.gray(`  → Applied learned preference: ${key} = ${JSON.stringify(value)}`));
+            }
+          }
+        }
+      }
+
+      // Apply always-enabled features
+      if (learnedPreferences.alwaysEnabled && learnedPreferences.alwaysEnabled.length > 0) {
+        for (const featurePath of learnedPreferences.alwaysEnabled) {
+          const pathParts = featurePath.split('.');
+          let target: any = configSuggestions;
+          for (let i = 0; i < pathParts.length - 1; i++) {
+            if (!target[pathParts[i]]) {
+              target[pathParts[i]] = {};
+            }
+            target = target[pathParts[i]];
+          }
+          target[pathParts[pathParts.length - 1]] = { enabled: true };
+          if (options.debug) {
+            console.log(chalk.gray(`  → Enabled always-on feature: ${featurePath}`));
+          }
+        }
+      }
+    } catch (error) {
+      // Config evolution not available, continue without it
+      if (options.debug) {
+        console.log(chalk.gray('  → No config evolution data available'));
+      }
     }
 
     // Pre-set suggested AI provider from environment detection
@@ -863,6 +977,8 @@ Do not include explanatory text, only the JSON configuration object.`;
     // Add MCP event monitoring if enabled
     if (enableEventMonitoring) {
       config.mcp = {
+        maxOutputTokens: 25000,
+        truncationWarningThreshold: 10000,
         eventMonitoring: {
           enabled: true,
           pollingInterval: 5000,

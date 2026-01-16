@@ -9,7 +9,7 @@ import { z } from 'zod';
 import * as fs from 'fs-extra';
 import * as path from 'path';
 import { ConfigLoader, FastMCPType } from './index';
-import { CursorSessionManager } from '../../providers/ai/cursor-session-manager';
+import { GenericSessionManager } from '../../providers/ai/generic-session-manager';
 
 export function registerBackgroundAgentTools(mcp: FastMCPType, getConfig: ConfigLoader): void {
   // devloop_background_agent_status - Get background agent session state and statistics
@@ -33,7 +33,8 @@ export function registerBackgroundAgentTools(mcp: FastMCPType, getConfig: Config
         const resolvedPath = path.resolve(process.cwd(), sessionsPath);
 
         // Initialize session manager
-        const sessionManager = new CursorSessionManager({
+        const sessionManager = new GenericSessionManager({
+          providerName: 'cursor',
           enabled: sessionConfig.enabled !== false,
           maxSessionAge: sessionConfig.maxSessionAge,
           maxHistoryItems: sessionConfig.maxHistoryItems,
@@ -56,7 +57,7 @@ export function registerBackgroundAgentTools(mcp: FastMCPType, getConfig: Config
 
           response.session = {
             sessionId: session.sessionId,
-            chatId: session.chatId,
+            chatId: session.providerSessionId,  // Use providerSessionId instead of chatId
             createdAt: session.createdAt,
             lastUsed: session.lastUsed,
             context: session.context,
@@ -94,7 +95,7 @@ export function registerBackgroundAgentTools(mcp: FastMCPType, getConfig: Config
 
           response.sessions = allSessions.map(session => ({
             sessionId: session.sessionId,
-            chatId: session.chatId,
+            chatId: session.providerSessionId,  // Use providerSessionId instead of chatId
             createdAt: session.createdAt,
             lastUsed: session.lastUsed,
             context: session.context,

@@ -58,6 +58,34 @@ export interface WorkflowResult {
   prdComplete?: boolean;
 }
 
+/**
+ * Hook event types (inspired by Claude CLI)
+ */
+type HookEvent =
+  | 'sessionStart'
+  | 'taskStart'
+  | 'taskComplete'
+  | 'codeApplied'
+  | 'testComplete'
+  | 'aiCallStart'
+  | 'aiCallComplete'
+  | 'preTest'      // Legacy
+  | 'postTest'     // Legacy
+  | 'postApply';   // Legacy
+
+/**
+ * Hook context for event handlers
+ */
+interface HookContext {
+  event: HookEvent;
+  taskId?: string;
+  prdId?: string;
+  phaseId?: number;
+  codeChanges?: CodeChanges;
+  testResult?: any;
+  metadata?: Record<string, any>;
+}
+
 export class WorkflowEngine {
   private taskBridge: TaskMasterBridge;
   private stateManager: StateManager;
@@ -1028,6 +1056,16 @@ export class WorkflowEngine {
         this.debugMetrics.recordProjectMetadata(projectType, framework, process.cwd());
       }
 
+      // Execute sessionStart hooks (represents start of task execution session)
+      const sessionPrdId = (this as any).currentPrdId;
+      const sessionPhaseId = (task as any).phaseId ?? undefined;
+      await this.executeHooks('sessionStart', {
+        event: 'sessionStart',
+        taskId: task.id,
+        prdId: sessionPrdId,
+        phaseId: sessionPhaseId,
+      });
+
       const context: TaskContext = {
         task,
         codebaseContext,
@@ -1244,8 +1282,24 @@ export class WorkflowEngine {
         targetFiles: targetFiles?.split('\n').filter(Boolean) || [],
       });
 
+      // Execute taskStart hooks
+      await this.executeHooks('taskStart', {
+        event: 'taskStart',
+        taskId: task.id,
+        prdId: context.prdId,
+        phaseId: context.phaseId ?? undefined,
+      });
+
       // Record AI call timing
       const aiCallStart = Date.now();
+
+      // Execute aiCallStart hooks
+      await this.executeHooks('aiCallStart', {
+        event: 'aiCallStart',
+        taskId: task.id,
+        prdId: context.prdId,
+        phaseId: context.phaseId ?? undefined,
+      });
       if (this.debug) {
         console.log('\n[DEBUG] ===== TASK EXECUTION START =====');
         console.log(`[DEBUG] Task ID: ${task.id}`);
@@ -1277,6 +1331,16 @@ export class WorkflowEngine {
         throw error;
       }
       const aiCallDuration = Date.now() - aiCallStart;
+
+      // Execute aiCallComplete hooks
+      await this.executeHooks('aiCallComplete', {
+        event: 'aiCallComplete',
+        taskId: task.id,
+        prdId: context.prdId,
+        phaseId: context.phaseId ?? undefined,
+        codeChanges: changes,
+        metadata: { durationMs: aiCallDuration },
+      });
 
       // Track provider response for instability detection
       if (this.contributionModeIssueDetector && currentPrdId) {
@@ -1473,12 +1537,21 @@ export class WorkflowEngine {
               this.debugMetrics.completeRun('completed');
             }
             
-            await this.updateState({ status: 'idle' });
-            return {
-              completed: true,
-              noTasks: false,
-              taskId: task.id,
-            };
+          // Execute taskComplete hooks
+          await this.executeHooks('taskComplete', {
+            event: 'taskComplete',
+            taskId: task.id,
+            prdId: context.prdId,
+            phaseId: context.phaseId ?? undefined,
+            codeChanges: changes,
+          });
+
+          await this.updateState({ status: 'idle' });
+          return {
+            completed: true,
+            noTasks: false,
+            taskId: task.id,
+          };
           }
         } else {
           // No required files specified - if summary indicates success, mark as done
@@ -1496,12 +1569,21 @@ export class WorkflowEngine {
               this.debugMetrics.completeRun('completed');
             }
             
-            await this.updateState({ status: 'idle' });
-            return {
-              completed: true,
-              noTasks: false,
-              taskId: task.id,
-            };
+          // Execute taskComplete hooks
+          await this.executeHooks('taskComplete', {
+            event: 'taskComplete',
+            taskId: task.id,
+            prdId: context.prdId,
+            phaseId: context.phaseId ?? undefined,
+            codeChanges: changes,
+          });
+
+          await this.updateState({ status: 'idle' });
+          return {
+            completed: true,
+            noTasks: false,
+            taskId: task.id,
+          };
           }
         }
       }
@@ -1779,6 +1861,15 @@ export class WorkflowEngine {
       console.log('[WorkflowEngine] Applying changes to filesystem...');
       const applyResult = await this.applyChanges(changes);
 
+      // Execute codeApplied hooks
+      await this.executeHooks('codeApplied', {
+        event: 'codeApplied',
+        taskId: task.id,
+        prdId: context.prdId,
+        phaseId: context.phaseId ?? undefined,
+        codeChanges: changes,
+      });
+
       // Record patch metrics
       if (this.debugMetrics && changes.files) {
         const totalPatches = changes.files.reduce((sum, file) => sum + (file.patches?.length || 0), 0);
@@ -1985,6 +2076,16 @@ export class WorkflowEngine {
         });
       }
       const testRunDuration = Date.now() - testRunStart;
+
+      // Execute testComplete hooks
+      await this.executeHooks('testComplete', {
+        event: 'testComplete',
+        taskId: task.id,
+        prdId: context.prdId,
+        phaseId: context.phaseId ?? undefined,
+        testResult: testResult,
+        metadata: { durationMs: testRunDuration, success: testResult?.success },
+      });
 
       // Record test run metrics
       if (this.debugMetrics) {
@@ -4070,34 +4171,70 @@ export class WorkflowEngine {
     return sortedFiles.slice(0, 8);
   }
 
-  private async executePreTestHooks(): Promise<void> {
-    if (!this.config.hooks?.preTest || this.config.hooks.preTest.length === 0) {
+  /**
+   * Execute hooks for a given event
+   */
+  private async executeHooks(event: HookEvent, context: HookContext): Promise<void> {
+    const hooksConfig = this.config.hooks;
+    if (!hooksConfig) {
       return;
     }
 
-    for (const command of this.config.hooks.preTest) {
+    // Get hooks for this event (support both new and legacy format)
+    let hooks: Array<string | { type: 'command' | 'script'; command?: string; script?: string }> = [];
+    
+    // Check for new event-driven hooks
+    const eventHooks = (hooksConfig as any)[event] as Array<string | { type: 'command' | 'script'; command?: string; script?: string }> | undefined;
+    if (eventHooks && eventHooks.length > 0) {
+      hooks = eventHooks;
+    }
+
+    if (hooks.length === 0) {
+      return;
+    }
+
+    logger.debug(`[WorkflowEngine] Executing ${hooks.length} hook(s) for event: ${event}`);
+
+    for (const hook of hooks) {
       try {
-        await execAsync(command);
+        // Handle legacy string format (backward compatible)
+        if (typeof hook === 'string') {
+          await execAsync(hook);
+          continue;
+        }
+
+        // Handle new object format
+        if (hook.type === 'command' && hook.command) {
+          await execAsync(hook.command);
+        } else if (hook.type === 'script' && hook.script) {
+          // Execute script file (assumes executable or uses node/bash)
+          const scriptPath = path.resolve(process.cwd(), hook.script);
+          if (fs.existsSync(scriptPath)) {
+            await execAsync(hook.script);
+          } else {
+            logger.warn(`[WorkflowEngine] Hook script not found: ${hook.script}`);
+          }
+        }
       } catch (error) {
         // Log but don't fail - hooks are optional
-        console.warn(`Pre-test hook failed: ${command}`, error);
+        logger.warn(`[WorkflowEngine] Hook failed for event ${event}: ${error instanceof Error ? error.message : String(error)}`);
       }
     }
   }
 
-  private async executePostApplyHooks(): Promise<void> {
-    if (!this.config.hooks?.postApply || this.config.hooks.postApply.length === 0) {
-      return;
-    }
+  private async executePreTestHooks(): Promise<void> {
+    await this.executeHooks('preTest', { event: 'preTest' });
+  }
 
-    for (const command of this.config.hooks.postApply) {
-      try {
-        await execAsync(command);
-      } catch (error) {
-        // Log but don't fail - hooks are optional
-        console.warn(`Post-apply hook failed: ${command}`, error);
-      }
-    }
+  private async executePostApplyHooks(): Promise<void> {
+    await this.executeHooks('postApply', { event: 'postApply' });
+  }
+
+  /**
+   * Execute post-test hooks
+   */
+  private async executePostTestHooks(): Promise<void> {
+    await this.executeHooks('postTest', { event: 'postTest' });
   }
 
   private async updateState(updates: Partial<WorkflowState>): Promise<void> {

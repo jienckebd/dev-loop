@@ -12,9 +12,9 @@ import { executeCursorGenerateCode } from '../../mcp/tools/cursor-ai';
 import { generateAgentConfig } from './cursor-agent-generator';
 import { createChatRequest } from './cursor-chat-requests';
 import { CursorChatOpener, CursorChatOpenerConfig } from './cursor-chat-opener';
-import { extractCodeChanges, parseCodeChangesFromText, JsonParsingContext, extractCodeChangesWithAiFallback, shouldUseAiFallback } from './json-parser';
+import { parseCodeChangesFromText, JsonParsingContext, extractCodeChangesWithAiFallback, shouldUseAiFallback } from './json-parser';
 import { CODE_CHANGES_JSON_SCHEMA_STRING, CODE_CHANGES_EXAMPLE_JSON } from './code-changes-schema';
-import { JsonSchemaValidator } from './json-schema-validator';
+import { CodeChangesValidator } from './code-changes-validator';
 import { ObservationTracker } from "../../core/tracking/observation-tracker";
 import { getBuildMetrics } from '../../core/metrics/build';
 import * as path from 'path';
@@ -146,6 +146,15 @@ export class CursorProvider implements AIProvider {
   private observationTracker: ObservationTracker;
   private lastTokens: { input?: number; output?: number } = {};
 
+  // Model pricing per 1M tokens (input, output)
+  // Cursor uses Claude models, so pricing is similar to Anthropic
+  private static readonly PRICING: Record<string, { input: number; output: number }> = {
+    'claude-sonnet-4-20250514': { input: 3.0, output: 15.0 },
+    'claude-3-5-sonnet-latest': { input: 3.0, output: 15.0 },
+    'claude-3-5-haiku-latest': { input: 0.8, output: 4.0 },
+    'auto': { input: 3.0, output: 15.0 }, // Default to Sonnet pricing for auto
+  };
+
   constructor(config: AIProviderConfig, observationTracker?: ObservationTracker) {
     this.config = config as any;
     // Create a default ObservationTracker if not provided
@@ -160,6 +169,18 @@ export class CursorProvider implements AIProvider {
     return { ...this.lastTokens };
   }
 
+  /**
+   * Calculate cost in USD for token usage (provider-native pricing)
+   * Cursor uses Claude models, so pricing matches Anthropic
+   */
+  calculateCost(tokens: { input?: number; output?: number }): number {
+    const model = (this.config as any).model || 'auto';
+    const pricing = CursorProvider.PRICING[model] || { input: 3.0, output: 15.0 };
+    const inputCost = ((tokens.input || 0) / 1_000_000) * pricing.input;
+    const outputCost = ((tokens.output || 0) / 1_000_000) * pricing.output;
+    return inputCost + outputCost;
+  }
+
   async generateCode(prompt: string, context: TaskContext): Promise<CodeChanges> {
     const model = (this.config as any).model || 'auto';
     const cursorConfig = (this.config as any).cursor || {};
@@ -167,7 +188,6 @@ export class CursorProvider implements AIProvider {
 
     // Check configuration for background agent mode
     const useBackgroundAgent = agentsConfig.useBackgroundAgent !== false; // Default to true
-    const createObservabilityChats = agentsConfig.createObservabilityChats === true; // Only true if explicitly true
     const fallbackToFileBased = agentsConfig.fallbackToFileBased === true; // Only true if explicitly true
     const agentOutputFormat = agentsConfig.agentOutputFormat || 'json';
 
@@ -179,15 +199,7 @@ export class CursorProvider implements AIProvider {
     // Generate unique agent name
     const agentName = this.getAgentName(context);
 
-    // 1. Create observability chat (parallel, non-blocking) if enabled
-    if (createObservabilityChats && agentsConfig.enabled !== false && agentsConfig.autoGenerate !== false) {
-      this.createObservabilityChat(context, prompt, agentName).catch(error => {
-        logger.warn(`[CursorProvider] Failed to create observability chat: ${error}`);
-        // Don't block execution if observability chat fails
-      });
-    }
-
-    // 2. Use background agent for autonomous execution (primary path)
+    // Use background agent for autonomous execution (primary path)
     if (useBackgroundAgent) {
       try {
         logger.info(`[CursorProvider] Using background agent for autonomous code generation`);
@@ -229,13 +241,16 @@ export class CursorProvider implements AIProvider {
         const result = await chatOpener.openChat(chatRequest);
 
         if (result.success && result.response) {
-          // First try schema-based validation for robust parsing
-          let codeChanges = this.extractCodeChangesWithSchemaValidation(result.response, context);
-          
-          // Fallback to original extraction if schema validation fails
-          if (!codeChanges) {
-            codeChanges = this.extractCodeChangesFromResponse(result.response, context);
-          }
+          // Use unified CodeChangesValidator for consistent parsing
+          const parsingContext: JsonParsingContext = {
+            providerName: 'cursor',
+            taskId: context.task.id,
+            prdId: context.prdId,
+            phaseId: context.phaseId ?? undefined,
+            projectType: (this.config as any).projectType,
+          };
+          const validationResult = CodeChangesValidator.validate(result.response, parsingContext);
+          let codeChanges = validationResult.valid ? validationResult.codeChanges : null;
           
           // Always call inferTaskTypeFromTask to catch meta-task patterns (like "Complete phase")
           // even when task.taskType is explicitly set - meta-tasks should never be treated as generate
@@ -332,11 +347,16 @@ export class CursorProvider implements AIProvider {
 
               const retryResult = await chatOpener.openChat(retryRequest);
               if (retryResult.success && retryResult.response) {
-                // Try schema validation first, then fallback
-                let retryChanges = this.extractCodeChangesWithSchemaValidation(retryResult.response, context);
-                if (!retryChanges) {
-                  retryChanges = this.extractCodeChangesFromResponse(retryResult.response, context);
-                }
+                // Use unified CodeChangesValidator for retry parsing
+                const retryParsingContext: JsonParsingContext = {
+                  providerName: 'cursor',
+                  taskId: context.task.id,
+                  prdId: context.prdId,
+                  phaseId: context.phaseId ?? undefined,
+                  projectType: (this.config as any).projectType,
+                };
+                const retryValidationResult = CodeChangesValidator.validate(retryResult.response, retryParsingContext);
+                let retryChanges = retryValidationResult.valid ? retryValidationResult.codeChanges : null;
                 if (retryChanges) {
                   // Check task type again for retry response
                   const retryTaskType = context.task.taskType || this.inferTaskTypeFromTask(context.task);
@@ -596,127 +616,7 @@ export class CursorProvider implements AIProvider {
     return lines.join('\n');
   }
 
-  /**
-   * Create observability chat (visible agent for monitoring)
-   * This runs in parallel and doesn't block execution
-   */
-  private async createObservabilityChat(
-    context: TaskContext,
-    prompt: string,
-    agentName: string
-  ): Promise<void> {
-    const agentsConfig = (this.config as any).cursor?.agents || {};
-    const observabilityStrategy = agentsConfig.observabilityStrategy || 'agent';
-    const prdId = context.prdId || 'default';
-    const phaseId = context.phaseId || null;
-    const prdSetId = context.prdSetId || null;
 
-    try {
-      // Generate agent config for observability (visible agent, not background)
-      await generateAgentConfig({
-        name: agentName,
-        question: `${context.task.title}\n\n${context.task.description}\n\n${prompt}`,
-        model: 'Auto',
-        mode: 'Ask',
-        purpose: 'Code generation for dev-loop tasks (observability)',
-        type: 'code-generation',
-        metadata: {
-          prdId,
-          phaseId,
-          prdSetId,
-          taskId: context.task.id,
-        },
-      });
-
-      // Create chat request (will open visible agent, not background)
-      await createChatRequest({
-        agentName,
-        question: prompt,
-        model: 'Auto',
-        mode: 'Ask',
-        context: {
-          prdId,
-          phaseId,
-          prdSetId,
-          taskId: context.task.id,
-          taskTitle: context.task.title,
-        },
-      });
-
-      logger.info(`[CursorProvider] Created observability chat: ${agentName}`);
-    } catch (error) {
-      logger.warn(`[CursorProvider] Failed to create observability chat: ${error}`);
-      throw error;
-    }
-  }
-
-  /**
-   * Extract CodeChanges using JSON Schema validation (primary method)
-   * This provides robust, provider-agnostic parsing with multi-strategy extraction
-   */
-  private extractCodeChangesWithSchemaValidation(response: any, taskContext: TaskContext): CodeChanges | null {
-    try {
-      // Handle nested result objects
-      let textToValidate: string = '';
-      
-      if (response && typeof response === 'object') {
-        // Extract text from nested result structures
-        if (response.type === 'result' && response.result !== undefined) {
-          // Recursively extract result text
-          let extracted = response.result;
-          let depth = 0;
-          while (typeof extracted === 'object' && extracted !== null && extracted.type === 'result' && extracted.result !== undefined && depth < 5) {
-            extracted = extracted.result;
-            depth++;
-          }
-          textToValidate = typeof extracted === 'string' ? extracted : JSON.stringify(extracted);
-        } else if (response.text) {
-          textToValidate = typeof response.text === 'string' ? response.text : JSON.stringify(response.text);
-        } else if (response.response) {
-          textToValidate = typeof response.response === 'string' ? response.response : JSON.stringify(response.response);
-        } else {
-          // Try to stringify the whole response
-          textToValidate = JSON.stringify(response);
-        }
-      } else if (typeof response === 'string') {
-        textToValidate = response;
-      } else {
-        return null;
-      }
-
-      // Use enhanced multi-strategy schema validator to extract and validate
-      const validationResult = JsonSchemaValidator.extractAndValidate(textToValidate);
-      
-      if (validationResult.valid && validationResult.normalized) {
-        logger.info(`[CursorProvider] Successfully extracted CodeChanges using enhanced JSON Schema validation`);
-        return validationResult.normalized;
-      } else {
-        logger.warn(`[CursorProvider] Schema validation failed: ${validationResult.errors.join(', ')}`);
-        if (validationResult.warnings.length > 0) {
-          logger.warn(`[CursorProvider] Schema validation warnings: ${validationResult.warnings.join(', ')}`);
-        }
-        return null;
-      }
-    } catch (error) {
-      logger.warn(`[CursorProvider] Schema validation error: ${error instanceof Error ? error.message : String(error)}`);
-      return null;
-    }
-  }
-
-  /**
-   * Extract CodeChanges from background agent response
-   * Uses shared parser utility for consistent parsing logic (fallback method)
-   */
-  private extractCodeChangesFromResponse(response: any, taskContext: TaskContext): CodeChanges | null {
-    const parsingContext: JsonParsingContext = {
-      providerName: 'cursor',
-      taskId: taskContext.task.id,
-      prdId: taskContext.prdId,
-      phaseId: taskContext.phaseId ?? undefined,
-      projectType: (this.config as any).projectType,
-    };
-    return extractCodeChanges(response, this.observationTracker, parsingContext);
-  }
 
   /**
    * Infer task type from task title and description

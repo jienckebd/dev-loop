@@ -21,7 +21,7 @@ import {
   TokenBreakdown,
 } from '../metrics/types';
 import { PrdSetMetrics } from '../metrics/prd-set';
-import { BuildMetrics, BuildMetricsData, MODEL_PRICING } from '../metrics/build';
+import { BuildMetrics, BuildMetricsData } from '../metrics/build';
 import { ObservationAnalyzer } from '../analysis/observation-analyzer';
 import { getEventStream } from '../utils/event-stream';
 import { logger } from '../utils/logger';
@@ -1455,8 +1455,8 @@ export class PrdReportGenerator {
       const byPhase = new Map<string, { calls: number; tokens: number; cost: number }>();
       for (const call of calls) {
         const phase = call.phase || 'unknown';
-        const pricing = MODEL_PRICING[call.model || 'default'] || MODEL_PRICING['default'];
-        const cost = (call.tokensIn / 1000 * pricing.input) + (call.tokensOut / 1000 * pricing.output);
+        // Use fallback estimate: $0.01 per 1K tokens (when provider-native cost not available)
+        const cost = ((call.tokensIn + call.tokensOut) / 1000) * 0.01;
 
         const existing = byPhase.get(phase) || { calls: 0, tokens: 0, cost: 0 };
         existing.calls++;

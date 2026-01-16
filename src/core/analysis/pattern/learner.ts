@@ -2,6 +2,8 @@ import * as fs from 'fs-extra';
 import * as path from 'path';
 import { Task } from '../../../types';
 import { emitEvent } from '../../utils/event-stream';
+import { PatternLibraryManager } from '../pattern-library-manager';
+import { ErrorPattern } from '../../../config/schema/pattern-library';
 
 export interface LearnedPattern {
   id: string;
@@ -36,6 +38,7 @@ export class PatternLearningSystem {
   private patterns: Map<string, LearnedPattern> = new Map();
   private debug: boolean;
   private loaded = false;
+  private patternLibraryManager: PatternLibraryManager;
 
   // Built-in patterns for common AI errors
   private static readonly BUILTIN_PATTERNS: LearnedPattern[] = [
@@ -100,10 +103,16 @@ export class PatternLearningSystem {
   constructor(patternsPath?: string, debug = false) {
     this.patternsPath = patternsPath || path.join(process.cwd(), '.devloop', 'patterns.json');
     this.debug = debug;
+    // Initialize PatternLibraryManager for unified storage
+    this.patternLibraryManager = new PatternLibraryManager({
+      projectRoot: process.cwd(),
+      debug,
+    });
   }
 
   /**
-   * Load patterns from disk.
+   * Load patterns from disk using PatternLibraryManager.
+   * Also migrates from old patterns.json format if it exists.
    */
   async load(): Promise<void> {
     if (this.loaded) return;
@@ -113,26 +122,78 @@ export class PatternLearningSystem {
       this.patterns.set(pattern.id, { ...pattern });
     }
 
-    // Load saved patterns from disk
+    // Load error patterns from PatternLibraryManager (unified storage)
+    await this.patternLibraryManager.load();
+    const errorPatterns = this.patternLibraryManager.getErrorPatterns();
+
+    for (const errorPattern of errorPatterns) {
+      // Convert ErrorPattern to LearnedPattern format
+      const learnedPattern: LearnedPattern = {
+        id: errorPattern.id,
+        pattern: errorPattern.pattern,
+        guidance: errorPattern.guidance,
+        occurrences: errorPattern.occurrences,
+        lastSeen: errorPattern.lastSeen,
+        files: errorPattern.files,
+        projectTypes: errorPattern.projectTypes,
+        injectionCount: errorPattern.injectionCount,
+        preventionCount: errorPattern.preventionCount,
+        lastInjected: errorPattern.lastInjected,
+      };
+
+      // Merge with existing (saved patterns take precedence)
+      const existing = this.patterns.get(learnedPattern.id);
+      if (existing) {
+        existing.occurrences = Math.max(existing.occurrences, learnedPattern.occurrences);
+        existing.lastSeen = learnedPattern.lastSeen || existing.lastSeen;
+        existing.files = [...new Set([...(existing.files || []), ...(learnedPattern.files || [])])];
+      } else {
+        this.patterns.set(learnedPattern.id, learnedPattern);
+      }
+    }
+
+    // Migrate from old patterns.json if it exists (backward compatibility)
     if (await fs.pathExists(this.patternsPath)) {
       try {
         const data = await fs.readJson(this.patternsPath);
         if (Array.isArray(data.patterns)) {
           for (const pattern of data.patterns) {
-            // Merge with existing (saved patterns take precedence for occurrence counts)
-            const existing = this.patterns.get(pattern.id);
-            if (existing) {
-              existing.occurrences = pattern.occurrences || existing.occurrences;
-              existing.lastSeen = pattern.lastSeen || existing.lastSeen;
-              existing.files = [...(existing.files || []), ...(pattern.files || [])];
-            } else {
-              this.patterns.set(pattern.id, pattern);
-            }
+            // Convert old format to ErrorPattern and save to PatternLibraryManager
+            const errorPattern: ErrorPattern = {
+              id: pattern.id,
+              pattern: pattern.pattern,
+              guidance: pattern.guidance,
+              occurrences: pattern.occurrences || 0,
+              lastSeen: pattern.lastSeen || new Date().toISOString(),
+              files: pattern.files,
+              projectTypes: pattern.projectTypes,
+              injectionCount: pattern.injectionCount,
+              preventionCount: pattern.preventionCount,
+              lastInjected: pattern.lastInjected,
+            };
+            this.patternLibraryManager.addErrorPattern(errorPattern);
+
+            // Also add to in-memory map
+            const learnedPattern: LearnedPattern = {
+              id: pattern.id,
+              pattern: pattern.pattern,
+              guidance: pattern.guidance,
+              occurrences: pattern.occurrences || 0,
+              lastSeen: pattern.lastSeen || new Date().toISOString(),
+              files: pattern.files,
+              projectTypes: pattern.projectTypes,
+              injectionCount: pattern.injectionCount,
+              preventionCount: pattern.preventionCount,
+              lastInjected: pattern.lastInjected,
+            };
+            this.patterns.set(learnedPattern.id, learnedPattern);
           }
+          // Save migrated patterns to PatternLibraryManager
+          await this.patternLibraryManager.save();
         }
       } catch (error) {
         if (this.debug) {
-          console.warn('[PatternLearner] Failed to load patterns:', error);
+          console.warn('[PatternLearner] Failed to migrate old patterns:', error);
         }
       }
     }
@@ -144,18 +205,31 @@ export class PatternLearningSystem {
   }
 
   /**
-   * Save patterns to disk.
+   * Save patterns to disk using PatternLibraryManager.
+   * This delegates storage to the unified PatternLibraryManager.
    */
   async save(): Promise<void> {
-    await fs.ensureDir(path.dirname(this.patternsPath));
+    await this.load(); // Ensure patterns are loaded first
 
-    const data = {
-      version: 1,
-      lastUpdated: new Date().toISOString(),
-      patterns: Array.from(this.patterns.values()),
-    };
+    // Convert all LearnedPattern instances to ErrorPattern and save to PatternLibraryManager
+    for (const learnedPattern of this.patterns.values()) {
+      const errorPattern: ErrorPattern = {
+        id: learnedPattern.id,
+        pattern: learnedPattern.pattern,
+        guidance: learnedPattern.guidance,
+        occurrences: learnedPattern.occurrences,
+        lastSeen: learnedPattern.lastSeen,
+        files: learnedPattern.files,
+        projectTypes: learnedPattern.projectTypes,
+        injectionCount: learnedPattern.injectionCount,
+        preventionCount: learnedPattern.preventionCount,
+        lastInjected: learnedPattern.lastInjected,
+      };
+      this.patternLibraryManager.addErrorPattern(errorPattern);
+    }
 
-    await fs.writeJson(this.patternsPath, data, { spaces: 2 });
+    // Save to unified storage
+    await this.patternLibraryManager.save();
   }
 
   /**
@@ -223,6 +297,7 @@ export class PatternLearningSystem {
 
   /**
    * Get patterns relevant to a task and target files.
+   * Now also includes codebase patterns from PatternLibraryManager for richer guidance.
    */
   async getRelevantPatterns(
     task: Task,
@@ -233,6 +308,12 @@ export class PatternLearningSystem {
 
     const matches: PatternMatch[] = [];
     const taskText = `${task.title} ${task.description || ''} ${(task as any).details || ''}`.toLowerCase();
+
+    // Also check PatternLibraryManager for codebase patterns that might be relevant
+    await this.patternLibraryManager.load();
+    const codePatterns = this.patternLibraryManager.getCodePatterns();
+    const schemaPatterns = this.patternLibraryManager.getSchemaPatterns();
+    const testPatterns = this.patternLibraryManager.getTestPatterns();
 
     for (const pattern of this.patterns.values()) {
       let relevance = 0;
@@ -279,6 +360,67 @@ export class PatternLearningSystem {
       // Include patterns with any relevance, or all builtin patterns
       if (relevance > 0 || PatternLearningSystem.BUILTIN_PATTERNS.some(b => b.id === pattern.id)) {
         matches.push({ pattern, relevance: Math.min(1, relevance) });
+      }
+    }
+
+    // Add codebase patterns from PatternLibraryManager that match task context
+    for (const codePattern of codePatterns) {
+      // Check if pattern matches task context
+      const patternMatches = codePattern.signature.toLowerCase().includes(taskText) ||
+        (targetFiles && codePattern.files.some(f => targetFiles.some(tf => tf.includes(f))));
+
+      if (patternMatches) {
+        // Convert code pattern to learned pattern format for guidance
+        const learnedPattern: LearnedPattern = {
+          id: `codebase-${codePattern.id}`,
+          pattern: codePattern.signature,
+          guidance: `Follow existing pattern: ${codePattern.signature}. See examples in: ${codePattern.files.slice(0, 3).join(', ')}`,
+          occurrences: codePattern.occurrences,
+          lastSeen: codePattern.lastUsedAt || codePattern.discoveredAt,
+          files: codePattern.files,
+          projectTypes: codePattern.frameworkHints,
+        };
+
+        // Calculate relevance based on occurrences and file matches
+        let relevance = 0.3; // Base relevance for codebase patterns
+        if (codePattern.occurrences > 5) {
+          relevance += 0.2;
+        }
+        if (targetFiles && codePattern.files.some(f => targetFiles.some(tf => tf.includes(f)))) {
+          relevance += 0.3;
+        }
+
+        matches.push({ pattern: learnedPattern, relevance: Math.min(1, relevance) });
+      }
+    }
+
+    // Add schema patterns for schema-related tasks
+    if (taskText.includes('schema') || taskText.includes('entity') || taskText.includes('config')) {
+      for (const schemaPattern of schemaPatterns.slice(0, 5)) {
+        const learnedPattern: LearnedPattern = {
+          id: `schema-${schemaPattern.id}`,
+          pattern: schemaPattern.pattern,
+          guidance: `Use schema pattern: ${schemaPattern.type}. Examples: ${schemaPattern.exampleFiles.slice(0, 2).join(', ')}`,
+          occurrences: 1,
+          lastSeen: new Date().toISOString(),
+          files: schemaPattern.exampleFiles,
+        };
+        matches.push({ pattern: learnedPattern, relevance: 0.4 });
+      }
+    }
+
+    // Add test patterns for test-related tasks
+    if (taskText.includes('test') || taskText.includes('playwright') || taskText.includes('spec')) {
+      for (const testPattern of testPatterns.slice(0, 3)) {
+        const learnedPattern: LearnedPattern = {
+          id: `test-${testPattern.id}`,
+          pattern: testPattern.structure,
+          guidance: `Follow test pattern structure: ${testPattern.structure}. Framework: ${testPattern.framework}`,
+          occurrences: 1,
+          lastSeen: new Date().toISOString(),
+          files: testPattern.exampleFiles,
+        };
+        matches.push({ pattern: learnedPattern, relevance: 0.5 });
       }
     }
 
@@ -356,7 +498,7 @@ export class PatternLearningSystem {
   async trackPatternInjection(patternIds: string[]): Promise<void> {
     await this.load();
     const now = new Date().toISOString();
-    
+
     for (const id of patternIds) {
       const pattern = this.patterns.get(id);
       if (pattern) {
@@ -364,15 +506,16 @@ export class PatternLearningSystem {
         pattern.lastInjected = now;
       }
     }
-    
+
+    // Save using PatternLibraryManager (delegated)
     await this.save();
-    
+
     // Emit event for observability
     emitEvent('pattern:injected', {
       patternIds,
       count: patternIds.length,
     }, { severity: 'info' });
-    
+
     if (this.debug) {
       console.log(`[PatternLearner] Tracked injection of ${patternIds.length} patterns`);
     }
@@ -384,22 +527,23 @@ export class PatternLearningSystem {
    */
   async trackPatternPrevention(patternIds: string[]): Promise<void> {
     await this.load();
-    
+
     for (const id of patternIds) {
       const pattern = this.patterns.get(id);
       if (pattern) {
         pattern.preventionCount = (pattern.preventionCount || 0) + 1;
       }
     }
-    
+
+    // Save using PatternLibraryManager (delegated)
     await this.save();
-    
+
     // Emit event for observability
     emitEvent('pattern:prevented', {
       patternIds,
       count: patternIds.length,
     }, { severity: 'info' });
-    
+
     if (this.debug) {
       console.log(`[PatternLearner] Tracked prevention by ${patternIds.length} patterns`);
     }
@@ -417,29 +561,29 @@ export class PatternLearningSystem {
     unusedPatterns: string[];
   }> {
     await this.load();
-    
+
     let totalInjections = 0;
     let totalPreventions = 0;
     const patternStats: { id: string; preventionCount: number; injectionCount: number }[] = [];
     const unusedPatterns: string[] = [];
-    
+
     for (const [id, pattern] of this.patterns) {
       const injections = pattern.injectionCount || 0;
       const preventions = pattern.preventionCount || 0;
-      
+
       totalInjections += injections;
       totalPreventions += preventions;
-      
+
       if (injections > 0 || preventions > 0) {
         patternStats.push({ id, preventionCount: preventions, injectionCount: injections });
       } else {
         unusedPatterns.push(id);
       }
     }
-    
+
     // Sort by prevention count
     patternStats.sort((a, b) => b.preventionCount - a.preventionCount);
-    
+
     return {
       totalPatterns: this.patterns.size,
       totalInjections,

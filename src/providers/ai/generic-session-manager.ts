@@ -28,6 +28,7 @@ export interface GenericHistoryEntry extends HistoryEntry {
  */
 export interface GenericSession extends Session {
   providerName: string;
+  providerSessionId?: string;  // For Cursor chatId, Claude CLI session_id, etc.
   stats: {
     totalCalls: number;
     successfulCalls: number;
@@ -35,6 +36,7 @@ export interface GenericSession extends Session {
     totalInputTokens: number;
     totalOutputTokens: number;
     averageDurationMs: number;
+    jsonParsingErrors: number;  // Track JSON parsing failures
   };
 }
 
@@ -90,9 +92,20 @@ export class GenericSessionManager extends BaseSessionManager implements Session
         const data = JSON.parse(content);
 
         if (Array.isArray(data.sessions)) {
+          // Legacy array format
           for (const session of data.sessions) {
             if (session.sessionId && session.context) {
               this.sessions.set(session.sessionId, session as GenericSession);
+            }
+          }
+        } else if (data.sessions && typeof data.sessions === 'object') {
+          // New record format (matches ExecutionState schema)
+          for (const [sessionId, session] of Object.entries(data.sessions)) {
+            if (typeof session === 'object' && session !== null) {
+              const s = session as any;
+              if (s.sessionId || sessionId) {
+                this.sessions.set(s.sessionId || sessionId, s as GenericSession);
+              }
             }
           }
         }
@@ -112,15 +125,51 @@ export class GenericSessionManager extends BaseSessionManager implements Session
       const dir = path.dirname(this.sessionsPath);
       fs.ensureDirSync(dir);
 
-      const data = {
-        version: '1.0',
-        provider: this.providerName,
-        updatedAt: new Date().toISOString(),
-        sessions: Array.from(this.sessions.values()),
-      };
-
-      fs.writeFileSync(this.sessionsPath, JSON.stringify(data, null, 2), 'utf-8');
+      // Support both array format (legacy) and record format (ExecutionState)
+      // For execution-state.json, use record format; for provider-specific files, use array
+      const useRecordFormat = this.config.sessionsPath.includes('execution-state.json');
+      
+      let sessionsData: any;
+      if (useRecordFormat) {
+        // Convert Map to record (object) format to match ExecutionState schema
+        sessionsData = {};
+        for (const [key, value] of this.sessions.entries()) {
+          sessionsData[key] = value;
+        }
+        
+        // Read existing execution state and merge sessions
+        let existingData: any = {};
+        try {
+          if (fs.pathExistsSync(this.sessionsPath)) {
+            existingData = fs.readJsonSync(this.sessionsPath);
+          }
+        } catch {
+          // Ignore read errors, start fresh
+        }
+        
+        const data = {
+          ...existingData,  // Preserve other fields (active, prdStates, etc.)
+          version: existingData.version || '1.0',
+          updatedAt: new Date().toISOString(),
+          sessions: sessionsData,  // Record format
+        };
+        
+        fs.writeFileSync(this.sessionsPath, JSON.stringify(data, null, 2), 'utf-8');
+      } else {
+        // Array format for provider-specific files
+        const data = {
+          version: '1.0',
+          provider: this.providerName,
+          updatedAt: new Date().toISOString(),
+          sessions: Array.from(this.sessions.values()),
+        };
+        
+        fs.writeFileSync(this.sessionsPath, JSON.stringify(data, null, 2), 'utf-8');
+      }
+      
       logger.debug(`[GenericSessionManager:${this.providerName}] Saved ${this.sessions.size} session(s) to ${this.sessionsPath}`);
+      return;
+
     } catch (error) {
       logger.error(`[GenericSessionManager:${this.providerName}] Failed to save sessions: ${error instanceof Error ? error.message : String(error)}`);
     }
@@ -152,6 +201,7 @@ export class GenericSessionManager extends BaseSessionManager implements Session
         totalInputTokens: 0,
         totalOutputTokens: 0,
         averageDurationMs: 0,
+        jsonParsingErrors: 0,
       },
     };
 
@@ -206,6 +256,56 @@ export class GenericSessionManager extends BaseSessionManager implements Session
   }
 
   /**
+   * Resume an existing session by ID
+   */
+  resumeSession(sessionId: string): GenericSession | null {
+    const session = this.sessions.get(sessionId);
+    if (session) {
+      session.lastUsed = new Date().toISOString();
+      this.saveSessions();
+      logger.debug(`[GenericSessionManager:${this.providerName}] Resumed session ${sessionId}`);
+      return session;
+    }
+    logger.debug(`[GenericSessionManager:${this.providerName}] Session ${sessionId} not found (will create new session)`);
+    return null;
+  }
+
+  /**
+   * Get resume ID for a session (for Cursor chatId or Claude CLI session_id)
+   */
+  getResumeId(sessionId: string): string | null {
+    const session = this.sessions.get(sessionId);
+    return session?.providerSessionId || null;
+  }
+
+  /**
+   * Set provider-specific session ID (for Cursor chatId, Claude CLI session_id, etc.)
+   */
+  setProviderSessionId(sessionId: string, providerSessionId: string): void {
+    const session = this.sessions.get(sessionId);
+    if (session) {
+      session.providerSessionId = providerSessionId;
+      this.saveSessions();
+      logger.debug(`[GenericSessionManager:${this.providerName}] Set providerSessionId for session ${sessionId}`);
+    }
+  }
+
+  /**
+   * Add history entry with convenience method (similar to CursorSessionManager.addToHistory)
+   */
+  addToHistory(sessionId: string, requestId: string, prompt: string, response?: any, success?: boolean, error?: string): void {
+    const entry: GenericHistoryEntry = {
+      requestId,
+      prompt,
+      response,
+      timestamp: new Date().toISOString(),
+      success,
+      error,
+    };
+    this.addHistory(sessionId, entry);
+  }
+
+  /**
    * Add an entry to session history
    */
   addHistory(sessionId: string, entry: HistoryEntry): void {
@@ -228,6 +328,10 @@ export class GenericSessionManager extends BaseSessionManager implements Session
       session.stats.successfulCalls++;
     } else {
       session.stats.failedCalls++;
+      // Track JSON parsing errors
+      if (entry.error && (entry.error.includes('control character') || entry.error.includes('JSON') || entry.error.includes('parse'))) {
+        session.stats.jsonParsingErrors++;
+      }
     }
 
     // Track tokens if available

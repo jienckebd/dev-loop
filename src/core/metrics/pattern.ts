@@ -198,6 +198,13 @@ export class PatternMetrics {
   getMetrics(): PatternMetricsData['metrics'] {
     return this.data.metrics;
   }
+
+  /**
+   * Save metrics data (public method for aggregator)
+   */
+  saveMetrics(): void {
+    this.saveData();
+  }
 }
 
 

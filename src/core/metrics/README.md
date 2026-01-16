@@ -13,6 +13,9 @@ This directory contains the metrics tracking system for dev-loop, organized hier
 - **pattern.ts** - Pattern-specific metrics
 - **parallel.ts** - Parallel execution metrics
 - **analyzer.ts** - Metrics analyzer for insights and trends
+- **build.ts** - Build metrics (PRD set building)
+- **aggregator.ts** - Unified metrics aggregator (combines all systems)
+- **correlation-analyzer.ts** - Cross-system correlation analysis
 
 ## Key Concepts
 
@@ -21,7 +24,26 @@ This directory contains the metrics tracking system for dev-loop, organized hier
 - **Type Safety**: All metrics types are defined in `types.ts` with full TypeScript support
 - **Config Overlay Support**: PRD set and PRD metrics include config overlay information
 
+## Unified Metrics Architecture
+
+The metrics system has been unified through `MetricsAggregator`:
+
+```
+MetricsAggregator (unified interface)
+├── BuildMetrics (PRD building)
+├── PatternMetrics (pattern effectiveness)
+└── ExecutionIntelligenceCollector (task execution, PRD insights, provider performance)
+```
+
+The aggregator provides:
+- Unified load/save operations
+- Cross-system correlation analysis
+- Provider/model recommendations
+- Config effectiveness insights
+
 ## Usage
+
+### Individual Metrics Systems
 
 ```typescript
 import { PrdMetrics } from '../metrics/prd';
@@ -35,6 +57,28 @@ prdMetrics.recordTask(prdId, taskId, runMetrics);
 // Track PRD set-level metrics
 const prdSetMetrics = new PrdSetMetrics();
 prdSetMetrics.recordPrdExecution(setId, prdId, prdMetricsData);
+```
+
+### Unified Metrics Aggregator
+
+```typescript
+import { MetricsAggregator } from '../metrics/aggregator';
+import { CorrelationAnalyzer } from '../metrics/correlation-analyzer';
+
+// Initialize aggregator
+const aggregator = new MetricsAggregator({
+  projectRoot: process.cwd(),
+});
+
+// Load all metrics
+const unified = await aggregator.loadAll();
+
+// Get correlation insights
+const analyzer = aggregator.getCorrelationAnalyzer();
+const correlations = await analyzer.analyze();
+
+// Get recommendations
+const recommendations = await analyzer.getRecommendations();
 ```
 
 ## Related Files

@@ -21,6 +21,28 @@ export interface TokenUsage {
 }
 
 /**
+ * Response metadata from AI provider calls
+ */
+export interface ResponseMetadata {
+  sessionId?: string;
+  costUsd?: number;
+  durationMs: number;
+  tokens: { input: number; output: number };
+  model: string;
+  provider: string;
+  numTurns?: number;
+  cached?: boolean;
+}
+
+/**
+ * Unified agent response with code changes and metadata
+ */
+export interface UnifiedAgentResponse {
+  codeChanges: CodeChanges;
+  metadata: ResponseMetadata;
+}
+
+/**
  * AI Provider interface
  * 
  * Core interface for all AI providers. All providers must implement:
@@ -49,6 +71,16 @@ export interface AIProvider {
   
   // Optional: token tracking for build metrics
   getLastTokens?(): TokenUsage;
+  
+  // Optional: cost calculation from provider-native pricing
+  calculateCost?(tokens: TokenUsage): number;
+  
+  // Optional: generate code with unified response (includes metadata)
+  generateCodeWithMetrics?(
+    prompt: string,
+    context: TaskContext,
+    sessionId?: string
+  ): Promise<UnifiedAgentResponse>;
 }
 
 export interface AIProviderConfig {

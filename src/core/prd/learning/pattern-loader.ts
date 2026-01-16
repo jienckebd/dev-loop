@@ -10,6 +10,8 @@ import * as path from 'path';
 import { logger } from '../../utils/logger';
 import { SchemaValidator } from './schema-validator';
 import { PatternsFile, PatternEntry, PatternFilterOptions } from './types';
+import { PatternLibraryManager } from '../../analysis/pattern-library-manager';
+import { PrdPattern } from '../../../config/schema/pattern-library';
 
 /**
  * Pattern Loader Configuration
@@ -29,8 +31,7 @@ export class PatternLoader {
   private config: Required<PatternLoaderConfig>;
   private validator: SchemaValidator;
   private debug: boolean;
-  private lastPruneTime: number = 0;
-  private readonly PRUNE_INTERVAL_MS = 24 * 60 * 60 * 1000; // 24 hours
+  private patternLibraryManager: PatternLibraryManager;
 
   constructor(config: PatternLoaderConfig) {
     this.config = {
@@ -56,76 +57,103 @@ export class PatternLoader {
       backup: false, // Disabled: backup files should never be created
       debug: this.debug,
     });
+    // Initialize PatternLibraryManager for unified storage
+    const projectRoot = path.dirname(config.filePath).replace(/\/(\.devloop|\.taskmaster).*$/, '') || process.cwd();
+    this.patternLibraryManager = new PatternLibraryManager({
+      projectRoot,
+      debug: this.debug,
+    });
   }
 
   /**
-   * Load patterns with filtering
+   * Load patterns with filtering using PatternLibraryManager.
+   * Also migrates from old patterns.json format if it exists.
    */
   async load(): Promise<PatternEntry[]> {
     logger.debug(`[PatternLoader] Loading patterns from: ${this.config.filePath}`);
 
     try {
-      // Validate schema (auto-fixes and migrates if needed)
-      if (this.config.validateOnLoad) {
-        const validationResult = await this.validator.validatePatternsFile(this.config.filePath);
-        if (!validationResult.valid && validationResult.errors.length > 0) {
-          const warningMsg = `Schema validation errors (some may have been auto-fixed): ${validationResult.errors.join('; ')}`;
-          logger.warn(`[PatternLoader] ${warningMsg}`);
-          // Record warning in build metrics if available
-          try {
-            const { getBuildMetrics } = await import('../../metrics/build');
-            getBuildMetrics().recordWarning('PatternLoader', warningMsg);
-          } catch {
-            // Build metrics not available
+      // Migrate from old patterns.json if it exists (backward compatibility)
+      if (await fs.pathExists(this.config.filePath)) {
+        // Validate schema (auto-fixes and migrates if needed)
+        if (this.config.validateOnLoad) {
+          const validationResult = await this.validator.validatePatternsFile(this.config.filePath);
+          if (!validationResult.valid && validationResult.errors.length > 0) {
+            const warningMsg = `Schema validation errors (some may have been auto-fixed): ${validationResult.errors.join('; ')}`;
+            logger.warn(`[PatternLoader] ${warningMsg}`);
+            // Record warning in build metrics if available
+            try {
+              const { getBuildMetrics } = await import('../../metrics/build');
+              getBuildMetrics().recordWarning('PatternLoader', warningMsg);
+            } catch {
+              // Build metrics not available
+            }
           }
         }
-        if (validationResult.warnings.length > 0 && this.debug) {
-          logger.debug(`[PatternLoader] Schema validation warnings: ${validationResult.warnings.join('; ')}`);
+
+        // Read old file and migrate to PatternLibraryManager
+        const data: PatternsFile = await fs.readJson(this.config.filePath);
+
+        if (data.patterns && data.patterns.length > 0) {
+          // Migrate patterns to PatternLibraryManager
+          await this.patternLibraryManager.load();
+          for (const pattern of data.patterns) {
+            const prdPattern: PrdPattern = {
+              id: pattern.id,
+              createdAt: pattern.createdAt,
+              lastUsedAt: pattern.lastUsedAt,
+              relevanceScore: pattern.relevanceScore,
+              expiresAt: pattern.expiresAt || null,
+              prdId: pattern.prdId,
+              framework: pattern.framework,
+              category: pattern.category,
+              pattern: pattern.pattern,
+              examples: pattern.examples,
+              metadata: pattern.metadata,
+            };
+            this.patternLibraryManager.addPrdPattern(prdPattern);
+          }
+          await this.patternLibraryManager.save();
+          logger.debug(`[PatternLoader] Migrated ${data.patterns.length} patterns to PatternLibraryManager`);
         }
       }
 
-      // Check if file exists
-      if (!(await fs.pathExists(this.config.filePath))) {
-        logger.debug(`[PatternLoader] Patterns file does not exist: ${this.config.filePath}`);
-        return [];
-      }
+      // Load filtered patterns from PatternLibraryManager
+      const prdPatterns = await this.patternLibraryManager.filterPrdPatterns({
+        retentionDays: this.config.filterOptions.retentionDays,
+        relevanceThreshold: this.config.filterOptions.relevanceThreshold,
+        lastUsedDays: this.config.filterOptions.lastUsedDays,
+        prdId: this.config.filterOptions.prdId,
+        framework: this.config.filterOptions.framework,
+        category: this.config.filterOptions.category,
+        excludeExpired: this.config.filterOptions.excludeExpired,
+      });
 
-      // Read file
-      const data: PatternsFile = await fs.readJson(this.config.filePath);
+      // Convert PrdPattern to PatternEntry format
+      const patterns: PatternEntry[] = prdPatterns.map(p => ({
+        id: p.id,
+        createdAt: p.createdAt,
+        lastUsedAt: p.lastUsedAt,
+        relevanceScore: p.relevanceScore,
+        expiresAt: p.expiresAt || undefined,
+        prdId: p.prdId,
+        framework: p.framework,
+        category: p.category,
+        pattern: p.pattern,
+        examples: p.examples,
+        metadata: p.metadata,
+      }));
 
-      // Verify version
-      if (data.version && data.version !== '2.0') {
-        const warningMsg = `Patterns file has unexpected version: ${data.version}. Expected v2.0. Schema may have been migrated.`;
-        logger.warn(`[PatternLoader] ${warningMsg}`);
-        // Record warning in build metrics if available
-        try {
-          const { getBuildMetrics } = await import('../../metrics/build');
-          getBuildMetrics().recordWarning('PatternLoader', warningMsg);
-        } catch {
-          // Build metrics not available
+      // Auto-prune if enabled
+      if (this.config.autoPrune) {
+        const prunedCount = await this.patternLibraryManager.prune(this.config.filterOptions.retentionDays || 180);
+        if (prunedCount > 0 && this.debug) {
+          logger.debug(`[PatternLoader] Pruned ${prunedCount} old patterns`);
         }
       }
 
-      // Auto-prune old entries if enabled and interval has passed
-      let patterns = data.patterns || [];
-      if (this.config.autoPrune && this.shouldPruneNow()) {
-        const beforeCount = patterns.length;
-        patterns = await this.pruneOldEntries(patterns, data);
-        if (patterns.length < beforeCount) {
-          // Save pruned file
-          data.patterns = patterns;
-          data.updatedAt = new Date().toISOString();
-          await fs.writeJson(this.config.filePath, data, { spaces: 2 });
-          logger.debug(`[PatternLoader] Auto-pruned ${beforeCount - patterns.length} old patterns`);
-        }
-        this.lastPruneTime = Date.now();
-      }
-
-      // Filter patterns
-      const filtered = this.filterPatterns(patterns);
-
-      logger.debug(`[PatternLoader] Loaded ${filtered.length} patterns (from ${patterns.length} total after pruning)`);
-      return filtered;
+      logger.debug(`[PatternLoader] Loaded ${patterns.length} patterns from PatternLibraryManager`);
+      return patterns;
     } catch (error) {
       logger.error(`[PatternLoader] Failed to load patterns: ${error}`);
       return [];
@@ -134,125 +162,17 @@ export class PatternLoader {
 
   /**
    * Update pattern lastUsedAt timestamp (marks pattern as recently used)
+   * Delegates to PatternLibraryManager.
    */
   async markPatternUsed(patternId: string): Promise<void> {
     try {
-      if (!(await fs.pathExists(this.config.filePath))) {
-        return;
-      }
-
-      const data: PatternsFile = await fs.readJson(this.config.filePath);
-      const pattern = data.patterns.find(p => p.id === patternId);
-      
-      if (pattern) {
-        pattern.lastUsedAt = new Date().toISOString();
-        data.updatedAt = new Date().toISOString();
-        await fs.writeJson(this.config.filePath, data, { spaces: 2 });
-        logger.debug(`[PatternLoader] Marked pattern ${patternId} as used`);
-      }
+      await this.patternLibraryManager.markPrdPatternUsed(patternId);
     } catch (error) {
       logger.warn(`[PatternLoader] Failed to mark pattern as used: ${error}`);
     }
   }
 
-  /**
-   * Filter patterns based on filter options
-   */
-  private filterPatterns(patterns: PatternEntry[]): PatternEntry[] {
-    const now = new Date();
-    const filterOpts = this.config.filterOptions;
-
-    return patterns.filter(pattern => {
-      // Filter by expiration
-      if (filterOpts.excludeExpired && pattern.expiresAt) {
-        const expiresAt = new Date(pattern.expiresAt);
-        if (expiresAt < now) {
-          return false; // Expired
-        }
-      }
-
-      // Filter by relevance score
-      if (pattern.relevanceScore < (filterOpts.relevanceThreshold ?? 0.5)) {
-        return false; // Below threshold
-      }
-
-      // Filter by lastUsedAt (only load recently used patterns)
-      const lastUsedAt = new Date(pattern.lastUsedAt);
-      const daysSinceLastUse = (now.getTime() - lastUsedAt.getTime()) / (1000 * 60 * 60 * 24);
-      if (daysSinceLastUse > (filterOpts.lastUsedDays ?? 90)) {
-        return false; // Not used recently enough
-      }
-
-      // Filter by retention days (based on createdAt)
-      const createdAt = new Date(pattern.createdAt);
-      const daysSinceCreation = (now.getTime() - createdAt.getTime()) / (1000 * 60 * 60 * 24);
-      if (daysSinceCreation > (filterOpts.retentionDays ?? 180)) {
-        return false; // Too old
-      }
-
-      // Filter by prdId if specified
-      if (filterOpts.prdId && pattern.prdId && pattern.prdId !== filterOpts.prdId) {
-        return false; // Different PRD
-      }
-
-      // Filter by framework if specified
-      if (filterOpts.framework && pattern.framework && pattern.framework !== filterOpts.framework) {
-        return false; // Different framework
-      }
-
-      // Filter by category if specified
-      if (filterOpts.category && pattern.category !== filterOpts.category) {
-        return false; // Different category
-      }
-
-      return true;
-    });
-  }
-
-  /**
-   * Prune old entries (remove patterns not used in retentionDays+)
-   */
-  private async pruneOldEntries(patterns: PatternEntry[], data: PatternsFile): Promise<PatternEntry[]> {
-    const now = new Date();
-    const retentionDays = this.config.filterOptions.retentionDays;
-
-    return patterns.filter(pattern => {
-      const lastUsedAt = new Date(pattern.lastUsedAt);
-      const daysSinceLastUse = (now.getTime() - lastUsedAt.getTime()) / (1000 * 60 * 60 * 24);
-      
-      // Keep if used recently OR if created recently (might be new)
-      const createdAt = new Date(pattern.createdAt);
-      const daysSinceCreation = (now.getTime() - createdAt.getTime()) / (1000 * 60 * 60 * 24);
-      const retentionDaysValue = retentionDays ?? 180;
-      
-      return daysSinceLastUse <= retentionDaysValue || daysSinceCreation <= 30; // Keep if used recently OR created in last 30 days
-    });
-  }
-
-  /**
-   * Check if we should prune now (based on interval)
-   */
-  private shouldPruneNow(): boolean {
-    if (!this.config.autoPrune) {
-      return false;
-    }
-
-    const now = Date.now();
-    if (now - this.lastPruneTime > this.PRUNE_INTERVAL_MS) {
-      // Check file mtime to avoid pruning on every load (use sync since this is called during load)
-      try {
-        if (fs.existsSync(this.config.filePath)) {
-          const stats = fs.statSync(this.config.filePath);
-          const fileMtime = stats.mtimeMs;
-          // Only prune if file hasn't been modified recently (prevents pruning on every read)
-          return now - fileMtime > this.PRUNE_INTERVAL_MS;
-        }
-      } catch {
-        // File might not exist yet
-        return false;
-      }
-    }
-
-    return false;
-  }
+  // Filtering, pruning, and file I/O operations removed - now delegated to PatternLibraryManager
+  // The filterPrdPatterns() method in PatternLibraryManager handles all filtering logic
+  // The prune() method in PatternLibraryManager handles pruning
 }

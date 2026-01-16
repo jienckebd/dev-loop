@@ -26,6 +26,13 @@ This directory contains code analysis, error analysis, and pattern learning capa
 - **learner.ts** - Pattern learning system (learns from successful/failed executions)
 - **framework-pattern-library.ts** - Framework-specific pattern library
 
+### Unified Pattern System
+- **pattern-library-manager.ts** - Unified pattern storage and management
+  - Handles all pattern types: error, code, schema, test, PRD patterns
+  - Provides filtering, pruning, and querying APIs
+  - Replaces separate pattern storage systems
+- **pattern-library.ts** (schema) - Unified pattern library schema definition
+
 ## Key Features
 
 - **Error Categorization**: Categorizes errors by type (validation, test, log, timeout, etc.)
@@ -39,6 +46,7 @@ This directory contains code analysis, error analysis, and pattern learning capa
 import { ErrorAnalyzer } from './error/analyzer';
 import { CodeQualityScanner } from './code/quality-scanner';
 import { PatternLearningSystem } from './pattern/learner';
+import { PatternLibraryManager } from './pattern-library-manager';
 
 // Analyze errors
 const errorAnalyzer = new ErrorAnalyzer();
@@ -47,5 +55,29 @@ const category = errorAnalyzer.categorizeError(errorMessage);
 // Scan code quality
 const scanner = new CodeQualityScanner();
 const results = await scanner.scan(projectRoot, paths);
+
+// Use unified pattern system
+const patternManager = new PatternLibraryManager({
+  projectRoot: process.cwd(),
+});
+await patternManager.load();
+const errorPatterns = patternManager.getErrorPatterns();
+const codePatterns = patternManager.getCodePatterns();
 ```
 
+## Unified Pattern Architecture
+
+The pattern system has been consolidated into a single `PatternLibraryManager` that handles:
+
+1. **Error Patterns** - Learned from validation/test failures (from PatternLearningSystem)
+2. **PRD Patterns** - Learned from PRD building (from PatternLoader)
+3. **Code Patterns** - Discovered from codebase analysis
+4. **Schema Patterns** - Framework-specific configuration patterns
+5. **Test Patterns** - Test structure patterns
+
+All patterns are stored in `.devloop/pattern-library.json` with unified filtering, pruning, and querying.
+
+### Migration
+- Legacy `.devloop/patterns.json` (v1/v2) files are automatically migrated
+- PatternLearningSystem and PatternLoader now delegate to PatternLibraryManager
+- Backward compatibility is maintained

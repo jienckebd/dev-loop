@@ -3,6 +3,7 @@ import { WorkflowEngine } from "../../core/execution/workflow";
 import { TaskMasterBridge } from "../../core/execution/task-bridge";
 import { StateManager } from "../../core/utils/state-manager";
 import { ConfigLoader, FastMCPType } from './index';
+import { truncateMcpResponse } from '../utils/truncate-response';
 
 export function registerCoreTools(mcp: FastMCPType, getConfig: ConfigLoader): void {
   // devloop_run - Execute one workflow iteration
@@ -198,7 +199,18 @@ export function registerCoreTools(mcp: FastMCPType, getConfig: ConfigLoader): vo
         result.tree = rootTasks.map((t: any) => buildTree(t.id)).filter(Boolean);
       }
 
-      return JSON.stringify(result, null, 2);
+      // Apply truncation for large task lists
+      const response = JSON.stringify(result, null, 2);
+      const mcpConfig = ((await getConfig(args.config)) as any).mcp || {};
+      const maxOutputTokens = mcpConfig.maxOutputTokens || 25000;
+      const warningThreshold = mcpConfig.truncationWarningThreshold || 10000;
+      const truncated = truncateMcpResponse(response, maxOutputTokens, warningThreshold);
+      
+      if (truncated.warning) {
+        console.warn(`[MCP] ${truncated.warning}`);
+      }
+      
+      return truncated.response;
     },
   });
 
@@ -257,7 +269,12 @@ export function registerCoreTools(mcp: FastMCPType, getConfig: ConfigLoader): vo
           timeoutPromise,
         ]);
 
-        return JSON.stringify({
+        const config = await getConfig(args.config);
+        const mcpConfig = (config as any).mcp || {};
+        const maxOutputTokens = mcpConfig.maxOutputTokens || 25000;
+        const warningThreshold = mcpConfig.truncationWarningThreshold || 10000;
+
+        const response = JSON.stringify({
           success: true,
           message: 'PRD execution completed',
           prdConfig: prdConfigInfo,
@@ -267,7 +284,12 @@ export function registerCoreTools(mcp: FastMCPType, getConfig: ConfigLoader): vo
 
         // Check if it's a timeout error
         if (errorMessage.includes('timed out')) {
-          return JSON.stringify({
+          const config = await getConfig(args.config);
+        const mcpConfig = (config as any).mcp || {};
+        const maxOutputTokens = mcpConfig.maxOutputTokens || 25000;
+        const warningThreshold = mcpConfig.truncationWarningThreshold || 10000;
+
+        const response = JSON.stringify({
             success: false,
             error: errorMessage,
             timeout: true,
@@ -276,7 +298,12 @@ export function registerCoreTools(mcp: FastMCPType, getConfig: ConfigLoader): vo
           });
         }
 
-        return JSON.stringify({
+        const config = await getConfig(args.config);
+        const mcpConfig = (config as any).mcp || {};
+        const maxOutputTokens = mcpConfig.maxOutputTokens || 25000;
+        const warningThreshold = mcpConfig.truncationWarningThreshold || 10000;
+
+        const response = JSON.stringify({
           success: false,
           error: errorMessage,
           prdConfig: prdConfigInfo,
@@ -308,12 +335,22 @@ export function registerCoreTools(mcp: FastMCPType, getConfig: ConfigLoader): vo
           maxConcurrent: args.maxConcurrent,
         });
 
-        return JSON.stringify({
+        const config = await getConfig(args.config);
+        const mcpConfig = (config as any).mcp || {};
+        const maxOutputTokens = mcpConfig.maxOutputTokens || 25000;
+        const warningThreshold = mcpConfig.truncationWarningThreshold || 10000;
+
+        const response = JSON.stringify({
           success: true,
           message: 'PRD set execution completed',
         });
       } catch (error) {
-        return JSON.stringify({
+        const config = await getConfig(args.config);
+        const mcpConfig = (config as any).mcp || {};
+        const maxOutputTokens = mcpConfig.maxOutputTokens || 25000;
+        const warningThreshold = mcpConfig.truncationWarningThreshold || 10000;
+
+        const response = JSON.stringify({
           success: false,
           error: error instanceof Error ? error.message : String(error),
         });

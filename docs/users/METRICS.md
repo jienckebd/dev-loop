@@ -4,6 +4,34 @@
 
 Dev-loop collects comprehensive metrics at multiple hierarchical levels to track execution performance, costs, and outcomes. This guide explains the metrics system and how to use it.
 
+## Unified Metrics System
+
+The metrics system has been unified through `MetricsAggregator` which combines insights from:
+
+1. **BuildMetrics** - PRD set building metrics (timing, AI calls, tokens, quality)
+2. **PatternMetrics** - Pattern learning system effectiveness
+3. **ExecutionIntelligenceCollector** - Task execution patterns, PRD generation insights, provider performance
+
+### MetricsAggregator
+
+The `MetricsAggregator` provides:
+- Unified access to all metrics systems
+- Cross-system correlation analysis
+- Provider/model performance recommendations
+- Config effectiveness insights
+
+### Correlation Analysis
+
+The `CorrelationAnalyzer` identifies relationships across metrics:
+- **Pattern Effectiveness**: Which patterns correlate with successful builds
+- **Provider Performance**: Which AI providers/models work best for different task types
+- **Config Effectiveness**: Which config settings lead to better outcomes
+
+Use correlation analysis to:
+- Optimize provider/model selection
+- Identify most effective patterns
+- Tune configuration for better results
+
 ## Hierarchical Metrics
 
 Metrics are collected at four levels:
@@ -252,7 +280,7 @@ Target metrics for effective proactive monitoring:
 The system automatically analyzes intervention patterns every 10 interventions:
 
 - **Most Effective Strategies**: Top 5 strategies by success rate
-- **Least Effective Strategies**: Bottom 5 strategies by success rate  
+- **Least Effective Strategies**: Bottom 5 strategies by success rate
 - **Common Failure Modes**: Top 10 failure mode patterns (issue type + error reason)
 
 This analysis helps identify:

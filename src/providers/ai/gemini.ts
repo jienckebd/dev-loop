@@ -1,7 +1,8 @@
 import { GoogleGenerativeAI } from '@google/generative-ai';
 import { AIProvider, AIProviderConfig } from './interface';
 import { CodeChanges, TaskContext, LogAnalysis } from '../../types';
-import { extractCodeChanges, JsonParsingContext } from './json-parser';
+import { JsonParsingContext } from './json-parser';
+import { CodeChangesValidator } from './code-changes-validator';
 import { GenericSessionManager } from './generic-session-manager';
 import { Session, SessionContext } from './session-manager';
 import { logger } from '../../core/utils/logger';
@@ -12,6 +13,13 @@ export class GeminiProvider implements AIProvider {
   private model: any;
   private lastTokens: { input?: number; output?: number } = {};
   private sessionManager: GenericSessionManager | null = null;
+
+  // Model pricing per 1M tokens (input, output)
+  private static readonly PRICING: Record<string, { input: number; output: number }> = {
+    'gemini-2.0-flash': { input: 0.1, output: 0.4 },
+    'gemini-1.5-pro': { input: 1.25, output: 5.0 },
+    'gemini-1.5-flash': { input: 0.075, output: 0.3 },
+  };
 
   constructor(private config: AIProviderConfig) {
     if (!config.apiKey) {
@@ -62,6 +70,16 @@ export class GeminiProvider implements AIProvider {
     return this.sessionManager !== null;
   }
 
+  /**
+   * Calculate cost in USD for token usage (provider-native pricing)
+   */
+  calculateCost(tokens: { input?: number; output?: number }): number {
+    const pricing = GeminiProvider.PRICING[this.config.model] || { input: 10.0, output: 10.0 };
+    const inputCost = ((tokens.input || 0) / 1_000_000) * pricing.input;
+    const outputCost = ((tokens.output || 0) / 1_000_000) * pricing.output;
+    return inputCost + outputCost;
+  }
+
   async generateCode(prompt: string, context: TaskContext): Promise<CodeChanges> {
     const systemPrompt = `You are an expert software developer. Generate code changes based on the task description.
 Include both feature implementation and test code together. Return your response as a JSON object with this structure:
@@ -103,9 +121,9 @@ ${prompt}`;
         prdId: context.prdId,
         phaseId: context.phaseId ?? undefined,
       };
-      const codeChanges = extractCodeChanges(text, undefined, parsingContext);
-      if (codeChanges) {
-        return codeChanges;
+      const validationResult = CodeChangesValidator.validate(text, parsingContext);
+      if (validationResult.valid && validationResult.codeChanges) {
+        return validationResult.codeChanges;
       }
 
       // Fallback: create a single file

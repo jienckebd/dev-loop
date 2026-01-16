@@ -132,6 +132,10 @@ const configSchemaBase = z.object({
   }).optional(),
   // MCP (Model Context Protocol) configuration
   mcp: z.object({
+    // Maximum output tokens for MCP tool responses (prevents context overflow)
+    maxOutputTokens: z.number().default(25000).describe('Maximum output tokens for MCP responses'),
+    // Warning threshold for output size (log warning when exceeded)
+    truncationWarningThreshold: z.number().default(10000).describe('Token count threshold for truncation warnings'),
     // Event monitoring configuration for proactive intervention
     eventMonitoring: z.object({
       enabled: z.boolean().default(false),
@@ -309,9 +313,67 @@ const configSchemaBase = z.object({
     }).optional(),
   }).optional(),
   hooks: z.object({
+    // Legacy string array format (backward compatible)
     preTest: z.array(z.string()).optional(),
     postTest: z.array(z.string()).optional(),
     postApply: z.array(z.string()).optional(),
+    // Enhanced hook format with event-driven structure
+    sessionStart: z.array(z.union([
+      z.string(), // Legacy: command string
+      z.object({
+        type: z.enum(['command', 'script']),
+        command: z.string().optional(),
+        script: z.string().optional(),
+      }),
+    ])).optional(),
+    taskStart: z.array(z.union([
+      z.string(),
+      z.object({
+        type: z.enum(['command', 'script']),
+        command: z.string().optional(),
+        script: z.string().optional(),
+      }),
+    ])).optional(),
+    taskComplete: z.array(z.union([
+      z.string(),
+      z.object({
+        type: z.enum(['command', 'script']),
+        command: z.string().optional(),
+        script: z.string().optional(),
+      }),
+    ])).optional(),
+    codeApplied: z.array(z.union([
+      z.string(),
+      z.object({
+        type: z.enum(['command', 'script']),
+        command: z.string().optional(),
+        script: z.string().optional(),
+      }),
+    ])).optional(),
+    testComplete: z.array(z.union([
+      z.string(),
+      z.object({
+        type: z.enum(['command', 'script']),
+        command: z.string().optional(),
+        script: z.string().optional(),
+      }),
+    ])).optional(),
+    aiCallStart: z.array(z.union([
+      z.string(),
+      z.object({
+        type: z.enum(['command', 'script']),
+        command: z.string().optional(),
+        script: z.string().optional(),
+      }),
+    ])).optional(),
+    aiCallComplete: z.array(z.union([
+      z.string(),
+      z.object({
+        type: z.enum(['command', 'script']),
+        command: z.string().optional(),
+        script: z.string().optional(),
+      }),
+    ])).optional(),
   }).optional(),
   // Cursor rules configuration for injecting project rules into AI prompts
   rules: z.object({
@@ -535,10 +597,6 @@ const configSchemaBase = z.object({
       useBackgroundAgent: z.boolean().default(true),
       // Output format for background agent: 'json', 'text', or 'stream-json'
       agentOutputFormat: z.enum(['json', 'text', 'stream-json']).default('json'),
-      // Create visible chat agents for observability and guidance (runs parallel to background agents)
-      createObservabilityChats: z.boolean().default(true),
-      // Strategy for opening observability chats: 'agent', 'ide', 'file', 'manual'
-      observabilityStrategy: z.enum(['agent', 'ide', 'file', 'manual']).default('agent'),
       // Fallback to file-based method if background agent fails
       fallbackToFileBased: z.boolean().default(true),
       // Session management for context persistence between background agent calls

@@ -23,6 +23,9 @@ Dev-loop documentation is organized by audience and topic. Choose the documentat
 - [`docs/users/PRD_BUILDING.md`](docs/users/PRD_BUILDING.md) - PRD building guide (convert/enhance/create)
 - [`docs/users/METRICS.md`](docs/users/METRICS.md) - Metrics and reporting guide
 - [`docs/users/REPORTS.md`](docs/users/REPORTS.md) - Report generation guide
+- [`docs/users/PATTERNS.md`](docs/users/PATTERNS.md) - Unified pattern system guide
+- [`docs/users/INIT_COMMAND.md`](docs/users/INIT_COMMAND.md) - Init command with execution intelligence
+- [`docs/users/CONFIG.md`](docs/users/CONFIG.md) - Complete configuration reference
 
 **For AI Agents:**
 - [`docs/ai/README.md`](docs/ai/README.md) - AI agent onboarding guide for creating PRDs
@@ -41,6 +44,7 @@ Dev-loop documentation is organized by audience and topic. Choose the documentat
 - [`docs/CURSOR_INTEGRATION.md`](docs/CURSOR_INTEGRATION.md) - Complete Cursor integration guide
 - [`docs/contributing/EVENT_STREAMING.md`](docs/contributing/EVENT_STREAMING.md) - Event streaming guide
 - [`docs/contributing/PROACTIVE_MONITORING.md`](docs/contributing/PROACTIVE_MONITORING.md) - Proactive monitoring guide
+- [`docs/MIGRATION_PATTERNS.md`](docs/MIGRATION_PATTERNS.md) - Pattern schema migration guide
 
 **Documentation Discovery:** All documentation files include YAML frontmatter metadata. See [`docs/ai/README.md`](docs/ai/README.md) for AI agent discovery strategies.
 
@@ -76,7 +80,9 @@ flowchart LR
 | **Framework Plugins** | Drupal, Django, React, Browser Extension with auto-detection | [`docs/users/README.md`](docs/users/README.md#framework-plugins) |
 | **AI Pattern Detection** | Semantic code analysis with abstraction recommendations | [`docs/users/README.md`](docs/users/README.md#ai-enhanced-pattern-detection) |
 | **Code Quality Scanning** | Static analysis, security, tech debt, and duplicate detection | [`docs/users/README.md`](docs/users/README.md#code-quality-scanning) |
-| **Pattern Learning** | Learns from outcomes to improve code generation | [`docs/users/README.md`](docs/users/README.md) |
+| **Pattern Learning** | Unified pattern system learns from outcomes to improve code generation | [`docs/users/PATTERNS.md`](docs/users/PATTERNS.md) |
+| **Execution Intelligence** | Learns from task execution and PRD generation to optimize configuration | [`docs/users/INIT_COMMAND.md`](docs/users/INIT_COMMAND.md) |
+| **Config Evolution** | Learns from manual config edits to improve suggestions | [`docs/users/CONFIG.md`](docs/users/CONFIG.md) |
 | **PRD Building** | Convert planning docs, enhance PRD sets, or create interactively | [`docs/users/PRD_BUILDING.md`](docs/users/PRD_BUILDING.md) |
 | **17 PRD Features** | Framework config, test generation, error guidance, and more | [`docs/ai/PRD_FEATURES.md`](docs/ai/PRD_FEATURES.md) |
 | **MCP Integration** | Task Master and Dev-Loop MCP servers for AI assistant integration | [`docs/users/README.md`](docs/users/README.md#mcp-integration) |
@@ -129,8 +135,10 @@ flowchart TB
     Tests --> Logs[Log/metric Analysis]
     Logs --> Metrics[Hierarchical Metrics<br/>PRD Set → PRD → Phase → Task]
 
-    Metrics --> Learning[Pattern Learning]
-    Learning --> Orchestrator
+    Metrics --> Learning[Unified Pattern Learning<br/>Error, Code, Schema, Test, PRD Patterns]
+    Learning --> Intelligence[Execution Intelligence<br/>Task Patterns, PRD Insights, Provider Performance]
+    Intelligence --> ConfigEvolution[Config Evolution<br/>Learned Preferences]
+    ConfigEvolution --> Orchestrator
 
     Metrics --> State[State Management<br/>Observations, Patterns, Metrics, Learning]
     State --> Orchestrator
