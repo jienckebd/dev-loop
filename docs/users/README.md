@@ -20,12 +20,12 @@ Complete user guide for dev-loop - the autonomous development orchestrator that 
 - [Quick Start](#quick-start)
 - [Configuration](#configuration)
 - [CLI Reference](#cli-reference)
+- [Phase Hooks](#phase-hooks)
 - [Metrics and Reporting](#metrics-and-reporting)
 - [MCP Integration](#mcp-integration)
 - [Architecture](#architecture)
 - [Framework Plugins](#framework-plugins)
 - [Cursor Integration](#cursor-integration)
-- [MCP Integration](#mcp-integration)
 - [AI-Enhanced Pattern Detection](#ai-enhanced-pattern-detection)
 - [Code Quality Scanning](#code-quality-scanning)
 - [Contribution Mode](#contribution-mode)
@@ -227,6 +227,38 @@ module.exports = {
 
 See [PRD_BUILDING.md](./PRD_BUILDING.md) for complete PRD building guide.
 
+## Phase Hooks
+
+Phase hooks enable framework-specific actions at phase boundaries. Define hooks in phase YAML files to automate tasks like enabling modules, running migrations, or clearing caches when phases complete.
+
+**Example:**
+```yaml
+# In phase YAML file
+hooks:
+  onPhaseComplete:
+    - type: cli_command
+      cliCommand: module-enable
+      args:
+        module: my_module
+      description: Enable module after phase completes
+    - type: cli_command
+      cliCommand: cache-rebuild
+```
+
+**Available hook types:**
+- `cli_command`: Framework-specific CLI commands (Drupal drush, Django manage.py)
+- `shell`: Arbitrary shell commands
+- `callback`: Custom callback functions
+
+**Framework commands:**
+| Framework | Commands |
+|-----------|----------|
+| Drupal | `module-enable`, `cache-rebuild`, `config-import` |
+| Django | `migrate`, `collectstatic`, `makemigrations` |
+| React | `build`, `test`, `lint` |
+
+See [PHASE_HOOKS.md](./PHASE_HOOKS.md) for complete phase hooks guide.
+
 ### Debugging Commands
 
 | Command | Description |
@@ -400,6 +432,9 @@ stateDiagram-v2
 | **CodeContextProvider** | Extract file signatures, imports, error context |
 | **ValidationGate** | Pre-apply validation, syntax checking |
 | **PatternLearningSystem** | Learn from outcomes, inject guidance |
+| **EventMetricBridge** | Automatic metrics collection from events |
+| **PhaseHookExecutor** | Execute framework hooks on phase completion |
+| **CrossPrdCheckpointer** | Shared state across parallel PRDs |
 
 ### Provider Interfaces
 

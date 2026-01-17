@@ -34,6 +34,7 @@ import {
 } from '../metrics/event-metric-bridge';
 import { PrdMetrics } from '../metrics/prd';
 import { PrdSetMetrics } from '../metrics/prd-set';
+import { PhaseHookExecutor, findPhaseFilePath } from './phase-hook-executor';
 
 export interface IterationConfig {
   /** Maximum iterations before stopping */
@@ -102,6 +103,10 @@ export class IterationRunner {
   private taskRetryCount: Map<string, number> = new Map();
   private readonly maxTaskRetries = 3;
 
+  /** Track completed phases to trigger hooks only once */
+  private completedPhases: Set<string> = new Set();
+  private phaseHookExecutor?: PhaseHookExecutor;
+
   /** Accumulated metrics across all iterations */
   private accumulatedMetrics = {
     tokensInput: 0,
@@ -139,6 +144,9 @@ export class IterationRunner {
       enabled: true,
       debug: config.debug,
     });
+
+    // Initialize phase hook executor
+    this.phaseHookExecutor = new PhaseHookExecutor(config, config.debug);
   }
 
   /**
@@ -214,6 +222,9 @@ export class IterationRunner {
           // Clear retry count on success
           this.taskRetryCount.delete(String(result.task.id));
           logger.info(`[IterationRunner] Task ${result.task.id} marked as done`);
+
+          // Check for phase completion and execute hooks
+          await this.checkPhaseCompletionAndExecuteHooks(result);
         } else if (result.status === 'failed' && result.task) {
           const taskId = String(result.task.id);
           const currentRetries = (this.taskRetryCount.get(taskId) || 0) + 1;
@@ -412,6 +423,106 @@ export class IterationRunner {
   private async isComplete(): Promise<boolean> {
     const pending = await this.taskBridge.getPendingTasks();
     return pending.length === 0;
+  }
+
+  /**
+   * Check if a phase is complete and execute onPhaseComplete hooks
+   *
+   * A phase is complete when all tasks in that phase are done or blocked.
+   * Only executes hooks once per phase.
+   */
+  private async checkPhaseCompletionAndExecuteHooks(result: WorkflowState): Promise<void> {
+    // Need prdId and phaseId to check phase completion
+    if (!result.prdId || !result.phaseId) {
+      logger.debug('[IterationRunner] Task result missing prdId or phaseId, skipping phase hook check');
+      return;
+    }
+
+    const phaseKey = `${result.prdId}-phase-${result.phaseId}`;
+
+    // Skip if already processed
+    if (this.completedPhases.has(phaseKey)) {
+      return;
+    }
+
+    try {
+      // Get all tasks for this phase
+      const allTasks = await this.taskBridge.getAllTasks();
+      const phaseTasks = allTasks.filter((t: any) => {
+        try {
+          const details = t.details ? JSON.parse(t.details) : {};
+          return details.prdId === result.prdId &&
+                 (details.phaseId === result.phaseId || String(details.phaseId) === String(result.phaseId));
+        } catch {
+          return false;
+        }
+      });
+
+      // Check if all phase tasks are complete (done or blocked)
+      const phaseComplete = phaseTasks.length > 0 && phaseTasks.every((t: any) =>
+        t.status === 'done' || t.status === 'blocked'
+      );
+
+      if (!phaseComplete) {
+        logger.debug(`[IterationRunner] Phase ${phaseKey} not yet complete: ${phaseTasks.filter((t: any) => t.status === 'pending' || t.status === 'in-progress').length} tasks remaining`);
+        return;
+      }
+
+      // Mark phase as completed to prevent re-execution
+      this.completedPhases.add(phaseKey);
+
+      logger.info(`[IterationRunner] Phase ${phaseKey} complete! Checking for onPhaseComplete hooks...`);
+
+      // Emit phase:completed event
+      emitEvent('phase:completed', {
+        prdId: result.prdId,
+        phaseId: result.phaseId,
+        tasksCompleted: phaseTasks.filter((t: any) => t.status === 'done').length,
+        tasksFailed: phaseTasks.filter((t: any) => t.status === 'blocked').length,
+      }, {
+        prdId: result.prdId,
+        phaseId: typeof result.phaseId === 'number' ? result.phaseId : parseInt(String(result.phaseId), 10),
+      });
+
+      // Find phase file and execute hooks
+      if (!this.phaseHookExecutor) {
+        logger.debug('[IterationRunner] Phase hook executor not initialized');
+        return;
+      }
+
+      // Get prdSetId from task details to find the phase file
+      const taskDetails = result.task?.details ? JSON.parse(result.task.details) : {};
+      const prdSetId = taskDetails.prdSetId;
+
+      if (!prdSetId) {
+        logger.debug('[IterationRunner] Task missing prdSetId, cannot find phase file');
+        return;
+      }
+
+      // Look for phase file in the PRD set directory
+      const prdSetDir = `.taskmaster/production/${prdSetId}`;
+      const phaseFilePath = findPhaseFilePath(prdSetDir, result.prdId, result.phaseId);
+
+      if (!phaseFilePath) {
+        logger.debug(`[IterationRunner] Phase file not found for ${phaseKey} in ${prdSetDir}`);
+        return;
+      }
+
+      logger.info(`[IterationRunner] Executing onPhaseComplete hooks for ${phaseFilePath}`);
+
+      const hookResults = await this.phaseHookExecutor.executeOnPhaseComplete(phaseFilePath, {
+        prdId: result.prdId,
+        phaseId: result.phaseId,
+      });
+
+      if (hookResults.length > 0) {
+        const successCount = hookResults.filter(r => r.success).length;
+        const failCount = hookResults.filter(r => !r.success).length;
+        logger.info(`[IterationRunner] Phase hooks executed: ${successCount} succeeded, ${failCount} failed`);
+      }
+    } catch (error) {
+      logger.warn(`[IterationRunner] Error checking phase completion: ${error instanceof Error ? error.message : String(error)}`);
+    }
   }
 
   /**

@@ -1,3 +1,11 @@
+---
+title: Archive Command Guide
+description: Move Task Master and dev-loop state files to archive location
+category: users
+keywords: [archive, cleanup, state, maintenance]
+related: [users/CONFIG, users/INIT_COMMAND]
+---
+
 # Archive Command Guide
 
 ## Overview

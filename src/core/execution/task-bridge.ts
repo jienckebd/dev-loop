@@ -115,7 +115,7 @@ export class TaskMasterBridge {
 
   /**
    * Infer task type from task title and description
-   * 
+   *
    * Heuristics:
    * - "investigate", "investigation", "analyze", "analysis" -> investigate/analysis
    * - "fix", "fix:", "resolve", "correct" -> fix
@@ -337,7 +337,7 @@ export class TaskMasterBridge {
       if (existingTask) {
         const existingPrdSetId = (existingTask as any).prdSetId;
         const newPrdSetId = (task as any).prdSetId;
-        
+
         // If task exists but from different PRD set, update it to current PRD set
         if (existingPrdSetId && newPrdSetId && existingPrdSetId !== newPrdSetId) {
           console.log(`[TaskBridge] Task ${task.id} exists from PRD set ${existingPrdSetId}, updating to ${newPrdSetId}`);
@@ -352,7 +352,7 @@ export class TaskMasterBridge {
           await this.saveTasks(tasks);
           return existingTask;
         }
-        
+
         // Otherwise, skip as before
         console.log(`[TaskBridge] Task ${task.id} already exists (status: ${existingTask.status}), skipping creation`);
         return existingTask;
@@ -402,11 +402,11 @@ export class TaskMasterBridge {
 
     // Check if a fix task already exists for this original task
     const existingTasks = await this.loadTasks();
-    const existingFixTask = existingTasks.find(t => 
-      t.id.startsWith(`fix-${originalTaskId}-`) && 
+    const existingFixTask = existingTasks.find(t =>
+      t.id.startsWith(`fix-${originalTaskId}-`) &&
       (t.status === 'pending' || t.status === 'in-progress')
     );
-    
+
     if (existingFixTask) {
       console.log(`[TaskBridge] Fix task already exists for ${originalTaskId}: ${existingFixTask.id}, skipping duplicate creation`);
       return existingFixTask;
@@ -430,7 +430,7 @@ export class TaskMasterBridge {
     const errorGuidanceStart = Date.now();
     const guidance = this.getErrorGuidance(errorDescription);
     const errorGuidanceDuration = Date.now() - errorGuidanceStart;
-    
+
     // Track error guidance feature if guidance was provided
     // Note: Feature tracking will be done at workflow level when fix task is executed
     // We track here that guidance was generated, but actual usage is tracked when applied
@@ -787,16 +787,16 @@ export class TaskMasterBridge {
     const crypto = require('crypto');
     let retries = 3;
     let lastError: Error | null = null;
-    
+
     while (retries > 0) {
       const tempPath = `${this.tasksPath}.${process.pid}.${Date.now()}.${crypto.randomUUID().substring(0, 8)}.tmp`;
       try {
         // Validate JSON before writing
         const jsonString = JSON.stringify(output, null, 2);
         JSON.parse(jsonString); // Validate it's valid JSON
-        
+
         await fs.writeFile(tempPath, jsonString, 'utf-8');
-        
+
         // Retry rename with exponential backoff if file was deleted by another process
         let renameRetries = 3;
         while (renameRetries > 0) {
@@ -830,7 +830,7 @@ export class TaskMasterBridge {
         }
       }
     }
-    
+
     // All retries failed
     throw new Error(`Failed to save tasks atomically after 3 retries: ${lastError instanceof Error ? lastError.message : String(lastError)}`);
   }

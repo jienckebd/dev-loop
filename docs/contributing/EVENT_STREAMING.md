@@ -26,14 +26,40 @@ flowchart LR
     IR[IterationRunner] -->|emit| ES[EventStream]
     TB[TaskBridge] -->|emit| ES
     VG[ValidationGate] -->|emit| ES
+    LG[LangGraph Nodes] -->|emit| ES
+    PHE[PhaseHookExecutor] -->|emit| ES
+    ES -->|subscribe| EMB[EventMetricBridge]
     ES -->|buffer| Events[(Event Buffer)]
     Events -->|query| MCP[MCP Tools]
     MCP --> Agent[Outer Agent]
+    EMB --> Metrics[(Hierarchical Metrics)]
 ```
 
 ## Event Types
 
-**Note**: All events automatically update relevant metrics when emitted via the event-to-metrics bridge. See the "Event-to-Metrics Bridge" section below for details.
+**Note**: All events automatically update relevant metrics when emitted via the `EventMetricBridge`. The bridge subscribes to the event stream and maps 100+ event types to their corresponding metric update methods. See the "Event-to-Metrics Bridge" section below for details.
+
+### Complete Event Type Reference
+
+Events are organized by category (100+ total):
+
+| Category | Event Types |
+|----------|-------------|
+| Task Lifecycle | `task:started`, `task:completed`, `task:failed`, `task:blocked`, `task:stalled` |
+| Code Generation | `code:generated`, `code:generation_failed` |
+| Changes | `changes:applied`, `file:created`, `file:modified`, `file:deleted`, `file:boundary_violation` |
+| Testing | `test:passed`, `test:failed`, `test:stalled` |
+| Failure Analysis | `failure:analyzed`, `failure:analysis_failed` |
+| Fix Tasks | `fix_task:created`, `fix_task:creation_failed` |
+| JSON Parsing | `json:parse_success`, `json:parse_failed`, `json:parse_retry`, `json:sanitized`, `json:ai_fallback_success`, `json:ai_fallback_failed` |
+| Phase/PRD | `phase:started`, `phase:completed`, `prd:started`, `prd:completed` |
+| Hooks | `hook:started`, `hook:completed`, `hook:failed` |
+| Patterns | `pattern:learned`, `pattern:matched`, `pattern:injected`, `pattern:prevented` |
+| SpecKit | `speckit:context_loaded`, `speckit:context_injected`, `speckit:clarification_applied`, `speckit:research_used` |
+| Workflow | `iteration:started`, `iteration:completed`, `workflow:stalled`, `context:handoff_triggered` |
+| Intervention | `intervention:triggered`, `intervention:successful`, `intervention:failed`, `intervention:rolled_back` |
+| Build | `build:started`, `build:completed`, `build:failed`, `build:phase_started`, `build:ai_call_completed` |
+| PRD Set | `prd_set:tasks_populated` |
 
 ## Event Types
 

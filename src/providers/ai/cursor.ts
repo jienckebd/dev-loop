@@ -259,25 +259,25 @@ export class CursorProvider implements AIProvider {
           };
           const validationResult = CodeChangesValidator.validate(result.response, parsingContext);
           let codeChanges = validationResult.valid ? validationResult.codeChanges : null;
-          
+
           // Always call inferTaskTypeFromTask to catch meta-task patterns (like "Complete phase")
           // even when task.taskType is explicitly set - meta-tasks should never be treated as generate
           const inferredType = this.inferTaskTypeFromTask(context.task);
           const taskType = inferredType !== 'generate' ? inferredType : (context.task.taskType || inferredType);
           const isAnalysisTask = taskType === 'analysis' || taskType === 'investigate';
-          
+
           if (codeChanges) {
             // For analysis tasks, empty files array is valid - return immediately
             if (isAnalysisTask && codeChanges.files.length === 0) {
               logger.info(`[CursorProvider] Analysis task completed successfully with summary: ${codeChanges.summary?.substring(0, 100) || 'no summary'}`);
               return codeChanges;
             }
-            
+
             // For code generation tasks, empty files array might mean "already exists"
             if (!isAnalysisTask && codeChanges.files.length === 0) {
               // Check if summary indicates files already exist
               const summary = (codeChanges.summary || '').toLowerCase();
-              const indicatesAlreadyExists = summary.includes('already exists') || 
+              const indicatesAlreadyExists = summary.includes('already exists') ||
                                             summary.includes('already complete') ||
                                             summary.includes('meets all requirements') ||
                                             summary.includes('no changes needed') ||
@@ -291,7 +291,7 @@ export class CursorProvider implements AIProvider {
                                             summary.includes('verified') ||
                                             summary.includes('matches') ||
                                             summary.includes('correct');
-              
+
               if (indicatesAlreadyExists) {
                 // Verify target files actually exist before accepting
                 const targetFiles = await this.verifyTargetFilesExist(context, codeChanges.summary);
@@ -317,13 +317,13 @@ export class CursorProvider implements AIProvider {
               return codeChanges;
             }
           }
-          
+
           // For analysis tasks with no codeChanges (null), return empty result as success
           if (!codeChanges && isAnalysisTask) {
             logger.info(`[CursorProvider] Analysis task completed with no code changes extracted (valid for analysis tasks)`);
             return { files: [], summary: 'Analysis completed with no code changes extracted' };
           }
-          
+
           // Before retrying, check if target files already exist (for code generation tasks)
           // This handles cases where JSON parsing fails but files were actually created
           if (!codeChanges && !isAnalysisTask) {
@@ -338,7 +338,7 @@ export class CursorProvider implements AIProvider {
               logger.info(`[CursorProvider] Target files do not exist. Will retry JSON parsing.`);
             }
           }
-          
+
           // Retry logic: only retry if codeChanges is null (and not analysis task) OR if it's a code generation task with empty files
           if (!codeChanges || (!isAnalysisTask && codeChanges && codeChanges.files.length === 0)) {
             logger.warn(`[CursorProvider] ${codeChanges ? 'Code generation task returned empty files' : 'Background agent succeeded but no CodeChanges extracted'}, will retry`);
@@ -369,23 +369,23 @@ export class CursorProvider implements AIProvider {
                   // Check task type again for retry response
                   const retryTaskType = context.task.taskType || this.inferTaskTypeFromTask(context.task);
                   const retryIsAnalysisTask = retryTaskType === 'analysis' || retryTaskType === 'investigate';
-                  
+
                   // For analysis tasks, empty files is valid
                   if (retryIsAnalysisTask && retryChanges.files.length === 0) {
                     logger.info(`[CursorProvider] Retry ${retryAttempt} succeeded for analysis task with summary`);
                     return retryChanges;
                   }
-                  
+
                   // For code generation tasks, only return if files exist
                   if (!retryIsAnalysisTask && retryChanges.files.length > 0) {
                     logger.info(`[CursorProvider] Retry ${retryAttempt} succeeded: ${retryChanges.files.length} files`);
                     return retryChanges;
                   }
-                  
+
                   // For code generation tasks with empty files, check if files already exist
                   if (!retryIsAnalysisTask && retryChanges.files.length === 0) {
                     const summary = (retryChanges.summary || '').toLowerCase();
-                    const indicatesAlreadyExists = summary.includes('already exists') || 
+                    const indicatesAlreadyExists = summary.includes('already exists') ||
                                                   summary.includes('already complete') ||
                                                   summary.includes('meets all requirements') ||
                                                   summary.includes('no changes needed') ||
@@ -478,7 +478,7 @@ export class CursorProvider implements AIProvider {
                 logger.warn(`[CursorProvider] Target files do not exist or are incomplete. Missing: ${targetFiles.missing.join(', ')}. Halting.`);
               }
             }
-            
+
             // HALT: JSON parsing failed after all retries and AI fallback (only for code generation tasks)
             // Analysis tasks with empty files should not reach here
             if (!isAnalysisTask) {
@@ -594,7 +594,13 @@ export class CursorProvider implements AIProvider {
     lines.push('');
     lines.push('**YOUR PREVIOUS RESPONSE FAILED BECAUSE JSON PARSING FAILED.**');
     lines.push('');
-    lines.push('DO NOT USE MARKDOWN CODE BLOCKS. DO NOT WRAP IN ```json. PURE JSON ONLY.');
+    lines.push('CRITICAL: Your response must be ONLY a JSON object with this exact structure:');
+    lines.push('{"files": [...], "summary": "..."}');
+    lines.push('');
+    lines.push('Do NOT wrap your response in any additional formatting.');
+    lines.push('Do NOT include narrative text before or after the JSON.');
+    lines.push('Do NOT use markdown code blocks (```json causes escaping issues).');
+    lines.push('Start your response with { and end with }');
     lines.push('');
     lines.push(`Task: ${context.task.title}`);
     lines.push(`Description: ${context.task.description}`);
@@ -604,7 +610,10 @@ export class CursorProvider implements AIProvider {
     lines.push('2. Last character MUST be: }');
     lines.push('3. NO markdown code blocks (```json causes escaping issues)');
     lines.push('4. NO text before or after the JSON object');
-    lines.push('5. Valid JSON that can be parsed with JSON.parse()');
+    lines.push('5. NO Cursor CLI wrapper format - return raw JSON only');
+    lines.push('6. Valid JSON that can be parsed with JSON.parse()');
+    lines.push('7. "summary" field is REQUIRED - auto-generate if needed');
+    lines.push('8. "operation" field is REQUIRED for each file (create/update/patch)');
     lines.push('');
     lines.push('## EXACT FORMAT REQUIRED:');
     lines.push('');
@@ -629,7 +638,7 @@ export class CursorProvider implements AIProvider {
   /**
    * Infer task type from task title and description
    * Similar to TaskMasterBridge.inferTaskType but implemented here for cursor provider
-   * 
+   *
    * IMPORTANT: "Complete phase" tasks and tasks with no target files are treated as
    * analysis tasks to prevent unnecessary retries and JSON PARSING HALT errors.
    * These are meta-tasks that don't require actual code generation.
@@ -639,7 +648,7 @@ export class CursorProvider implements AIProvider {
     const title = (task.title || '').toLowerCase();
     const description = (task.description || '').toLowerCase();
     const combined = `${title} ${description}`;
-    
+
     // "Complete phase" tasks are meta-tasks that don't require code generation
     // They represent phase completion markers, not actual implementation tasks
     if (title.includes('complete phase') || description.includes('complete phase')) {
@@ -663,7 +672,7 @@ export class CursorProvider implements AIProvider {
         // Failed to parse details, continue with normal inference
       }
     }
-    
+
     // Check for empty target files - these can't generate code without knowing where
     // Parse task details to check targetFiles
     try {
@@ -671,18 +680,18 @@ export class CursorProvider implements AIProvider {
       if (details) {
         const parsedDetails = typeof details === 'string' ? JSON.parse(details) : details;
         const targetFiles = parsedDetails?.targetFiles || [];
-        
+
         // If no target files AND title doesn't indicate specific file work, treat as analysis
         if (targetFiles.length === 0) {
           // Check if task mentions specific files or code to create
-          const mentionsFiles = combined.includes('.php') || 
-                               combined.includes('.yml') || 
+          const mentionsFiles = combined.includes('.php') ||
+                               combined.includes('.yml') ||
                                combined.includes('.ts') ||
                                combined.includes('.js') ||
                                combined.includes('create file') ||
                                combined.includes('create the') ||
                                combined.includes('implement');
-          
+
           if (!mentionsFiles) {
             logger.debug(`[CursorProvider] inferTaskTypeFromTask: "${task.title}" has no target files and no specific file mentions, treating as analysis`);
             return 'analysis';
@@ -692,7 +701,7 @@ export class CursorProvider implements AIProvider {
     } catch (e) {
       // Failed to parse details, continue with normal inference
     }
-    
+
     // Return explicit task type if set (after meta-task checks)
     if (task.taskType && task.taskType !== 'generate') {
       return task.taskType;
@@ -780,9 +789,9 @@ export class CursorProvider implements AIProvider {
    * Generate text without expecting JSON CodeChanges format
    * Used for PRD building (schemas, test plans, etc.) where plain text output is expected
    */
-  async generateText(prompt: string, options?: { 
-    maxTokens?: number; 
-    temperature?: number; 
+  async generateText(prompt: string, options?: {
+    maxTokens?: number;
+    temperature?: number;
     systemPrompt?: string;
     sessionContext?: { prdId?: string; phase?: string; taskId?: string };
   }): Promise<string> {
@@ -818,7 +827,7 @@ export class CursorProvider implements AIProvider {
       mode: 'Ask' as const,
       status: 'pending' as const,
       createdAt: new Date().toISOString(),
-      context: { 
+      context: {
         taskId: options?.sessionContext?.taskId || 'text-generation',
         sessionId,
         prdId: options?.sessionContext?.prdId,
@@ -848,16 +857,16 @@ export class CursorProvider implements AIProvider {
         } else {
           text = JSON.stringify(result.response);
         }
-        
+
         // Store token counts for getLastTokens()
         this.lastTokens = {
           input: fullPrompt.length,
           output: text.length,
         };
-        
+
         // Note: We don't record metrics here anymore - TextGenerationAdapter will do it
         // with proper context when available. This avoids double-recording.
-        
+
         logger.info(`[CursorProvider] generateText: Successfully received text response (${text.length} chars)`);
         return text;
       }
@@ -1001,7 +1010,7 @@ Provide a JSON response with:
     const taskDetails = (context.task as any).details || '';
     const taskText = `${context.task.title} ${context.task.description} ${taskDetails}`;
     const targetFiles: string[] = [];
-    
+
     // Priority 1: Extract from "Target Files" section (has full paths)
     // Match "Target Files:" or "**Target Files**:" followed by content until next section
     const targetFilesSectionMatch = taskText.match(/(?:\*\*)?Target Files?\*?[:\s]*\n([\s\S]*?)(?:\n\n|\n\*\*[A-Z]|$)/i);
@@ -1022,7 +1031,7 @@ Provide a JSON response with:
         }
       }
     }
-    
+
     // Priority 2: Extract from acceptance criteria with full paths
     const fullPathPattern = /(?:file exists at|File exists at|exists at)[:\s]*`(docroot\/[^`]+\.(?:php|yml|yaml|ts|js|json|md|twig|css|scss))`/gi;
     const fullPathMatches = [...taskText.matchAll(fullPathPattern)];
@@ -1034,7 +1043,7 @@ Provide a JSON response with:
         }
       }
     }
-    
+
     // Priority 3: Extract relative paths and normalize them (ONLY if no full paths found)
     // Skip this entirely if we already have full paths from "Target Files" section
     if (targetFiles.length === 0) {
@@ -1062,15 +1071,15 @@ Provide a JSON response with:
         }
       }
     }
-    
+
     if (targetFiles.length === 0) {
       // No target files found - can't verify, assume retry needed
       logger.warn(`[CursorProvider] verifyTargetFilesExist: No target files extracted from task description`);
       return { allExist: false, missing: ['unknown'] };
     }
-    
+
     logger.debug(`[CursorProvider] verifyTargetFilesExist: Checking ${targetFiles.length} file(s): ${targetFiles.join(', ')}`);
-    
+
     // Check if files exist
     const missing: string[] = [];
     for (const filePath of targetFiles) {
@@ -1083,14 +1092,14 @@ Provide a JSON response with:
         logger.debug(`[CursorProvider] verifyTargetFilesExist: File exists: ${filePath}`);
       }
     }
-    
+
     const result = {
       allExist: missing.length === 0,
       missing,
     };
-    
+
     logger.info(`[CursorProvider] verifyTargetFilesExist: ${result.allExist ? 'All files exist' : `Missing ${missing.length} file(s): ${missing.join(', ')}`}`);
-    
+
     return result;
   }
 

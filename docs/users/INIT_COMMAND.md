@@ -1,3 +1,11 @@
+---
+title: Init Command User Guide
+description: Set up dev-loop configuration for your project
+category: users
+keywords: [init, setup, configuration, framework detection]
+related: [users/CONFIG, users/ARCHIVE]
+---
+
 # Init Command User Guide
 
 ## Overview

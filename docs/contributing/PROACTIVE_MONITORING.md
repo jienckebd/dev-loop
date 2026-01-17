@@ -61,7 +61,7 @@ Continuously monitors the event stream and triggers automated interventions:
 
 **Key Methods:**
 - `start()` - Start monitoring service
-- `stop()` - Stop monitoring service  
+- `stop()` - Stop monitoring service
 - `getStatus()` - Get monitoring status and statistics
 - `updateConfig()` - Update configuration at runtime
 - `pollEvents()` - Poll events and check thresholds (private)
@@ -152,7 +152,7 @@ Each action strategy knows how to fix a particular type of issue. Strategies are
 
 ### JSON Parsing Strategy
 
-**Strategy Name:** `enhance-json-parser`  
+**Strategy Name:** `enhance-json-parser`
 **Issue Type:** `json-parsing-failure`
 
 **Purpose:** Enhances JSON parser with better extraction logic to handle common parsing failures.
@@ -170,7 +170,7 @@ Each action strategy knows how to fix a particular type of issue. Strategies are
 
 ### Task Blocking Strategy
 
-**Strategy Name:** `unblock-task`  
+**Strategy Name:** `unblock-task`
 **Issue Type:** `task-blocked`
 
 **Purpose:** Unblocks tasks with enhanced context and resets retry count.
@@ -187,7 +187,7 @@ Each action strategy knows how to fix a particular type of issue. Strategies are
 
 ### Boundary Violation Strategy
 
-**Strategy Name:** `enhance-boundary-enforcement`  
+**Strategy Name:** `enhance-boundary-enforcement`
 **Issue Type:** `boundary-violation`
 
 **Purpose:** Enhances boundary enforcement logic to prevent violations.
@@ -198,13 +198,13 @@ Each action strategy knows how to fix a particular type of issue. Strategies are
 - Emits `intervention:fix_applied` event on success
 
 **Files Modified:**
-- `src/core/execution/workflow.ts`
+- `src/core/execution/iteration-runner.ts`
 
 **Confidence:** 0.90 (critical issues require high confidence)
 
 ### Validation Failure Strategy
 
-**Strategy Name:** `enhance-validation-gates`  
+**Strategy Name:** `enhance-validation-gates`
 **Issue Type:** `validation-failure`
 
 **Purpose:** Improves validation gates and adds recovery suggestions.
@@ -221,7 +221,7 @@ Each action strategy knows how to fix a particular type of issue. Strategies are
 
 ### Contribution Mode Strategy
 
-**Strategy Name:** `fix-contribution-mode-issue`  
+**Strategy Name:** `fix-contribution-mode-issue`
 **Issue Type:** `contribution:issue_detected`
 
 **Purpose:** Fixes contribution mode issues based on specific issue type.
@@ -246,7 +246,7 @@ Each action strategy knows how to fix a particular type of issue. Strategies are
 
 ### IPC Connection Strategy
 
-**Strategy Name:** `enhance-ipc-connection`  
+**Strategy Name:** `enhance-ipc-connection`
 **Issue Type:** `ipc-connection-failure`
 
 **Purpose:** Enhances IPC connection logic with retry and exponential backoff.
@@ -548,7 +548,7 @@ const { success, status, message } = await devloop_event_monitor_stop();
 Get event monitoring service status and intervention statistics.
 
 ```typescript
-const { status, metrics, effectiveness, recentInterventions, recentEvents } = 
+const { status, metrics, effectiveness, recentInterventions, recentEvents } =
   await devloop_event_monitor_status();
 ```
 

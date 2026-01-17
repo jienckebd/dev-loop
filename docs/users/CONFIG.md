@@ -1,3 +1,11 @@
+---
+title: Configuration Guide
+description: Complete reference for devloop.config.js configuration options
+category: users
+keywords: [config, configuration, devloop.config.js, settings]
+related: [users/INIT_COMMAND, users/METRICS]
+---
+
 # Configuration Guide
 
 ## Overview

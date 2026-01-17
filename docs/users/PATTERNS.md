@@ -1,3 +1,11 @@
+---
+title: Pattern System User Guide
+description: Discover, learn, and apply patterns across your codebase
+category: users
+keywords: [patterns, learning, error-patterns, code-patterns]
+related: [contributing/PATTERN_SYSTEM, MIGRATION_PATTERNS]
+---
+
 # Pattern System User Guide
 
 ## Overview

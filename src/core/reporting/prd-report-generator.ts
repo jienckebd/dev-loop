@@ -19,6 +19,7 @@ import {
   ContributionModeMetrics,
   TimingBreakdown,
   TokenBreakdown,
+  TaskDetail,
 } from '../metrics/types';
 import { PrdSetMetrics } from '../metrics/prd-set';
 import { BuildMetrics, BuildMetricsData } from '../metrics/build';
@@ -83,6 +84,7 @@ export interface PrdSetReport {
     phasesCompleted: number;
     phasesTotal: number;
   }>;
+  taskDetails?: TaskDetail[];
   // Enhanced metrics
   enhancedMetrics?: {
     jsonParsing?: JsonParsingMetrics;
@@ -473,6 +475,19 @@ export class PrdReportGenerator {
       md += `- **Total Duration**: ${this.formatDuration(report.timingAnalysis.totalDurationMs)}\n`;
       md += `- **Average PRD Time**: ${this.formatDuration(report.timingAnalysis.avgPrdMs)}\n`;
       md += `- **Average Task Time**: ${this.formatDuration(report.timingAnalysis.avgTaskMs)}\n\n`;
+    }
+
+    if (report.taskDetails && report.taskDetails.length > 0) {
+      md += `## Task-Level Analysis\n\n`;
+      md += `| Task ID | Title | Status | Duration | Tokens | Retries | JSON Parses | Context Size |\n`;
+      md += `|---------|-------|--------|----------|--------|---------|-------------|--------------|\n`;
+      for (const task of report.taskDetails) {
+        const duration = this.formatDuration(task.durationMs);
+        const tokens = (task.tokensInput + task.tokensOutput).toLocaleString();
+        const contextSize = task.contextSizeChars > 0 ? `${(task.contextSizeChars / 1024).toFixed(1)}KB` : '-';
+        md += `| ${task.taskId} | ${task.title.substring(0, 40)}${task.title.length > 40 ? '...' : ''} | ${task.status} | ${duration} | ${tokens} | ${task.retryCount} | ${task.jsonParseAttempts} | ${contextSize} |\n`;
+      }
+      md += `\n`;
     }
 
     if (report.observationSummary) {
@@ -1420,9 +1435,9 @@ export class PrdReportGenerator {
       md += `## AI Call Details\n\n`;
       md += `| # | Component | Purpose | Duration | Tokens | Impact |\n`;
       md += `|---|-----------|---------|----------|--------|--------|\n`;
-      
+
       calls.forEach((call, index: number) => {
-        const impact = call.impact 
+        const impact = call.impact
           ? Object.entries(call.impact)
               .filter(([_, v]) => v && (v as string[]).length > 0)
               .map(([k, v]) => `${(v as string[]).length} ${k}`)
@@ -1436,7 +1451,7 @@ export class PrdReportGenerator {
       const totalSchemas = calls.reduce((sum: number, c) => sum + (c.impact?.schemasGenerated?.length || 0), 0);
       const totalTests = calls.reduce((sum: number, c) => sum + (c.impact?.testsPlanned?.length || 0), 0);
       const totalFiles = calls.reduce((sum: number, c) => sum + (c.impact?.filesImpacted?.length || 0), 0);
-      
+
       if (totalSchemas > 0 || totalTests > 0 || totalFiles > 0) {
         md += `### AI Call Impact Summary\n\n`;
         if (totalSchemas > 0) md += `- Schemas Generated: ${totalSchemas}\n`;
@@ -1512,7 +1527,7 @@ export class PrdReportGenerator {
         costs.push(curr.estimatedCost);
         const improving = costs.every((c, i) => i === 0 || c <= costs[i - 1]);
         const degrading = costs.every((c, i) => i === 0 || c >= costs[i - 1]);
-        
+
         if (improving) {
           md += `**Trend**: Improving (${report.buildComparison.previousBuilds.length + 1} consecutive builds with reduced or stable cost)\n\n`;
         } else if (degrading) {

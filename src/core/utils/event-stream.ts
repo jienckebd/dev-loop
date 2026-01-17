@@ -61,6 +61,10 @@ export type EventType =
   | 'phase:completed'
   | 'prd:started'
   | 'prd:completed'
+  // Lifecycle hooks
+  | 'hook:started'
+  | 'hook:completed'
+  | 'hook:failed'
   // Metrics/Reports
   | 'metrics:finalized'
   | 'metrics:aggregated'

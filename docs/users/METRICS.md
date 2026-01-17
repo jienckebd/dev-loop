@@ -1,8 +1,53 @@
+---
+title: Metrics Guide
+description: Track execution performance, costs, and outcomes at all levels
+category: users
+keywords: [metrics, EventMetricBridge, tokens, performance, costs]
+related: [users/REPORTS, contributing/EVENT_STREAMING]
+---
+
 # Metrics Guide
 
 ## Overview
 
-Dev-loop collects comprehensive metrics at multiple hierarchical levels to track execution performance, costs, and outcomes. This guide explains the metrics system and how to use it.
+Dev-loop collects comprehensive metrics at multiple hierarchical levels to track execution performance, costs, and outcomes. Metrics are automatically collected via the **EventMetricBridge** which subscribes to the event stream and updates metrics in real-time.
+
+## EventMetricBridge
+
+The `EventMetricBridge` is the core component that enables automatic metrics collection:
+
+- **Automatic Collection**: Subscribes to the event stream and maps 100+ event types to metric updates
+- **Real-time Updates**: Metrics are updated immediately when events are emitted
+- **Hierarchical Tracking**: Updates metrics at PRD Set, PRD, Phase, and Task levels
+- **Batched Saves**: Performance optimization with 5-second save intervals
+
+### How It Works
+
+```mermaid
+flowchart LR
+    LG["LangGraph Nodes"] -->|emit| ES["Event Stream"]
+    IR["IterationRunner"] -->|emit| ES
+    PHE["PhaseHookExecutor"] -->|emit| ES
+    ES --> EMB["EventMetricBridge"]
+    EMB --> PM["PRD Metrics"]
+    EMB --> PSM["PRD Set Metrics"]
+    EMB --> PH["Phase Metrics"]
+```
+
+### Event-to-Metric Mapping
+
+| Event Category | Metrics Updated |
+|----------------|----------------|
+| `task:*` | Task lifecycle, completion rates, blocked tasks |
+| `code:*` | Code generation success/failure, tokens used |
+| `test:*` | Test pass/fail rates, test duration |
+| `json:*` | JSON parsing success by strategy, AI fallback usage |
+| `phase:*` / `prd:*` | Phase/PRD timing, completion status |
+| `hook:*` | Hook execution success/failure |
+| `pattern:*` | Pattern learning, matches, effectiveness |
+| `file:*` | Files created/modified/deleted, boundary violations |
+| `validation:*` | Validation gate results, error categories |
+| `intervention:*` | Intervention success rates, timing |
 
 ## Unified Metrics System
 

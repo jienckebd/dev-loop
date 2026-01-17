@@ -1,3 +1,11 @@
+---
+title: JSON Schema Solution
+description: JSON Schema-based validation for consistent AI provider parsing
+category: architecture
+keywords: [JSON, schema, validation, CodeChanges, AI providers]
+related: [troubleshooting/json-parsing, contributing/ARCHITECTURE]
+---
+
 # JSON Schema Solution for Consistent AI Provider Parsing
 
 ## Problem

@@ -1,3 +1,11 @@
+---
+title: Pattern System Developer Guide
+description: Architecture and implementation of the unified PatternLibraryManager
+category: contributing
+keywords: [patterns, PatternLibraryManager, architecture, implementation]
+related: [users/PATTERNS, MIGRATION_PATTERNS]
+---
+
 # Pattern System Developer Guide
 
 ## Architecture

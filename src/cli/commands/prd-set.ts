@@ -5,32 +5,33 @@ import { PrdSetValidator } from "../../core/prd/set/validator";
 import { PrdSetOrchestrator } from "../../core/prd/set/orchestrator";
 import { loadConfig } from '../../config/loader';
 import { writePidFileForPrdSet, removePidFileForPrdSet } from './stop';
+import { logger } from '../../core/utils/logger';
 
 /**
  * PRD set execute command - One-shot execution for PRD sets
- * 
+ *
  * **Execution Mode**: One-shot (runs to completion)
  * **Use Case**: Multiple related PRDs orchestrated together
  * **Command**: `npx dev-loop prd-set execute <path>`
- * 
+ *
  * **How it works**:
  * - Executes once and runs until all PRDs in the set are complete
  * - PRD sets have defined completion criteria (all PRDs finished)
  * - Exits when execution completes (success or failure)
  * - Event streaming is active during execution
- * 
+ *
  * **When to use**:
  * - Working with multiple related PRDs
  * - PRDs have dependencies that need orchestration
  * - PRD set has defined completion criteria
  * - Want to execute all PRDs in a single command
- * 
+ *
  * **Execution model**: PRD sets use parallel IterationRunner instances per PRD,
  * with dependency-aware scheduling. Each PRD gets a fresh context following the
  * Ralph pattern. Execution completes when all PRDs finish.
- * 
+ *
  * **Not for**: Single PRDs (use `watch --until-complete` instead)
- * 
+ *
  * **See**: `docs/contributing/EXECUTION_MODES.md` for complete guide
  */
 export async function prdSetExecuteCommand(options: {
@@ -48,6 +49,15 @@ export async function prdSetExecuteCommand(options: {
     if (debug || (config as any).debug) {
       (config as any).debug = true;
     }
+
+    // Configure logger early to ensure all logs are captured to file
+    const logPath = (config as any).logs?.outputPath || '/tmp/dev-loop.log';
+    logger.configure({
+      logPath,
+      debug: debug || (config as any).debug,
+    });
+    logger.info(`[prd-set] Logger configured: ${logPath}`);
+
     spinner.succeed('Configuration loaded');
 
     spinner.start('Discovering PRD set');

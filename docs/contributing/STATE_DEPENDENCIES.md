@@ -1,3 +1,11 @@
+---
+title: State Dependencies Matrix
+description: Maps dev-loop features to their state file dependencies
+category: contributing
+keywords: [state, files, LangGraph, checkpoints, dependencies]
+related: [ai/STATE_MANAGEMENT, contributing/ARCHITECTURE]
+---
+
 # State Dependencies Matrix
 
 This document maps dev-loop features to their state file dependencies and expected usage patterns.

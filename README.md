@@ -2,70 +2,113 @@
 
 Autonomous development orchestrator that implements test-driven development in a loop. AI generates code, tests validate it, failures create fix tasks, and the loop continues until all tests pass.
 
-Built on **LangGraph** for workflow orchestration, **LangChain.js** for unified AI provider access, and the **Ralph pattern** for fresh context per iteration.
+Built on **LangGraph** for workflow orchestration, **LangChain.js** for unified AI provider access, and a Ralph pattern per iteration.
+
+> **AI Agents**: See [`CLAUDE.md`](CLAUDE.md) for quick reference and [`docs/INDEX.md`](docs/INDEX.md) for full documentation.
+
+## Table of Contents
+
+- [Features](#features)
+- [Architecture](#architecture)
+- [How It Works](#how-it-works)
+- [Quick Start](#quick-start)
+- [PRD Sets](#prd-sets-parallel-autonomous-execution)
+- [Phase Hooks](#phase-hooks)
+- [Event System](#event-system)
+- [Key Dependencies](#key-dependencies)
+- [Ralph Pattern](#fresh-context-pattern)
+- [LangGraph Nodes](#langgraph-nodes)
+- [AI Providers](#ai-providers)
+- [MCP Tools](#for-ai-agents-mcp-tools)
+- [CLI Reference](#cli-reference)
+- [Framework Plugins](#framework-plugins)
+- [Metrics](#metrics)
+- [Project Structure](#project-structure)
+- [Documentation](#documentation)
+
+## Features
+
+| Category | Feature | Description |
+|----------|---------|-------------|
+| **Execution** | IterationRunner | Default entry point with Ralph per iteration |
+| **Execution** | Parallel PRD Execution | Dependency-aware parallel execution of PRDs within a set |
+| **Execution** | Parallel Task Execution | Concurrent task execution within dependency levels |
+| **Metrics** | EventMetricBridge | Automatic metrics collection from event stream |
+| **Metrics** | Hierarchical Metrics | PRD Set, PRD, Phase, and Task level metrics |
+| **Metrics** | Enhanced Metrics | JSON parsing, IPC, file filtering, validation, context, codebase, sessions |
+| **Context** | CrossPrdCheckpointer | Shared state coordination across parallel PRDs |
+| **Context** | SpecKit Integration | Pre-resolved clarifications, research, and constitution rules |
+| **Context** | Context Isolation | Ralph per PRD, per iteration |
+| **Hooks** | Phase Hooks | Framework-specific lifecycle hooks (onPhaseStart, onPhaseComplete) |
+| **Parsing** | Enhanced JSON Parsing | Multiple strategies: direct, retry, AI fallback, sanitization |
+| **Events** | Event Stream | 100+ event types for real-time observability |
+| **Testing** | TDD Loop | Complete fetch, context, generate, validate, apply, test, analyze cycle |
+| **Learning** | Pattern Learning | Automatic pattern discovery and sharing across PRD sets |
+| **Monitoring** | Proactive Monitoring | Event-based intervention system with automated fixes |
+
+## Architecture
+
+```mermaid
+flowchart TB
+    CLI["dev-loop prd-set execute"] --> Orchestrator
+
+    subgraph Orchestrator["PrdSetOrchestrator"]
+        direction LR
+        DepGraph["Dependency Graph"]
+    end
+
+    Orchestrator -->|"Level 1 (parallel)"| PRD_A & PRD_B
+    Orchestrator -->|"Level 2 (waits)"| PRD_C
+
+    subgraph PRD_A["IterationRunner A"]
+        Loop_A["Ralph Loop"]
+    end
+
+    subgraph PRD_B["IterationRunner B"]
+        Loop_B["Ralph Loop"]
+    end
+
+    subgraph PRD_C["IterationRunner C"]
+        Loop_C["Ralph Loop"]
+    end
+
+    PRD_A & PRD_B & PRD_C <-->|IPC| Cursor["Cursor Agent"]
+
+    subgraph FreshLoop["Each Iteration"]
+        Fetch["Fetch"] --> Context["Build Context"]
+        Context --> Generate["Generate"]
+        Generate --> Test["Test"]
+        Test -->|Fail| Fix["Fix Task"]
+        Fix --> Fetch
+        Test -->|Pass| Learn["Learnings"]
+    end
+
+    Learn --> Files["handoff.md / progress.md / patterns.md"]
+    Files -.->|"Next iteration"| Context
+```
+
+Key aspects:
+- **Parallel PRD execution**: Level 1 PRDs run concurrently, Level 2 waits for dependencies
+- **Ralph per iteration**: Each IterationRunner maintains isolated context
+- **IPC coordination**: Bidirectional communication with Cursor agent
+- **State persistence**: Learnings flow to files, read on next iteration
 
 ## How It Works
 
 dev-loop runs a TDD loop where each iteration:
 
 1. **Fetches a task** from Task Master
-2. **Generates code** via LangChain.js (6 AI providers supported)
-3. **Validates syntax** before applying changes
-4. **Runs tests** (Playwright/Cypress)
-5. **On failure**: Analyzes errors, creates fix task, loops back
-6. **On success**: Captures learnings, proceeds to next task
+2. **Builds context** from codebase, SpecKit, and handoff state
+3. **Generates code** via LangChain.js (6 AI providers supported)
+4. **Validates syntax** before applying changes
+5. **Applies changes** to the filesystem
+6. **Runs tests** (Playwright/Cypress)
+7. **On failure**: Analyzes errors, creates fix task, loops back
+8. **On success**: Captures learnings, executes phase hooks, proceeds to next task
 
-The **Ralph pattern** resets AI context each iteration to prevent context pollution. State persists to files (`handoff.md`, `progress.md`) instead of accumulating in the AI's context window.
+The **IterationRunner** creates fresh AI context each iteration to prevent context pollution. State persists to files (`handoff.md`, `progress.md`) instead of accumulating in the AI's context window.
 
-```mermaid
-flowchart TB
-    subgraph CLI [CLI Entry Points]
-        run[dev-loop run]
-        prdset[dev-loop prd-set execute]
-    end
-
-    subgraph Orchestration [Orchestration Layer]
-        run --> IR[IterationRunner]
-        prdset --> PSO[PrdSetOrchestrator]
-        PSO -->|parallel| IR1[IterationRunner]
-        PSO -->|parallel| IR2[IterationRunner]
-    end
-
-    subgraph Workflow [LangGraph Workflow]
-        IR --> Graph[StateGraph]
-        IR1 --> Graph
-        IR2 --> Graph
-        Graph --> Nodes[10 Nodes: fetch / build / generate / validate / apply / test / analyze / fix / suggest / learn]
-    end
-
-    subgraph Context [Context Sources]
-        TaskMaster[Task Master]
-        SpecKit[SpecKit: clarifications + research + constitution]
-        Handoff[handoff.md]
-        Codebase[CodeContextProvider]
-    end
-
-    subgraph AI [AI Layer]
-        LCP[LangChainProvider]
-        LCP --> Anthropic & OpenAI & Gemini & Ollama & Cursor & Amp
-    end
-
-    subgraph Testing [Test Layer]
-        Playwright[Playwright]
-        Cypress[Cypress]
-    end
-
-    subgraph Persistence [Ralph Pattern Persistence]
-        Progress[progress.md]
-        Patterns[learned-patterns.md]
-        Checkpoints[checkpoints/]
-    end
-
-    Context --> Graph
-    Graph --> LCP
-    Graph --> Testing
-    Graph --> Persistence
-```
+The **EventMetricBridge** automatically collects metrics from the event stream, providing hierarchical observability at PRD Set, PRD, Phase, and Task levels.
 
 ## Quick Start
 
@@ -102,13 +145,56 @@ For large-scope development, dev-loop supports **PRD sets** - collections of rel
 ```
 
 **PrdSetOrchestrator** builds a dependency graph and executes PRDs in levels:
-- **Level 1**: Independent PRDs run in parallel (isolated IterationRunner per PRD)
+- **Level 1**: Independent PRDs run in parallel (fresh IterationRunner per PRD)
 - **Level 2+**: PRDs wait for their dependencies to complete
+- **CrossPrdCheckpointer** coordinates shared state across parallel PRDs
 
 **SpecKit** enables fully autonomous execution by pre-resolving:
 - **Clarifications**: Design decisions answered before execution
 - **Research**: Codebase findings (existing patterns, APIs, conventions)
 - **Constitution**: Project rules from `.cursorrules` or similar
+
+## Phase Hooks
+
+Phase hooks enable framework-specific actions at phase boundaries:
+
+```yaml
+# In phase YAML file
+hooks:
+  onPhaseComplete:
+    - type: cli_command
+      cliCommand: module-enable
+      args:
+        module: my_module
+      description: Enable module after Phase 1 completes
+```
+
+**PhaseHookExecutor** executes hooks when phases complete:
+- **cli_command**: Framework-specific CLI commands (Drupal drush, Django manage.py)
+- **shell**: Arbitrary shell commands
+- **callback**: Custom callback functions
+
+Supported framework commands:
+- **Drupal**: `module-enable`, `cache-rebuild`, `config-import`
+- **Django**: `migrate`, `collectstatic`
+- **React**: `build`, `test`
+
+## Event System
+
+dev-loop emits 100+ event types for real-time observability:
+
+| Category | Events |
+|----------|--------|
+| Task Lifecycle | `task:started`, `task:completed`, `task:failed`, `task:blocked` |
+| Code Generation | `code:generated`, `code:generation_failed` |
+| Testing | `test:passed`, `test:failed`, `test:stalled` |
+| JSON Parsing | `json:parse_success`, `json:parse_failed`, `json:ai_fallback_success` |
+| Phase/PRD | `phase:started`, `phase:completed`, `prd:started`, `prd:completed` |
+| Hooks | `hook:started`, `hook:completed`, `hook:failed` |
+| Patterns | `pattern:learned`, `pattern:matched`, `pattern:injected` |
+| Intervention | `intervention:triggered`, `intervention:successful`, `intervention:failed` |
+
+**EventMetricBridge** subscribes to these events and automatically updates hierarchical metrics at PRD Set, PRD, Phase, and Task levels.
 
 ## Key Dependencies
 
@@ -121,20 +207,21 @@ For large-scope development, dev-loop supports **PRD sets** - collections of rel
 | `fastmcp` | MCP server exposing dev-loop tools to outer AI agents |
 | `task-master-ai` | Task management, PRD parsing, dependency tracking |
 
-## The Ralph Pattern
+## Ralph Pattern
 
 Long-running AI sessions accumulate errors. The Ralph pattern solves this:
 
-- **Fresh context each iteration**: No token accumulation across iterations
+- **New context each iteration**: IterationRunner creates new LangGraph workflow per iteration
 - **State in files**: `handoff.md` captures current state, `progress.md` logs history
 - **Pattern learning**: Discoveries with 3+ occurrences promote to `learned-patterns.md`
 - **Crash recovery**: LangGraph checkpoints in `.devloop/checkpoints/`
+- **Cross-PRD coordination**: CrossPrdCheckpointer shares state across parallel PRDs
 
 ## LangGraph Nodes
 
 | Node | TDD Role |
 |------|----------|
-| `fetchTask` | Get next pending task from Task Master |
+| `fetchTask` | Get next pending task(s) from Task Master |
 | `buildContext` | Gather relevant code context for AI |
 | `generateCode` | AI code generation via LangChainProvider |
 | `validateCode` | Pre-apply syntax/lint validation |
@@ -143,7 +230,9 @@ Long-running AI sessions accumulate errors. The Ralph pattern solves this:
 | `analyzeFailure` | AI analysis of test failures |
 | `createFixTask` | Create fix task (loops back for retry) |
 | `suggestImprovements` | Escalate on repeated failures |
-| `captureLearnings` | Persist learnings (Ralph pattern) |
+| `captureLearnings` | Persist learnings to files |
+
+Each node emits events to the event stream, enabling automatic metrics collection via EventMetricBridge.
 
 ## AI Providers
 
@@ -173,6 +262,8 @@ dev-loop exposes ~50 MCP tools for outer agent integration:
 | Debug | `get_logs`, `analyze_error`, `get_state` |
 | Playwright | `run_test`, `get_test_results` |
 | Events | `subscribe_events` (real-time workflow observability) |
+| Metrics | `devloop_metrics_summary`, `devloop_metrics_json_parsing` |
+| Monitoring | `devloop_event_monitor_start`, `devloop_event_monitor_status` |
 
 ## CLI Reference
 
@@ -186,14 +277,33 @@ dev-loop exposes ~50 MCP tools for outer agent integration:
 
 ## Framework Plugins
 
-Auto-detected plugins inject framework-specific context:
+Auto-detected plugins inject framework-specific context and CLI commands:
 
 | Framework | Detection | Provides |
 |-----------|-----------|----------|
-| Drupal | `composer.json` with drupal/core | Module patterns, config schema |
-| Django | `manage.py` | App structure, migrations |
-| React | `package.json` with react | Component patterns, hooks |
+| Drupal | `composer.json` with drupal/core | Module patterns, config schema, drush commands |
+| Django | `manage.py` | App structure, migrations, manage.py commands |
+| React | `package.json` with react | Component patterns, hooks, npm scripts |
 | Browser Extension | `manifest.json` | Content scripts, messaging |
+
+## Metrics
+
+dev-loop collects hierarchical metrics at multiple levels:
+
+| Level | Metrics |
+|-------|---------|
+| PRD Set | Total PRDs, completion rate, execution levels, aggregate timing/tokens |
+| PRD | Phases, tasks, success rate, timing, tokens, feature metrics |
+| Phase | Tasks, validation gates, hooks executed |
+| Task | Duration, tokens, retries, JSON parse attempts, files changed |
+
+Enhanced metrics categories:
+- **JSON Parsing**: Success by strategy (direct, retry, AI fallback, sanitized)
+- **IPC**: Connection health, retries, latency
+- **File Filtering**: Boundary violations, predictive filtering
+- **Validation**: Gate success rates, error categories
+- **Context**: Search operations, window utilization
+- **Sessions**: Session health, history management
 
 ## Project Structure
 
@@ -202,7 +312,8 @@ Auto-detected plugins inject framework-specific context:
 ├── checkpoints/        # LangGraph crash recovery
 ├── handoff.md          # Current iteration context (Ralph pattern)
 ├── progress.md         # Iteration history
-└── learned-patterns.md # Discovered patterns
+├── learned-patterns.md # Discovered patterns
+└── metrics.json        # Hierarchical metrics
 
 .taskmaster/
 ├── tasks.json          # Task list
@@ -211,9 +322,41 @@ Auto-detected plugins inject framework-specific context:
 
 ## Documentation
 
-- [`docs/ai/`](docs/ai/) - AI agent integration
-- [`docs/users/`](docs/users/) - User guide
-- [`docs/contributing/`](docs/contributing/) - Architecture details
+> **AI Agents**: Start with [docs/INDEX.md](docs/INDEX.md) for discovery. All docs include YAML frontmatter with `title`, `description`, `category`, `keywords`, and `related` fields for navigation.
+
+### User Guides
+
+- [User Guide](docs/users/README.md) - Complete user documentation
+- [Configuration](docs/users/CONFIG.md) - Configuration reference
+- [PRD Building](docs/users/PRD_BUILDING.md) - Creating PRD sets
+- [Phase Hooks](docs/users/PHASE_HOOKS.md) - Framework lifecycle hooks
+- [Metrics](docs/users/METRICS.md) - Metrics and cost tracking
+- [Reports](docs/users/REPORTS.md) - Report generation
+- [Patterns](docs/users/PATTERNS.md) - Pattern learning system
+- [Archive](docs/users/ARCHIVE.md) - State archival
+
+### AI Agent Integration
+
+- [AI Agent Guide](docs/ai/README.md) - For AI agents creating PRDs
+- [PRD Schema](docs/ai/PRD_SCHEMA.md) - PRD file format
+- [PRD Template](docs/ai/PRD_TEMPLATE.md) - PRD templates
+- [PRD Features](docs/ai/PRD_FEATURES.md) - Available PRD features
+- [State Management](docs/ai/STATE_MANAGEMENT.md) - State file formats
+
+### Contributing
+
+- [Architecture](docs/contributing/ARCHITECTURE.md) - Codebase structure
+- [Contribution Mode](docs/contributing/CONTRIBUTION_MODE.md) - Two-agent development
+- [Event Streaming](docs/contributing/EVENT_STREAMING.md) - Event system guide
+- [Proactive Monitoring](docs/contributing/PROACTIVE_MONITORING.md) - Automated interventions
+- [Boundary Enforcement](docs/contributing/BOUNDARY_ENFORCEMENT.md) - Module boundaries
+- [Quick Start](docs/contributing/QUICK_START.md) - Getting started contributing
+
+### Troubleshooting
+
+- [JSON Parsing](docs/troubleshooting/json-parsing.md) - JSON extraction issues
+- [Patterns](docs/troubleshooting/patterns.md) - Pattern matching issues
+- [Cursor Integration](docs/CURSOR_INTEGRATION.md) - Cursor IDE integration
 
 ## See Also
 

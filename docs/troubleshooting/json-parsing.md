@@ -1,3 +1,11 @@
+---
+title: JSON Parsing Troubleshooting
+description: JSON response format requirements and how to fix parsing failures
+category: troubleshooting
+keywords: [JSON, parsing, CodeChanges, errors, debugging]
+related: [JSON_SCHEMA_SOLUTION, contributing/ARCHITECTURE]
+---
+
 # JSON Response Requirements & Troubleshooting
 
 This document explains the JSON response format requirements for dev-loop code generation and how to troubleshoot parsing failures.

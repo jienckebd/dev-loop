@@ -1,3 +1,11 @@
+---
+title: Report Generation Guide
+description: Generate execution reports with metrics, test results, and analysis
+category: users
+keywords: [reports, metrics, analysis, markdown, json, html]
+related: [users/METRICS, contributing/ARCHITECTURE]
+---
+
 # Report Generation Guide
 
 ## Overview

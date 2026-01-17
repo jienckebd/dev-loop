@@ -32,7 +32,7 @@ dev-loop/
 │   │   ├── testing/      # Test execution and management (6 files)
 │   │   ├── validation/   # Validation gates and scripts (6 files)
 │   │   ├── generation/   # Code generation (drupal-implementation-generator, autonomous-task-generator, etc.)
-│   │   ├── execution/    # Workflow and task execution (workflow.ts, task-bridge.ts, intervention.ts, etc.)
+│   │   ├── execution/    # Workflow and task execution (iteration-runner.ts, task-bridge.ts, phase-hook-executor.ts, etc.)
 │   │   ├── reporting/    # Report generation (unified generator)
 │   │   ├── tracking/     # Progress and observation tracking (6 files)
 │   │   ├── prd/          # PRD parsing and management
@@ -86,13 +86,16 @@ dev-loop/
 
 **Location:** `src/core/execution/iteration-runner.ts`
 
-The default entry point for workflow execution, implementing the Ralph pattern of fresh context per iteration:
+The **sole entry point** for workflow execution, implementing the Ralph pattern of fresh context per iteration:
 
 - Creates fresh LangGraph workflow per iteration
 - Generates handoff document (`handoff.md`) for context continuity
 - Persists learnings to `progress.md` and `learned-patterns.md`
 - Supports configurable max iterations and context thresholds
 - Used by `PrdSetOrchestrator` for parallel PRD execution
+- Integrates with `EventMetricBridge` for automatic metrics collection
+- Executes phase hooks via `PhaseHookExecutor` on phase completion
+- Coordinates with `CrossPrdCheckpointer` for shared state across PRDs
 
 ```typescript
 const runner = new IterationRunner(config, {
@@ -100,9 +103,15 @@ const runner = new IterationRunner(config, {
   contextThreshold: 90,
   autoHandoff: true,
   persistLearnings: true,
-});
+  updatePatterns: true,
+}, specKitContext, sharedCheckpointer);
 const result = await runner.runWithFreshContext(prdPath);
 ```
+
+**Key Integration Points:**
+- **EventMetricBridge**: Initialized on construction, automatically captures events and updates metrics
+- **PhaseHookExecutor**: Checks phase completion after each task, executes `onPhaseComplete` hooks
+- **CrossPrdCheckpointer**: Shares patterns and metrics across parallel PRDs in a set
 
 ### LangGraph StateGraph
 
@@ -148,6 +157,104 @@ State is managed by LangGraph checkpoints and the handoff mechanism:
 - **Learnings**: Persisted in `.devloop/progress.md` and `.devloop/learned-patterns.md`
 - **Retry Counts**: Simple JSON file at `.devloop/retry-counts.json`
 - **Execution State**: PRD coordination via `PrdCoordinator` in `.devloop/execution-state.json`
+- **Cross-PRD State**: Shared via `CrossPrdCheckpointer` in `.devloop/shared-checkpoint-state.json`
+
+### EventMetricBridge
+
+**Location:** `src/core/metrics/event-metric-bridge.ts`
+
+Automatic metrics collection from the event stream:
+
+- **Purpose**: Subscribes to event stream and updates hierarchical metrics automatically
+- **Integration**: Initialized by `IterationRunner`, listens to all events
+- **Event Mapping**: Maps 100+ event types to metric update methods
+- **Metrics Levels**: Updates PRD Set, PRD, Phase, and Task level metrics
+- **Batched Saves**: Performance optimization with 5-second save intervals
+
+```typescript
+const bridge = initializeEventMetricBridge({
+  prdMetrics,
+  prdSetMetrics,
+  enabled: true,
+  debug: config.debug,
+});
+bridge.start(); // Begin listening to events
+```
+
+**Event Categories Handled:**
+- Task lifecycle (`task:started`, `task:completed`, `task:failed`, `task:blocked`)
+- Code generation (`code:generated`, `code:generation_failed`)
+- Testing (`test:passed`, `test:failed`)
+- JSON parsing (`json:parse_success`, `json:parse_failed`, `json:ai_fallback_success`)
+- Phase/PRD lifecycle (`phase:started`, `phase:completed`, `prd:completed`)
+- Hook execution (`hook:started`, `hook:completed`, `hook:failed`)
+- Pattern learning (`pattern:learned`, `pattern:matched`)
+
+### PhaseHookExecutor
+
+**Location:** `src/core/execution/phase-hook-executor.ts`
+
+Executes framework-specific lifecycle hooks defined in phase YAML files:
+
+- **Purpose**: Run framework commands at phase boundaries (start/complete)
+- **Hook Types**: `cli_command`, `shell`, `callback`
+- **Framework Integration**: Registers commands from framework plugins (Drupal, Django, React)
+- **Error Handling**: Supports `continueOnError` for graceful degradation
+
+```typescript
+const executor = new PhaseHookExecutor(config, debug);
+
+// Load and execute hooks from phase file
+const hooks = await executor.loadPhaseHooks(phaseFilePath);
+const results = await executor.executeHooks(hooks.onPhaseComplete, context);
+```
+
+**Phase YAML Hook Definition:**
+```yaml
+hooks:
+  onPhaseComplete:
+    - type: cli_command
+      cliCommand: module-enable
+      args:
+        module: my_module
+      description: Enable module after phase completes
+      continueOnError: false
+```
+
+**Framework Commands:**
+- **Drupal**: `module-enable`, `cache-rebuild`, `config-import`
+- **Django**: `migrate`, `collectstatic`
+- **React**: `build`, `test`
+
+### CrossPrdCheckpointer
+
+**Location:** `src/core/execution/langgraph/cross-prd-checkpointer.ts`
+
+Coordinates shared state across parallel PRDs within a PRD set:
+
+- **Purpose**: Enable pattern sharing and metrics aggregation across PRDs
+- **Namespacing**: Checkpoint directories namespaced by PRD set ID
+- **Shared State**: Completed PRDs, shared patterns, global metrics
+- **Integration**: Passed to each `IterationRunner` instance by `PrdSetOrchestrator`
+
+```typescript
+const sharedCheckpointer = createCrossPrdCheckpointer({
+  prdSetId: 'my-feature-set',
+  checkpointDir: '.devloop/checkpoints',
+});
+
+// Get shared state across PRDs
+const sharedState = await sharedCheckpointer.getSharedState();
+// { completedPrds: ['prd-a'], sharedPatterns: [...], globalMetrics: {...} }
+
+// Update shared state after PRD completes
+await sharedCheckpointer.markPrdCompleted('prd-b', patterns, metrics);
+```
+
+**Shared State Structure:**
+- `completedPrds`: List of PRD IDs that have finished
+- `sharedPatterns`: Patterns discovered that benefit other PRDs
+- `globalMetrics`: Aggregated metrics across all PRDs (tasks, tokens, etc.)
 
 ### CodeContextProvider
 
@@ -263,19 +370,39 @@ Orchestrates PRD set execution with parallel `IterationRunner` instances:
 - Discovers PRD sets from `index.md.yml` files
 - Validates PRD sets at multiple levels (set, PRD, phase)
 - Builds dependency graph to determine execution levels
-- Creates parallel `IterationRunner` per PRD (respecting `maxConcurrent` limit)
-- Passes `specKitContext` to runners for design decisions injection
+- Creates **fresh IterationRunner per PRD** (Ralph pattern - isolated context)
+- Passes `CrossPrdCheckpointer` to runners for shared state coordination
+- Passes `SpecKitContext` to runners for design decisions injection
 - Manages hierarchical configuration overlays
 - Tracks PRD set-level metrics and progress
+- Displays report path in console output after completion
 
 ```mermaid
 flowchart TB
-    PSO[PrdSetOrchestrator] --> DG[DependencyGraphBuilder]
-    DG --> L0[Level 0: Independent PRDs]
-    DG --> L1[Level 1: Depends on L0]
-    L0 --> IR1[IterationRunner PRD-A]
-    L0 --> IR2[IterationRunner PRD-B]
-    L1 --> IR3[IterationRunner PRD-C]
+    PSO["PrdSetOrchestrator"]
+    PSO --> SK["SpecKitContext"]
+    PSO --> CPC["CrossPrdCheckpointer"]
+    PSO --> DG["DependencyGraphBuilder"]
+    DG --> L0["Level 0: Independent PRDs"]
+    DG --> L1["Level 1: Depends on L0"]
+    L0 --> IR1["IterationRunner PRD-A"]
+    L0 --> IR2["IterationRunner PRD-B"]
+    L1 --> IR3["IterationRunner PRD-C"]
+    CPC --> IR1
+    CPC --> IR2
+    CPC --> IR3
+    SK --> IR1
+    SK --> IR2
+    SK --> IR3
+```
+
+**Fresh Context Per PRD:**
+Each PRD gets its own `IterationRunner` instance with fresh context, ensuring no context pollution between parallel PRDs. The `CrossPrdCheckpointer` enables selective sharing of patterns and metrics without polluting AI context.
+
+**Report Generation:**
+After PRD set completion, a report is automatically generated and the path is displayed:
+```
+Report generated: .devloop/reports/prd-set-my-feature-1234567890.md
 ```
 
 ### Hierarchical Config Merger
@@ -303,6 +430,134 @@ Configuration schema organized into 8 files:
 - `index.ts` - Main entry point (re-exports everything)
 
 Backward compatibility maintained via `src/config/schema.ts` re-export wrapper.
+
+## Event Stream Architecture
+
+**Location:** `src/core/utils/event-stream.ts`
+
+Real-time event emission system for workflow observability:
+
+### Event Types (100+)
+
+Events are organized by category:
+
+| Category | Event Types |
+|----------|-------------|
+| Task Lifecycle | `task:started`, `task:completed`, `task:failed`, `task:blocked` |
+| Code Generation | `code:generated`, `code:generation_failed` |
+| Changes | `changes:applied`, `file:created`, `file:modified`, `file:boundary_violation` |
+| Testing | `test:passed`, `test:failed`, `test:stalled` |
+| JSON Parsing | `json:parse_success`, `json:parse_failed`, `json:parse_retry`, `json:ai_fallback_success` |
+| Phase/PRD | `phase:started`, `phase:completed`, `prd:started`, `prd:completed` |
+| Hooks | `hook:started`, `hook:completed`, `hook:failed` |
+| Patterns | `pattern:learned`, `pattern:matched`, `pattern:injected` |
+| Intervention | `intervention:triggered`, `intervention:successful`, `intervention:failed` |
+| SpecKit | `speckit:context_loaded`, `speckit:clarification_applied`, `speckit:research_used` |
+| Build | `build:started`, `build:completed`, `build:phase_started`, `build:ai_call_completed` |
+
+### Event Emission
+
+Events are emitted from LangGraph nodes and other components:
+
+```typescript
+import { emitEvent } from '../utils/event-stream';
+
+// Emit task completion event
+emitEvent('task:completed', {
+  taskId: task.id,
+  title: task.title,
+  durationMs: Date.now() - startTime,
+}, {
+  prdId,
+  phaseId,
+  severity: 'info',
+});
+```
+
+### Event Subscription
+
+Components can subscribe to events:
+
+```typescript
+import { getEventStream } from '../utils/event-stream';
+
+const eventStream = getEventStream();
+eventStream.addListener((event) => {
+  if (event.type === 'task:completed') {
+    // Handle task completion
+  }
+});
+```
+
+### EventMetricBridge Integration
+
+The `EventMetricBridge` subscribes to all events and automatically updates metrics:
+
+```mermaid
+flowchart LR
+    LG["LangGraph Nodes"] -->|emit| ES["Event Stream"]
+    ES --> EMB["EventMetricBridge"]
+    EMB --> PM["PRD Metrics"]
+    EMB --> PSM["PRD Set Metrics"]
+    ES --> EMS["EventMonitorService"]
+    EMS --> INT["Interventions"]
+```
+
+## Enhanced JSON Parsing
+
+**Location:** `src/providers/ai/json-parser.ts`
+
+Robust JSON extraction from AI responses with multiple fallback strategies:
+
+### Parsing Strategies
+
+1. **Direct Parse**: Try standard `JSON.parse()` first
+2. **Code Block Extraction**: Extract JSON from markdown code blocks
+3. **Cursor CLI Wrapper Detection**: Handle `{type:"result", result:"..."}` wrapper
+4. **Stringified Array Fix**: Handle `"files": "[{...}]"` pattern from LangChainProvider
+5. **Trailing Content Removal**: Remove text after JSON object
+6. **Control Character Sanitization**: Clean non-printable characters
+7. **AI Fallback**: Use AI to fix malformed JSON as last resort
+
+### Event Emission
+
+All parsing attempts emit events for observability:
+
+```typescript
+emitEvent('json:parse_success', {
+  strategy: 'direct',
+  durationMs: 15,
+});
+
+emitEvent('json:parse_failed', {
+  error: 'Unexpected token',
+  attemptNumber: 1,
+});
+
+emitEvent('json:ai_fallback_success', {
+  originalError: 'Invalid JSON',
+  fixedBy: 'anthropic',
+});
+```
+
+### Provider-Specific Handling
+
+- **Cursor Provider**: Detects and unwraps CLI wrapper format
+- **LangChainProvider**: Handles stringified `files` array
+- **All Providers**: Auto-generates missing `summary` field, infers `operation` from content
+
+### Metrics Collection
+
+JSON parsing metrics tracked via `EventMetricBridge`:
+
+| Metric | Description |
+|--------|-------------|
+| `totalAttempts` | Total parse attempts |
+| `successByStrategy.direct` | Successful direct parses |
+| `successByStrategy.retry` | Successful after retry |
+| `successByStrategy.aiFallback` | Successful via AI fix |
+| `successByStrategy.sanitized` | Successful after sanitization |
+| `failureReasons` | Categorized failure counts |
 
 ## Framework Plugins
 
@@ -749,7 +1004,7 @@ See follow-up plan "Dead Code Cleanup" for detailed removal instructions.
 - `src/providers/ai/interface.ts` - Core AIProvider interface (KEEP)
 - `src/providers/ai/factory.ts` - Factory using LangChainProvider (KEEP, updated)
 - `src/providers/ai/cursor.ts` - CursorProvider implementing AIProvider (KEEP)
-- `src/core/execution/workflow.ts` - Uses AIProvider interface (KEEP)
+- `src/core/execution/iteration-runner.ts` - Uses AIProvider interface (KEEP)
 - `src/providers/log-analyzers/ai-analyzer.ts` - Uses AIProvider interface (KEEP)
 - All other files using AIProvider interface - Verify they use interface, not internals
 
@@ -813,7 +1068,7 @@ grep -r "api-agent-wrapper" src/
 ### Integration Points to Verify
 
 **Files that use AIProvider (should work with LangChainProvider):**
-- `src/core/execution/workflow.ts` - Main workflow (verify works)
+- `src/core/execution/iteration-runner.ts` - Main workflow (verify works)
 - `src/providers/log-analyzers/ai-analyzer.ts` - Log analysis (verify works)
 - `src/mcp/tools/debug.ts` - MCP debug tools (verify works)
 - All PRD generation/building code (verify works)

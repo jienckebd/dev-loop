@@ -1,3 +1,11 @@
+---
+title: State Management in Dev-Loop
+description: LangGraph-based state management with Ralph pattern for fresh context
+category: ai
+keywords: [state, LangGraph, Ralph pattern, fresh context, IterationRunner]
+related: [contributing/STATE_DEPENDENCIES, contributing/ARCHITECTURE]
+---
+
 # State Management in Dev-Loop
 
 ## Overview
@@ -67,16 +75,16 @@ The execution model follows "Ralph's pattern" of fresh AI context per iteration:
 while (iteration < maxIterations) {
   // 1. Generate handoff context
   const handoff = await this.contextHandoff.generate();
-  
+
   // 2. Execute single iteration with fresh LangGraph state
   const result = await this.executeIteration(handoff);
-  
+
   // 3. Persist learnings
   await this.learningsManager.persist(result.learnings);
-  
+
   // 4. Check completion
   if (result.complete) break;
-  
+
   iteration++;
 }
 ```

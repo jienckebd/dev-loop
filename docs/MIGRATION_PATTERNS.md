@@ -1,3 +1,11 @@
+---
+title: Pattern Schema Migration Guide
+description: Migrate from legacy pattern systems to unified PatternLibraryManager
+category: migration
+keywords: [migration, patterns, schema, upgrade, PatternLibraryManager]
+related: [users/PATTERNS, contributing/PATTERN_SYSTEM]
+---
+
 # Pattern Schema Migration Guide
 
 ## Overview

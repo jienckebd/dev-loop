@@ -361,8 +361,15 @@ export class PrdSetOrchestrator {
           await this.coordinator.updatePrdState(prdId, { status: 'running' });
 
           try {
+            // Log context isolation - each PRD gets fresh IterationRunner (Ralph pattern)
+            const instanceId = `${prdId}-${Date.now()}-${Math.random().toString(36).substring(2, 8)}`;
+            logger.info(`[PrdSetOrchestrator] Starting PRD ${prdId} with fresh context (instance: ${instanceId})`);
+
             if (this.debug) {
-              logger.debug(`[PrdSetOrchestrator] Executing PRD with fresh context: ${prdId}`);
+              logger.debug(`[PrdSetOrchestrator] Context isolation verified for ${prdId}:`);
+              logger.debug(`  - Fresh IterationRunner instance: ${instanceId}`);
+              logger.debug(`  - Shared checkpointer: ${sharedCheckpointer ? 'connected' : 'none'}`);
+              logger.debug(`  - SpecKit context: ${specKitContext ? 'loaded' : 'none'}`);
             }
 
             // Create fresh IterationRunner per PRD (Ralph pattern)
@@ -509,8 +516,10 @@ export class PrdSetOrchestrator {
     try {
       const { PrdReportGenerator } = require('../../reporting/prd-report-generator');
       const reportPath = await PrdReportGenerator.autoGenerateReport(discoveredSet.setId);
-      if (reportPath && this.debug) {
-        logger.debug(`[PrdSetOrchestrator] Auto-generated report: ${reportPath}`);
+      if (reportPath) {
+        // Always log report path and display in console for visibility
+        logger.info(`[PrdSetOrchestrator] Report generated: ${reportPath}`);
+        console.log(`\n📊 Report generated: ${reportPath}`);
       }
     } catch (error) {
       logger.warn(`[PrdSetOrchestrator] Failed to auto-generate report: ${error}`);

@@ -309,7 +309,7 @@ export class CursorChatOpener {
       child.unref();
 
       logger.info(`[CursorChatOpener] Started Cursor agent for chat ${createResult.chatId}`);
-      
+
       // Store chatId for potential future use
       if (createResult.chatId) {
         this.currentChatId = createResult.chatId;
@@ -575,11 +575,11 @@ export class CursorChatOpener {
                   if (parsed.type === 'result' && parsed.result) {
                     // Extract result field - this is the assistant's response text
                     // Parser will handle extracting JSON from markdown code blocks
-                    parsedResponse = typeof parsed.result === 'string' 
-                      ? parsed.result 
+                    parsedResponse = typeof parsed.result === 'string'
+                      ? parsed.result
                       : JSON.stringify(parsed.result);
                     logger.debug(`[CursorChatOpener] Extracted result field from CLI response`);
-                    
+
                     // Extract chatId for session resumption (performance optimization)
                     if (parsed.chatId && typeof parsed.chatId === 'string') {
                       this.currentChatId = parsed.chatId;
@@ -634,8 +634,8 @@ export class CursorChatOpener {
 
           if (session && this.sessionManager) {
             // For text format, success is based on response length, not CodeChanges extraction
-            const historySuccess = outputFormat === 'text' 
-              ? success 
+            const historySuccess = outputFormat === 'text'
+              ? success
               : success && codeChanges !== null;
             this.sessionManager.addToHistory(
               session.sessionId,

@@ -1,3 +1,11 @@
+---
+title: Agent IPC System
+description: Unix domain socket communication between workflow and background agents
+category: architecture
+keywords: [IPC, sockets, agents, communication, orchestration]
+related: [contributing/ARCHITECTURE, ai/STATE_MANAGEMENT]
+---
+
 # Agent IPC System
 
 Dev-loop uses Unix domain sockets for reliable communication between the parent workflow engine and background agents.

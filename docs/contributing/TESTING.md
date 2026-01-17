@@ -25,8 +25,8 @@ Tests are located alongside source files or in a `__tests__/` directory:
 ```
 src/
 ├── core/
-│   ├── workflow-engine.ts
-│   └── workflow-engine.test.ts  # Test file
+│   ├── iteration-runner.ts
+│   └── iteration-runner.test.ts  # Test file
 └── frameworks/
     └── drupal/
         ├── index.ts
@@ -41,7 +41,7 @@ src/
 npm test
 
 # Run specific test file
-npm test -- workflow-engine.test.ts
+npm test -- iteration-runner.test.ts
 
 # Run with coverage
 npm test -- --coverage
@@ -142,7 +142,7 @@ CLI commands can be tested by:
 1. **Unit testing the command function:**
    ```typescript
    import { myCommand } from './commands/my-command';
-   
+
    it('should execute command', async () => {
      const result = await myCommand({ option: 'value' });
      expect(result).toBeDefined();
@@ -184,14 +184,14 @@ import { tmpdir } from 'os';
 it('should write to file', async () => {
   const tempDir = path.join(tmpdir(), 'test');
   await fs.ensureDir(tempDir);
-  
+
   // Test code that writes files
   await writeFile(path.join(tempDir, 'test.txt'), 'content');
-  
+
   // Verify
   const content = await fs.readFile(path.join(tempDir, 'test.txt'), 'utf-8');
   expect(content).toBe('content');
-  
+
   // Cleanup
   await fs.remove(tempDir);
 });

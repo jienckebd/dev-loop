@@ -59,6 +59,90 @@ function extractResultTextRecursively(data: any, maxDepth: number = 5): any {
 }
 
 /**
+ * Fix stringified array fields in parsed object
+ * Handles cases where files field is a string containing JSON array
+ */
+function fixStringifiedArrayFields(parsed: any): any {
+  if (!parsed || typeof parsed !== 'object') {
+    return parsed;
+  }
+
+  // Handle files being a stringified array
+  if (typeof parsed.files === 'string') {
+    try {
+      // Unescape if needed
+      let filesString = parsed.files;
+      if (filesString.includes('\\n') || filesString.includes('\\"')) {
+        filesString = filesString
+          .replace(/\\n/g, '\n')
+          .replace(/\\t/g, '\t')
+          .replace(/\\r/g, '\r')
+          .replace(/\\"/g, '"')
+          .replace(/\\\\/g, '\\');
+      }
+
+      const filesArray = JSON.parse(filesString);
+      if (Array.isArray(filesArray)) {
+        logger.debug(`[json-parser] Fixed stringified files array with ${filesArray.length} items`);
+        parsed.files = filesArray;
+      }
+    } catch (e) {
+      logger.debug(`[json-parser] Failed to parse stringified files: ${e instanceof Error ? e.message : String(e)}`);
+    }
+  }
+
+  // Handle each file's content being stringified (for nested cases)
+  if (Array.isArray(parsed.files)) {
+    for (const file of parsed.files) {
+      if (typeof file.patches === 'string') {
+        try {
+          file.patches = JSON.parse(file.patches);
+        } catch {
+          // Leave as-is
+        }
+      }
+    }
+  }
+
+  return parsed;
+}
+
+/**
+ * Normalize CodeChanges object - add missing fields, infer operations, generate summary
+ */
+function normalizeCodeChanges(changes: CodeChanges): CodeChanges {
+  // First fix any stringified array fields
+  changes = fixStringifiedArrayFields(changes);
+
+  // Auto-generate summary if missing
+  if (changes.files && Array.isArray(changes.files) && changes.files.length > 0 && !changes.summary) {
+    const fileNames = changes.files
+      .slice(0, 3)
+      .map((f: any) => f.path?.split('/').pop() || 'file')
+      .join(', ');
+    changes.summary = `Generated ${changes.files.length} file(s): ${fileNames}${changes.files.length > 3 ? '...' : ''}`;
+  }
+
+  // Infer operation field for files missing it
+  if (changes.files && Array.isArray(changes.files)) {
+    for (const file of changes.files) {
+      if (!file.operation) {
+        // Infer operation from content
+        if (file.patches && Array.isArray(file.patches) && file.patches.length > 0) {
+          file.operation = 'patch';
+        } else if (file.content) {
+          file.operation = 'create';
+        } else {
+          file.operation = 'update';
+        }
+      }
+    }
+  }
+
+  return changes;
+}
+
+/**
  * Extract CodeChanges from various response formats
  *
  * Supports:
@@ -66,6 +150,7 @@ function extractResultTextRecursively(data: any, maxDepth: number = 5): any {
  * - Text responses containing JSON (including markdown code blocks)
  * - Response objects with 'text' or 'result' fields
  * - Recursively nested result objects (e.g., {"type":"result","result":"{\"type\":\"result\",\"result\":\"...\"}"})
+ * - Cursor CLI wrapper format: {"type":"result","result":"..."} where result contains escaped JSON string
  *
  * @param response - The AI provider response (can be object or string)
  * @param observationTracker - Optional observation tracker for logging
@@ -81,9 +166,51 @@ export function extractCodeChanges(
     return null;
   }
 
+  const responseType = typeof response;
+  const responsePreview = responseType === 'string'
+    ? response.substring(0, 200).replace(/\n/g, '\\n')
+    : JSON.stringify(response).substring(0, 200);
+  logger.debug(`[json-parser] extractCodeChanges called with ${responseType}: ${responsePreview}...`);
+
+  // Early detection for Cursor CLI wrapper format: {"type":"result","result":"..."}
+  // where result is an escaped JSON string containing the actual CodeChanges
+  if (typeof response === 'string' && response.includes('"type":"result"') && response.includes('"result":')) {
+    logger.debug(`[json-parser] Detected Cursor CLI wrapper format, attempting unwrap`);
+    try {
+      const parsed = JSON.parse(response);
+      if (parsed.type === 'result' && typeof parsed.result === 'string') {
+        // Unescape the result string and recurse
+        const unescaped = parsed.result.replace(/\\n/g, '\n').replace(/\\"/g, '"').replace(/\\\\/g, '\\');
+        logger.debug(`[json-parser] Unwrapped Cursor CLI result, recursing...`);
+        const innerResult = extractCodeChanges(unescaped, observationTracker, context);
+        if (innerResult) {
+          return normalizeCodeChanges(innerResult);
+        }
+      }
+    } catch (e) {
+      logger.debug(`[json-parser] Cursor CLI unwrap failed: ${e instanceof Error ? e.message : String(e)}`);
+    }
+  }
+
+  // Early detection for stringified files array in otherwise valid JSON
+  if (typeof response === 'string' && response.includes('"files"') && response.includes('"summary"')) {
+    try {
+      const parsed = JSON.parse(response);
+      if (typeof parsed.files === 'string') {
+        logger.debug(`[json-parser] Detected stringified files array, attempting fix`);
+        const fixed = fixStringifiedArrayFields(parsed);
+        if (fixed.files && Array.isArray(fixed.files)) {
+          return normalizeCodeChanges(fixed as CodeChanges);
+        }
+      }
+    } catch {
+      // Continue with normal flow
+    }
+  }
+
   // Handle direct CodeChanges object
   if (response && typeof response === 'object' && response.files && Array.isArray(response.files)) {
-    return response as CodeChanges;
+    return normalizeCodeChanges(response as CodeChanges);
   }
 
   // Handle result objects - recursively extract nested result structures
@@ -95,7 +222,7 @@ export function extractCodeChanges(
       try {
         const parsed = JSON.parse(extractedResult);
         if (parsed && parsed.files && Array.isArray(parsed.files)) {
-          return parsed as CodeChanges;
+          return normalizeCodeChanges(parsed as CodeChanges);
         }
         // If parsed is still a result object, recurse
         if (parsed && typeof parsed === 'object' && parsed.type === 'result') {
@@ -106,7 +233,7 @@ export function extractCodeChanges(
       }
     } else if (extractedResult && typeof extractedResult === 'object' && extractedResult.files && Array.isArray(extractedResult.files)) {
       // Extracted result is already a CodeChanges object
-      return extractedResult as CodeChanges;
+      return normalizeCodeChanges(extractedResult as CodeChanges);
     } else if (extractedResult && typeof extractedResult === 'object' && extractedResult.type === 'result') {
       // Extracted result is still a result object, recurse
       return extractCodeChanges(extractedResult, observationTracker, context);
@@ -169,7 +296,7 @@ export function extractCodeChanges(
       const validationResult = JsonSchemaValidator.extractAndValidate(textToValidate, true);
       if (validationResult.valid && validationResult.normalized) {
         logger.info(`[json-parser] Successfully extracted CodeChanges using JSON Schema validation`);
-        return validationResult.normalized;
+        return normalizeCodeChanges(validationResult.normalized);
       } else {
         // Log validation errors for debugging (at debug level only)
         if (validationResult.errors.length > 0) {
@@ -229,7 +356,7 @@ export function parseCodeChangesFromText(
         phaseId: context?.phaseId ? Number(context.phaseId) : undefined,
       });
 
-      return validationResult.normalized;
+      return normalizeCodeChanges(validationResult.normalized);
     } else {
       // Enhanced error logging (at debug level only)
       if (validationResult.errors.length > 0) {
@@ -249,7 +376,7 @@ export function parseCodeChangesFromText(
     try {
       const parsed = JSON.parse(jsonBlockMatch[1].trim());
       if (parsed && parsed.files && Array.isArray(parsed.files)) {
-        return parsed as CodeChanges;
+        return normalizeCodeChanges(parsed as CodeChanges);
       }
     } catch {
       // Not valid JSON
@@ -260,7 +387,7 @@ export function parseCodeChangesFromText(
   try {
     const parsed = JSON.parse(text);
     if (parsed && parsed.files && Array.isArray(parsed.files)) {
-      return parsed as CodeChanges;
+      return normalizeCodeChanges(parsed as CodeChanges);
     }
   } catch (error) {
     // Enhanced error tracking with strategy information

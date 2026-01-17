@@ -69,6 +69,24 @@ export interface PrdSetMetricsData {
   specKit?: SpecKitMetrics;
 }
 
+// Task Level Detail (for reporting)
+export interface TaskDetail {
+  taskId: string;
+  title: string;
+  status: 'success' | 'failed' | 'blocked' | 'pending';
+  durationMs: number;
+  tokensInput: number;
+  tokensOutput: number;
+  retryCount: number;
+  jsonParseAttempts: number;
+  contextSizeChars: number;
+  filesCreated: number;
+  filesModified: number;
+  filesDeleted: number;
+  patternsApplied?: number;
+  iterationsToSuccess?: number;
+}
+
 // PRD Level
 export interface PrdMetadata {
   prdId: string;
