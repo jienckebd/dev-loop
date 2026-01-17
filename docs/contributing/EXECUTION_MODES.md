@@ -28,10 +28,11 @@ flowchart TB
         PRDSet[prd-set execute] --> PSO[PrdSetOrchestrator]
         PSO --> IR1[IterationRunner PRD-1]
         PSO --> IR2[IterationRunner PRD-2]
-        Run[run command] --> WE[WorkflowEngine]
+        Run[run command] --> IR0[IterationRunner]
     end
 
     subgraph iteration [Ralph Pattern]
+        IR0 --> Loop
         IR1 --> Loop[Fresh Context Loop]
         IR2 --> Loop
         Loop --> Handoff[Generate handoff.md]
@@ -67,15 +68,15 @@ flowchart TB
     PRDSet[PRD Set] --> Discover[Discover PRDs]
     Discover --> Deps[Build Dependency Graph]
     Deps --> Levels[Execution Levels]
-    
+
     Levels --> L0[Level 0]
     Levels --> L1[Level 1]
-    
+
     L0 --> IR_A[IterationRunner PRD-A]
     L0 --> IR_B[IterationRunner PRD-B]
-    
+
     L1 -->|waits for L0| IR_C[IterationRunner PRD-C]
-    
+
     IR_A --> LG_A[LangGraph A]
     IR_B --> LG_B[LangGraph B]
     IR_C --> LG_C[LangGraph C]
@@ -125,33 +126,33 @@ Execution Complete:
 **Use Case**: Execute a single workflow iteration (for debugging).
 
 **How it works**:
-1. `WorkflowEngine.runOnce()` executes directly
-2. Fetches next pending task
+1. `IterationRunner.runWithFreshContext()` executes with fresh context
+2. Fetches next pending task via LangGraph
 3. Generates code, applies, tests
 4. Marks done or creates fix task
-5. Exits after single iteration
+5. Continues until all tasks complete
 
 ```bash
-# Run single iteration
+# Run with fresh context
 npx dev-loop run
 
-# With specific task
-npx dev-loop run --task REQ-1.1
+# With debug logging
+npx dev-loop run --debug
 ```
 
-**Note**: For continuous execution, use `prd-set execute` which uses IterationRunner with fresh context per iteration.
+**Note**: Both `run` and `prd-set execute` use `IterationRunner` with fresh context per iteration (Ralph pattern).
 
 ## Execution Mode Comparison
 
 | Aspect | PRD Set Execute | Single Run |
 |--------|-----------------|------------|
 | **Command** | `prd-set execute <path>` | `run` |
-| **Entry Point** | PrdSetOrchestrator | WorkflowEngine |
-| **Context** | Fresh per PRD iteration | Single context |
-| **Use Case** | Continuous execution | Debugging |
+| **Entry Point** | PrdSetOrchestrator | IterationRunner |
+| **Context** | Fresh per PRD iteration | Fresh per iteration |
+| **Use Case** | Multi-PRD execution | Single PRD/debugging |
 | **Parallel** | Yes (per PRD) | No |
-| **Learnings** | Persisted per PRD | Not persisted |
-| **State Recovery** | Checkpoints per PRD | None |
+| **Learnings** | Persisted per PRD | Persisted |
+| **State Recovery** | Checkpoints per PRD | Checkpoints |
 
 ## The Ralph Pattern
 

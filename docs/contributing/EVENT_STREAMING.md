@@ -23,7 +23,7 @@ Event streaming provides structured, real-time event emission for monitoring dev
 
 ```mermaid
 flowchart LR
-    WE[WorkflowEngine] -->|emit| ES[EventStream]
+    IR[IterationRunner] -->|emit| ES[EventStream]
     TB[TaskBridge] -->|emit| ES
     VG[ValidationGate] -->|emit| ES
     ES -->|buffer| Events[(Event Buffer)]
@@ -250,7 +250,7 @@ Start the proactive event monitoring service. The service automatically polls ev
 const { success, status, config } = await devloop_event_monitor_start();
 ```
 
-**Returns:** 
+**Returns:**
 ```typescript
 {
   success: boolean;
@@ -283,7 +283,7 @@ const { success, status } = await devloop_event_monitor_stop();
 Get event monitoring service status and intervention statistics.
 
 ```typescript
-const { status, metrics, effectiveness, recentInterventions, recentEvents } = 
+const { status, metrics, effectiveness, recentInterventions, recentEvents } =
   await devloop_event_monitor_status();
 ```
 
@@ -464,11 +464,11 @@ async function setupProactiveMonitoring() {
   // Check if monitoring is enabled in config
   const config = await loadConfig();
   const monitoringEnabled = config.mcp?.eventMonitoring?.enabled;
-  
+
   if (monitoringEnabled) {
     // Start monitoring (auto-starts with contribution mode, but can start manually)
     await devloop_event_monitor_start();
-    
+
     console.log('Proactive event monitoring started');
   }
 }
@@ -476,11 +476,11 @@ async function setupProactiveMonitoring() {
 // Monitor intervention effectiveness
 async function checkInterventionStatus() {
   const { status, metrics, effectiveness } = await devloop_event_monitor_status();
-  
+
   console.log(`Monitoring Status: ${status.isRunning ? 'Running' : 'Stopped'}`);
   console.log(`Total Interventions: ${metrics.totalInterventions}`);
   console.log(`Success Rate: ${(metrics.successRate * 100).toFixed(1)}%`);
-  
+
   if (effectiveness.issueTypesNeedingImprovement.length > 0) {
     console.log('\nIssue Types Needing Improvement:');
     effectiveness.issueTypesNeedingImprovement.forEach(issue => {
@@ -495,7 +495,7 @@ async function reviewRecentInterventions() {
     limit: 10,
     success: undefined  // Get all, not just successful or failed
   });
-  
+
   console.log(`\nRecent Interventions (${interventions.length}):`);
   interventions.forEach(intervention => {
     const status = intervention.success ? '✓' : '✗';
@@ -505,7 +505,7 @@ async function reviewRecentInterventions() {
       console.log(`  Error: ${intervention.error}`);
     }
   });
-  
+
   console.log(`\nSummary:`);
   console.log(`  Total: ${summary.total}`);
   console.log(`  Successful: ${summary.successful} (${(summary.successRate * 100).toFixed(1)}%)`);
@@ -518,7 +518,7 @@ async function reviewRecentInterventions() {
 
 ```mermaid
 sequenceDiagram
-    participant WE as WorkflowEngine
+    participant IR as IterationRunner
     participant ES as EventStream
     participant Buffer as Event Buffer
     participant MCP as MCP Tools
@@ -794,7 +794,7 @@ Events are buffered in memory with these characteristics:
 
 ```mermaid
 sequenceDiagram
-    participant WE as WorkflowEngine
+    participant IR as IterationRunner
     participant ES as EventStream
     participant Buffer as In-Memory Buffer
     participant MCP as MCP Tools
@@ -803,12 +803,12 @@ sequenceDiagram
     WE->>ES: emit('file:filtered', data)
     ES->>Buffer: push(event)
     Note over Buffer: Max 1000 events<br/>Oldest removed when exceeded
-    
+
     Agent->>MCP: devloop_events_poll(since)
     MCP->>Buffer: getEvents(since)
     Buffer->>MCP: filtered events
     MCP->>Agent: { events: [...] }
-    
+
     Note over Buffer: Events cleared on restart
 ```
 
@@ -889,12 +889,12 @@ while (executionActive) {
     severity: ['warn', 'error', 'critical'],
     limit: 50
   });
-  
+
   for (const event of events) {
     // Custom handling logic
     handleEvent(event);
   }
-  
+
   lastEventId = newLastEventId;
   await sleep(5000); // Poll every 5 seconds
 }
@@ -928,16 +928,16 @@ setInterval(async () => {
     types: ['test:stalled', 'progress:stalled'],  // Specific events for custom handling
     limit: 20
   });
-  
+
   // Custom handling
   events.forEach(event => {
     if (event.type === 'test:stalled') {
       handleTestStalled(event); // Custom logic
     }
   });
-  
+
   // Proactive monitoring service handles other events automatically
-  
+
   lastEventId = newLastEventId;
 }, 5000);
 ```

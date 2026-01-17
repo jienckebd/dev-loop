@@ -21,11 +21,19 @@ import {
   generateThreadId,
   createFileCheckpointer,
   WorkflowState,
+  CrossPrdCheckpointer,
 } from './langgraph';
 import { AIProviderFactory } from '../../providers/ai/factory';
 import { CodeContextProvider } from '../analysis/code/context-provider';
 import { logger } from '../utils/logger';
 import { emitEvent } from '../utils/event-stream';
+import {
+  EventMetricBridge,
+  initializeEventMetricBridge,
+  getEventMetricBridge
+} from '../metrics/event-metric-bridge';
+import { PrdMetrics } from '../metrics/prd';
+import { PrdSetMetrics } from '../metrics/prd-set';
 
 export interface IterationConfig {
   /** Maximum iterations before stopping */
@@ -50,6 +58,14 @@ export interface IterationResult {
   tasksFailed: number;
   patternsDiscovered: number;
   error?: string;
+  /** Accumulated metrics across all iterations */
+  metrics?: {
+    tokensUsed?: { input: number; output: number };
+    testsRun?: number;
+    testsPassed?: number;
+    testsFailed?: number;
+    filesChanged?: number;
+  };
 }
 
 const DEFAULT_CONFIG: IterationConfig = {
@@ -64,7 +80,7 @@ const DEFAULT_CONFIG: IterationConfig = {
 /**
  * IterationRunner - The default entry point for workflow execution
  *
- * Creates a fresh WorkflowEngine instance per iteration, implementing
+ * Creates a fresh LangGraph workflow per iteration, implementing
  * Ralph's pattern of clean context per iteration.
  */
 export class IterationRunner {
@@ -73,24 +89,52 @@ export class IterationRunner {
   private taskBridge: TaskMasterBridge;
   private iterationConfig: IterationConfig;
   private specKitContext?: SpecKitContext;
+  private sharedCheckpointer?: CrossPrdCheckpointer;
+  private eventMetricBridge?: EventMetricBridge;
+  private prdMetrics: PrdMetrics;
+  private prdSetMetrics: PrdSetMetrics;
   private iteration = 0;
   private tasksCompleted = 0;
   private tasksFailed = 0;
   private patternsDiscovered = 0;
 
+  /** Accumulated metrics across all iterations */
+  private accumulatedMetrics = {
+    tokensInput: 0,
+    tokensOutput: 0,
+    testsRun: 0,
+    testsPassed: 0,
+    testsFailed: 0,
+    filesChanged: 0,
+  };
+
   constructor(
     private config: Config,
     iterationConfig: Partial<IterationConfig> = {},
-    specKitContext?: SpecKitContext
+    specKitContext?: SpecKitContext,
+    sharedCheckpointer?: CrossPrdCheckpointer
   ) {
     this.iterationConfig = { ...DEFAULT_CONFIG, ...iterationConfig };
     this.specKitContext = specKitContext;
+    this.sharedCheckpointer = sharedCheckpointer;
     this.learningsManager = new LearningsManager(config);
     this.contextHandoff = new ContextHandoff(config, {
       threshold: this.iterationConfig.contextThreshold,
       iterationInterval: this.iterationConfig.handoffInterval,
     });
     this.taskBridge = new TaskMasterBridge(config);
+
+    // Initialize metrics
+    this.prdMetrics = new PrdMetrics();
+    this.prdSetMetrics = new PrdSetMetrics();
+
+    // Initialize event-metric bridge for enhanced metrics collection
+    this.eventMetricBridge = initializeEventMetricBridge({
+      prdMetrics: this.prdMetrics,
+      prdSetMetrics: this.prdSetMetrics,
+      enabled: true,
+      debug: config.debug,
+    });
   }
 
   /**
@@ -104,6 +148,12 @@ export class IterationRunner {
    */
   async runWithFreshContext(prdPath?: string): Promise<IterationResult> {
     const startTime = Date.now();
+
+    // Start event-metric bridge for enhanced metrics collection
+    if (this.eventMetricBridge) {
+      this.eventMetricBridge.start();
+      logger.debug('[IterationRunner] Started event-metric bridge');
+    }
 
     emitEvent('iteration:started', {
       prdPath,
@@ -132,6 +182,16 @@ export class IterationRunner {
         // 2. Execute iteration with fresh LangGraph workflow
         const result = await this.executeIteration(handoff);
 
+        // 2.5. Accumulate metrics from this iteration
+        if (result.metrics) {
+          this.accumulatedMetrics.tokensInput += result.metrics.tokensUsed?.input || 0;
+          this.accumulatedMetrics.tokensOutput += result.metrics.tokensUsed?.output || 0;
+          this.accumulatedMetrics.testsRun += result.metrics.testsRun || 0;
+          this.accumulatedMetrics.testsPassed += result.metrics.testsPassed || 0;
+          this.accumulatedMetrics.testsFailed += result.metrics.testsFailed || 0;
+          this.accumulatedMetrics.filesChanged += result.metrics.filesChanged || 0;
+        }
+
         // 3. Persist learnings (Ralph's progress.txt pattern)
         if (this.iterationConfig.persistLearnings) {
           await this.persistIterationLearnings(result);
@@ -142,9 +202,12 @@ export class IterationRunner {
           await this.updatePatterns(result);
         }
 
-        // 5. Track results
+        // 5. Track results and update task status
         if (result.status === 'complete' && result.task) {
           this.tasksCompleted++;
+          // Mark task as done in TaskBridge
+          await this.taskBridge.updateTaskStatus(String(result.task.id), 'done');
+          logger.info(`[IterationRunner] Task ${result.task.id} marked as done`);
         } else if (result.status === 'failed') {
           this.tasksFailed++;
         }
@@ -162,11 +225,31 @@ export class IterationRunner {
       }
 
       logger.info(`[IterationRunner] All tasks complete after ${this.iteration} iterations`);
+
+      // Share qualified patterns for cross-PRD access
+      try {
+        // Get prdSetId from sharedCheckpointer if available
+        const prdSetId = this.sharedCheckpointer
+          ? (await this.sharedCheckpointer.getSharedState()).prdSetId
+          : 'default';
+        const targetModule = (this.config as any).targetModule as string | undefined;
+
+        await this.learningsManager.shareQualifiedPatterns(prdSetId, targetModule);
+      } catch (patternError) {
+        logger.warn(`[IterationRunner] Failed to share patterns: ${patternError}`);
+      }
+
       return this.buildResult('complete', startTime);
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : String(error);
       logger.error(`[IterationRunner] Error: ${errorMessage}`);
       return this.buildResult('failed', startTime, errorMessage);
+    } finally {
+      // Stop event-metric bridge
+      if (this.eventMetricBridge) {
+        this.eventMetricBridge.stop();
+        logger.debug('[IterationRunner] Stopped event-metric bridge');
+      }
     }
   }
 
@@ -180,10 +263,16 @@ export class IterationRunner {
     // Create fresh code context provider
     const codeContextProvider = new CodeContextProvider(this.config.debug);
 
-    // Create fresh checkpointer (file-based for durability)
-    const checkpointer = createFileCheckpointer({
+    // Use shared checkpointer if available (for cross-PRD coordination),
+    // otherwise create fresh file-based checkpointer
+    const checkpointer = this.sharedCheckpointer || createFileCheckpointer({
       debug: this.config.debug,
     });
+
+    // Get iteration config for parallel execution
+    const iterationCfg = (this.config as any).iteration || {};
+    const maxConcurrency = iterationCfg.maxConcurrency || 1;
+    const parallelThreshold = iterationCfg.parallelThreshold || 2;
 
     // Create fresh workflow graph
     const graph = createWorkflowGraph({
@@ -193,6 +282,8 @@ export class IterationRunner {
       codeContextProvider,
       checkpointer,
       debug: this.config.debug,
+      maxConcurrency,
+      parallelThreshold,
     });
 
     // Create initial state with handoff context
@@ -232,6 +323,8 @@ export class IterationRunner {
         phaseId: undefined,
         prdSetId: undefined,
         dependencyLevel: undefined,
+        parallelTasks: [],
+        parallelResults: [],
       };
     }
   }
@@ -305,6 +398,8 @@ export class IterationRunner {
       tasksCompleted: this.tasksCompleted,
       tasksFailed: this.tasksFailed,
       patternsDiscovered: this.patternsDiscovered,
+      tokensInput: this.accumulatedMetrics.tokensInput,
+      tokensOutput: this.accumulatedMetrics.tokensOutput,
       error,
       timestamp: new Date().toISOString(),
     });
@@ -317,6 +412,16 @@ export class IterationRunner {
       tasksFailed: this.tasksFailed,
       patternsDiscovered: this.patternsDiscovered,
       error,
+      metrics: {
+        tokensUsed: {
+          input: this.accumulatedMetrics.tokensInput,
+          output: this.accumulatedMetrics.tokensOutput,
+        },
+        testsRun: this.accumulatedMetrics.testsRun,
+        testsPassed: this.accumulatedMetrics.testsPassed,
+        testsFailed: this.accumulatedMetrics.testsFailed,
+        filesChanged: this.accumulatedMetrics.filesChanged,
+      },
     };
   }
 

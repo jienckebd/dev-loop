@@ -9,6 +9,7 @@ import { CodeChanges } from '../../../../types';
 import { WorkflowState, ValidationResult } from '../state';
 import { Config } from '../../../../config/schema/core';
 import { logger } from '../../../utils/logger';
+import { emitEvent } from '../../../utils/event-stream';
 import * as fs from 'fs-extra';
 import * as path from 'path';
 
@@ -83,8 +84,31 @@ export function validateCode(nodeConfig: ValidateCodeNodeConfig) {
 
       if (result.valid) {
         logger.info(`[ValidateCode] Validation passed with ${warnings.length} warning(s)`);
+
+        // Emit validation:passed event
+        emitEvent('validation:passed', {
+          taskId: state.task ? String(state.task.id) : undefined,
+          fileCount: state.codeChanges.files.length,
+          warningCount: warnings.length,
+        }, {
+          taskId: state.task ? String(state.task.id) : undefined,
+          prdId: state.prdId,
+          phaseId: state.phaseId,
+        });
       } else {
         logger.warn(`[ValidateCode] Validation failed with ${errors.length} error(s)`);
+
+        // Emit validation:failed event
+        emitEvent('validation:failed', {
+          taskId: state.task ? String(state.task.id) : undefined,
+          errorCount: errors.length,
+          blockerCount: blockers.length,
+          errors: errors.slice(0, 5), // First 5 errors for event
+        }, {
+          taskId: state.task ? String(state.task.id) : undefined,
+          prdId: state.prdId,
+          phaseId: state.phaseId,
+        });
       }
 
       return {

@@ -10,6 +10,7 @@ import { CodeChanges } from '../../../../types';
 import { WorkflowState, IterationLearning } from '../state';
 import { Config } from '../../../../config/schema/core';
 import { logger } from '../../../utils/logger';
+import { emitEvent } from '../../../utils/event-stream';
 
 export interface CaptureLearningsNodeConfig {
   config: Config;
@@ -60,6 +61,32 @@ export function captureLearnings(nodeConfig: CaptureLearningsNodeConfig) {
       if (debug) {
         logger.debug(`[CaptureLearnings] Captured ${learnings.length} learning(s)`);
       }
+
+      // Emit pattern:learned event for each new learning
+      for (const learning of learnings) {
+        emitEvent('pattern:learned', {
+          taskId: state.task ? String(state.task.id) : undefined,
+          type: learning.type,
+          name: learning.name,
+          guidance: learning.guidance?.substring(0, 200),
+        }, {
+          taskId: state.task ? String(state.task.id) : undefined,
+          prdId: state.prdId,
+          phaseId: state.phaseId,
+        });
+      }
+
+      // Emit task:completed summary event
+      emitEvent('task:completed', {
+        taskId: state.task ? String(state.task.id) : undefined,
+        success: state.testResult?.success || false,
+        learningsCount: learnings.length,
+        filesModifiedCount: filesModified.length,
+      }, {
+        taskId: state.task ? String(state.task.id) : undefined,
+        prdId: state.prdId,
+        phaseId: state.phaseId,
+      });
 
       return {
         status,

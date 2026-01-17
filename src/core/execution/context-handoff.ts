@@ -14,6 +14,7 @@ import { logger } from '../utils/logger';
 import { getParallelMetricsTracker } from '../metrics/parallel';
 import { emitEvent } from '../utils/event-stream';
 import { TaskMasterBridge } from './task-bridge';
+import { PatternSharingManager, SharedPattern, createPatternSharingManager } from './pattern-sharing';
 
 export interface HandoffContext {
   timestamp: string;
@@ -24,6 +25,7 @@ export interface HandoffContext {
   currentTask?: string;
   recentLearnings: string[];
   recentPatterns: string[];
+  sharedPatterns: string[];  // Patterns from previous PRD sets
   filesModified: string[];
   contextUsagePercent: number;
 }
@@ -48,6 +50,8 @@ export class ContextHandoff {
   private progressPath: string;
   private config: HandoffConfig;
   private taskBridge: TaskMasterBridge;
+  private patternSharingManager: PatternSharingManager;
+  private baseConfig: Config;
   private currentIteration: number = 0;
   private filesModifiedThisSession: Set<string> = new Set();
 
@@ -55,11 +59,13 @@ export class ContextHandoff {
     baseConfig: Config,
     handoffConfig: Partial<HandoffConfig> = {}
   ) {
+    this.baseConfig = baseConfig;
     const baseDir = process.cwd();
     this.handoffPath = path.resolve(baseDir, '.devloop/handoff.md');
     this.progressPath = path.resolve(baseDir, '.devloop/progress.md');
     this.config = { ...DEFAULT_CONFIG, ...handoffConfig };
     this.taskBridge = new TaskMasterBridge(baseConfig);
+    this.patternSharingManager = createPatternSharingManager(baseConfig);
   }
 
   /**
@@ -74,6 +80,12 @@ export class ContextHandoff {
     const allTasks = await this.taskBridge.getAllTasks();
     const contextUsage = await this.getContextUsage();
 
+    // Get shared patterns from previous executions
+    const sharedPatterns = await this.patternSharingManager.getRelevantPatterns({
+      prdSetId: undefined, // Get patterns from all sets
+      filePaths: Array.from(this.filesModifiedThisSession),
+    });
+
     const handoff: HandoffContext = {
       timestamp: new Date().toISOString(),
       iteration: this.currentIteration,
@@ -83,6 +95,7 @@ export class ContextHandoff {
       currentTask: undefined, // Set by caller if known
       recentLearnings: await this.getRecentLearnings(),
       recentPatterns: await this.getRecentPatterns(),
+      sharedPatterns: this.patternSharingManager.formatForHandoff(sharedPatterns),
       filesModified: Array.from(this.filesModifiedThisSession),
       contextUsagePercent: contextUsage,
     };
@@ -176,6 +189,14 @@ export class ContextHandoff {
   private async writeHandoffDocument(handoff: HandoffContext): Promise<void> {
     await fs.ensureDir(path.dirname(this.handoffPath));
 
+    // Only include shared patterns section if there are patterns
+    const sharedPatternsSection = handoff.sharedPatterns.length > 0
+      ? `## Shared Patterns from Previous Executions
+${handoff.sharedPatterns.map(p => `- ${p}`).join('\n')}
+
+`
+      : '';
+
     const content = `# Handoff Context
 
 Generated: ${handoff.timestamp}
@@ -201,7 +222,7 @@ ${handoff.recentLearnings.map(l => `- ${l}`).join('\n') || '- None captured'}
 ## Recent Patterns
 ${handoff.recentPatterns.map(p => `- ${p}`).join('\n') || '- None discovered'}
 
-## Files Modified This Session
+${sharedPatternsSection}## Files Modified This Session
 ${handoff.filesModified.map(f => `- ${f}`).join('\n') || '- None'}
 
 ---
@@ -304,6 +325,7 @@ ${handoff.filesModified.map(f => `- ${f}`).join('\n') || '- None'}
         blockedTasks: extractTasks(blockedMatch?.[1]),
         recentLearnings: [],
         recentPatterns: [],
+        sharedPatterns: [],
         filesModified: [],
         contextUsagePercent: contextMatch ? parseFloat(contextMatch[1]) : 0,
       };

@@ -9,6 +9,7 @@ import { CodeChanges } from '../../types';
 import { ObservationTracker } from '../../core/tracking/observation-tracker';
 import { logger } from '../../core/utils/logger';
 import { JsonSchemaValidator } from './json-schema-validator';
+import { emitEvent } from '../../core/utils/event-stream';
 
 export interface JsonParsingContext {
   providerName?: string;
@@ -20,10 +21,10 @@ export interface JsonParsingContext {
 
 /**
  * Recursively extract result text from nested result objects
- * 
+ *
  * Handles cases like: {"type": "result", "result": "{\"type\": \"result\", \"result\": \"...\"}"}
  * This fixes the issue where Cursor AI returns narrative text wrapped in multiple layers of result objects.
- * 
+ *
  * @param data - Data that might be a result object or contain nested result objects
  * @param maxDepth - Maximum recursion depth (default: 5 to prevent infinite loops)
  * @returns Extracted text or the original data if not a result object
@@ -88,7 +89,7 @@ export function extractCodeChanges(
   // Handle result objects - recursively extract nested result structures
   if (response && typeof response === 'object' && response.type === 'result' && response.result !== undefined) {
     const extractedResult = extractResultTextRecursively(response.result);
-    
+
     // Try to parse extracted result as JSON if it's a string
     if (typeof extractedResult === 'string') {
       try {
@@ -110,7 +111,7 @@ export function extractCodeChanges(
       // Extracted result is still a result object, recurse
       return extractCodeChanges(extractedResult, observationTracker, context);
     }
-    
+
     // If extracted result is still a string, try text extraction
     const resultText = typeof extractedResult === 'string' ? extractedResult : JSON.stringify(extractedResult);
     return parseCodeChangesFromText(resultText, observationTracker, context);
@@ -118,7 +119,7 @@ export function extractCodeChanges(
 
   // Convert response to text for schema validation
   let textToValidate: string = '';
-  
+
   if (typeof response === 'string') {
     textToValidate = response;
   } else if (response && typeof response === 'object') {
@@ -210,10 +211,24 @@ export function parseCodeChangesFromText(
 
   // Use schema validator - it handles markdown code blocks, escaped JSON, etc.
   // Suppress warnings since we have fallback methods
+  const startTime = Date.now();
   try {
     const validationResult = JsonSchemaValidator.extractAndValidate(text, true);
     if (validationResult.valid && validationResult.normalized) {
       logger.debug(`[json-parser] Successfully extracted CodeChanges from text using schema validation`);
+
+      // Emit json:parse_success event
+      emitEvent('json:parse_success', {
+        strategy: 'schema_validation',
+        retryCount: 0,
+        durationMs: Date.now() - startTime,
+        fileCount: validationResult.normalized.files?.length || 0,
+      }, {
+        taskId: context?.taskId,
+        prdId: context?.prdId,
+        phaseId: context?.phaseId ? Number(context.phaseId) : undefined,
+      });
+
       return validationResult.normalized;
     } else {
       // Enhanced error logging (at debug level only)
@@ -250,7 +265,7 @@ export function parseCodeChangesFromText(
   } catch (error) {
     // Enhanced error tracking with strategy information
     const extractionAttempts: string[] = [];
-    
+
     // Try to get strategy information from validation result (suppress warnings)
     try {
       const validationResult = JsonSchemaValidator.extractAndValidate(text, true);
@@ -260,7 +275,7 @@ export function parseCodeChangesFromText(
     } catch {
       // Could not get validation info
     }
-    
+
     // Track parsing failure with detailed information
     if (observationTracker && context?.providerName) {
       const responseSample = text.substring(0, 1000);
@@ -318,7 +333,7 @@ export function extractJsonArray<T = any>(
       const yaml = require('js-yaml');
       const documents = text.split(/^---$/m).filter(doc => doc.trim());
       const items: any[] = [];
-      
+
       for (const doc of documents) {
         try {
           const parsed = yaml.load(doc.trim());
@@ -329,7 +344,7 @@ export function extractJsonArray<T = any>(
           // Skip invalid YAML documents
         }
       }
-      
+
       if (items.length > 0) {
         const validated = validateArrayItems(items, requiredFields);
         if (validated.length > 0) {
@@ -453,7 +468,7 @@ function stripConversationalPreamble(text: string): string {
     /^.*?Summary[:\s]*\n+/is, // "Summary:" followed by newlines
     /^.*?(?:Test (?:plans?|cases?))[:\s]*/is, // "Test plans:" prefix
   ];
-  
+
   let stripped = text;
   for (const pattern of preamblePatterns) {
     const match = text.match(pattern);
@@ -465,7 +480,7 @@ function stripConversationalPreamble(text: string): string {
       }
     }
   }
-  
+
   return stripped;
 }
 
@@ -636,43 +651,519 @@ function fixCommonJsonErrors(text: string): string {
 }
 
 /**
+ * JSON Error Diagnosis Types
+ *
+ * Categorizes parsing failures to enable targeted fix prompts.
+ */
+export type JsonErrorType =
+  | 'string-instead-of-array'
+  | 'double-encoded'
+  | 'double-wrapped'
+  | 'truncated'
+  | 'narrative-mixed'
+  | 'wrong-structure'
+  | 'trailing-content'
+  | 'escaped-content'
+  | 'unknown';
+
+export interface JsonErrorDiagnosis {
+  type: JsonErrorType;
+  message: string;
+  details?: Record<string, any>;
+}
+
+/**
+ * Diagnose JSON parsing error type
+ *
+ * Analyzes the malformed text to determine what went wrong,
+ * enabling targeted fix prompts that are more effective than generic ones.
+ *
+ * @param text - The malformed JSON text
+ * @returns Diagnosis with error type and description
+ */
+export function diagnoseJsonError(text: string): JsonErrorDiagnosis {
+  // 0. Double-wrapped JSON (whole response is stringified)
+  // Pattern: ""{\"files\":..." or starts with quote and has escaped structure
+  if (text.startsWith('""') || (text.startsWith('"') && text.match(/^\s*["']\s*\{\\"/))) {
+    return {
+      type: 'double-wrapped',
+      message: 'Entire JSON response is wrapped in quotes and escaped',
+    };
+  }
+
+  // 1. Files as string instead of array (most common error)
+  // Pattern: "files": "[{...}]" instead of "files": [{...}]
+  if (text.match(/"files"\s*:\s*"[\[\{]/)) {
+    return {
+      type: 'string-instead-of-array',
+      message: 'The files field is a JSON string instead of an array',
+    };
+  }
+
+  // 2. Double-encoded JSON (escaped quotes throughout)
+  if (text.match(/\\\\"/g) || (text.match(/\\"/g) || []).length > 10) {
+    return {
+      type: 'double-encoded',
+      message: 'JSON appears to be double-encoded with escaped quotes',
+    };
+  }
+
+  // 3. Escaped content in file content fields
+  if (text.match(/\\\\n|\\\\t/) && text.includes('"content"')) {
+    return {
+      type: 'escaped-content',
+      message: 'File content contains double-escaped characters',
+    };
+  }
+
+  // 4. Truncated response (unbalanced brackets)
+  const openBraces = (text.match(/\{/g) || []).length;
+  const closeBraces = (text.match(/\}/g) || []).length;
+  const openBrackets = (text.match(/\[/g) || []).length;
+  const closeBrackets = (text.match(/\]/g) || []).length;
+
+  if (openBraces !== closeBraces || openBrackets !== closeBrackets) {
+    return {
+      type: 'truncated',
+      message: 'JSON appears to be truncated (unbalanced brackets)',
+      details: { openBraces, closeBraces, openBrackets, closeBrackets },
+    };
+  }
+
+  // 5. Narrative text mixed with JSON
+  if (text.match(/^[A-Z][a-z].*[\n\r]/) && text.includes('{') && text.includes('"files"')) {
+    return {
+      type: 'narrative-mixed',
+      message: 'Response contains narrative text mixed with JSON',
+    };
+  }
+
+  // 6. Trailing content after JSON
+  const lastBrace = text.lastIndexOf('}');
+  if (lastBrace !== -1 && lastBrace < text.length - 1) {
+    const trailing = text.substring(lastBrace + 1).trim();
+    if (trailing.length > 0 && !trailing.match(/^[\s\n]*$/)) {
+      return {
+        type: 'trailing-content',
+        message: 'Extra content after JSON object',
+        details: { trailingSample: trailing.substring(0, 100) },
+      };
+    }
+  }
+
+  // 7. Wrong structure (files exists but not an array)
+  if (text.includes('"files"') && !text.match(/"files"\s*:\s*\[/)) {
+    return {
+      type: 'wrong-structure',
+      message: 'Files field exists but has wrong structure',
+    };
+  }
+
+  return {
+    type: 'unknown',
+    message: 'Unknown parsing error',
+  };
+}
+
+/**
+ * Build a targeted fix prompt based on error diagnosis
+ *
+ * Creates specific prompts that address the diagnosed error type,
+ * which are more effective than generic "fix this JSON" prompts.
+ *
+ * @param malformedOutput - The original malformed output
+ * @param diagnosis - The diagnosed error type
+ * @param attempt - Current attempt number (for escalating prompts)
+ * @returns Targeted fix prompt
+ */
+export function buildTargetedFixPrompt(
+  malformedOutput: string,
+  diagnosis: JsonErrorDiagnosis,
+  attempt: number = 1
+): string {
+  const baseSchema = `{
+  "files": [
+    {
+      "path": "string (file path relative to project root)",
+      "content": "string (complete file content)",
+      "operation": "create" | "update" | "delete" | "patch"
+    }
+  ],
+  "summary": "string (brief description of changes)"
+}`;
+
+  // Truncate if too long to save tokens
+  const maxLength = 4000;
+  const truncatedOutput =
+    malformedOutput.length > maxLength
+      ? malformedOutput.substring(0, maxLength) + '\n... [truncated for length]'
+      : malformedOutput;
+
+  const attemptNote =
+    attempt > 1
+      ? '\n\nIMPORTANT: Previous fix attempt failed. Be extra careful with JSON syntax and ensure all brackets/braces are balanced.'
+      : '';
+
+  switch (diagnosis.type) {
+    case 'string-instead-of-array':
+      return `The following JSON has the "files" field as a string instead of an array.
+The files content is stringified JSON that needs to be parsed and returned as a proper array.
+
+REQUIRED FORMAT:
+${baseSchema}
+
+MALFORMED OUTPUT:
+${truncatedOutput}
+
+Parse the stringified "files" field and return properly structured JSON.
+Return ONLY the corrected JSON, no explanation or markdown.${attemptNote}`;
+
+    case 'double-encoded':
+      return `The following JSON is double-encoded (contains escaped quotes like \\" and escaped backslashes like \\\\).
+Please decode it and return proper JSON.
+
+REQUIRED FORMAT:
+${baseSchema}
+
+MALFORMED OUTPUT:
+${truncatedOutput}
+
+Decode the escaped characters and return valid JSON.
+Return ONLY the corrected JSON, no explanation or markdown.${attemptNote}`;
+
+    case 'double-wrapped':
+      return `The following response has the entire JSON wrapped in quotes and escaped (double-wrapped).
+The response looks like: "{\\"files\\": \\"[...]\\", \\"summary\\": \\"...\\"}"
+This needs to be unwrapped and the stringified "files" array needs to be parsed.
+
+REQUIRED FORMAT:
+${baseSchema}
+
+MALFORMED OUTPUT:
+${truncatedOutput}
+
+1. First, unwrap the outer string (remove leading/trailing quotes and unescape)
+2. Then, parse the "files" field which is also a stringified array
+3. Return the properly structured JSON
+
+Return ONLY the corrected JSON, no explanation or markdown.${attemptNote}`;
+
+    case 'escaped-content':
+      return `The following JSON has file content with incorrectly escaped characters.
+The content fields contain \\\\n instead of actual newlines.
+
+REQUIRED FORMAT:
+${baseSchema}
+
+MALFORMED OUTPUT:
+${truncatedOutput}
+
+Fix the escaping in content fields and return valid JSON.
+Return ONLY the corrected JSON, no explanation or markdown.${attemptNote}`;
+
+    case 'truncated':
+      return `The following JSON appears to be truncated (unbalanced brackets/braces).
+Please complete the JSON structure based on what's visible.
+
+REQUIRED FORMAT:
+${baseSchema}
+
+PARTIAL OUTPUT:
+${truncatedOutput}
+
+Complete the JSON by adding missing closing brackets/braces.
+Return ONLY the completed JSON, no explanation or markdown.${attemptNote}`;
+
+    case 'narrative-mixed':
+      return `The following response contains narrative text mixed with JSON.
+Extract ONLY the JSON code changes.
+
+REQUIRED FORMAT:
+${baseSchema}
+
+RESPONSE:
+${truncatedOutput}
+
+Extract the JSON portion and return it.
+Return ONLY the extracted JSON, no explanation or markdown.${attemptNote}`;
+
+    case 'trailing-content':
+      return `The following has extra content after the JSON object.
+Extract only the valid JSON portion.
+
+REQUIRED FORMAT:
+${baseSchema}
+
+OUTPUT WITH TRAILING CONTENT:
+${truncatedOutput}
+
+Remove trailing content and return valid JSON.
+Return ONLY the JSON, no explanation or markdown.${attemptNote}`;
+
+    case 'wrong-structure':
+      return `The following JSON has the "files" field with wrong structure (not an array).
+Restructure it to match the required format.
+
+REQUIRED FORMAT:
+${baseSchema}
+
+MALFORMED OUTPUT:
+${truncatedOutput}
+
+Fix the files field to be a proper array.
+Return ONLY the corrected JSON, no explanation or markdown.${attemptNote}`;
+
+    default:
+      // Generic fix prompt for unknown errors
+      return `The following output failed to parse as valid CodeChanges JSON.
+Please extract or reconstruct the code changes in the correct format.
+
+REQUIRED FORMAT:
+${baseSchema}
+
+MALFORMED OUTPUT:
+${truncatedOutput}
+
+Return ONLY valid JSON matching the format above.
+Do not include any explanation, markdown formatting, or code blocks.
+Just the raw JSON object.${attemptNote}`;
+  }
+}
+
+/**
+ * Try programmatic fixes for common JSON errors
+ *
+ * Attempts to fix JSON without using AI, which is faster and cheaper.
+ *
+ * @param text - The malformed JSON text
+ * @param diagnosis - The diagnosed error type
+ * @returns Fixed CodeChanges or null if programmatic fix fails
+ */
+export function tryProgrammaticFix(text: string, diagnosis: JsonErrorDiagnosis): CodeChanges | null {
+  try {
+    switch (diagnosis.type) {
+      case 'string-instead-of-array': {
+        // Try to parse the outer JSON, then parse the files string
+        const parsed = JSON.parse(text);
+        if (typeof parsed.files === 'string') {
+          const filesArray = JSON.parse(parsed.files);
+          if (Array.isArray(filesArray)) {
+            return {
+              files: filesArray,
+              summary: parsed.summary || 'Code changes extracted',
+            };
+          }
+        }
+        break;
+      }
+
+      case 'double-encoded': {
+        // Try un-escaping once
+        let unescaped = text.replace(/\\"/g, '"').replace(/\\\\/g, '\\');
+        // If it starts/ends with quotes, remove them
+        if (unescaped.startsWith('"') && unescaped.endsWith('"')) {
+          unescaped = unescaped.slice(1, -1);
+        }
+        const parsed = JSON.parse(unescaped);
+        if (parsed.files && Array.isArray(parsed.files)) {
+          return parsed as CodeChanges;
+        }
+        break;
+      }
+
+      case 'double-wrapped': {
+        // Multi-layer unwrapping for deeply escaped JSON
+        let inner = text;
+
+        // Remove leading/trailing quotes
+        while ((inner.startsWith('"') && inner.endsWith('"')) ||
+               (inner.startsWith("'") && inner.endsWith("'"))) {
+          inner = inner.slice(1, -1);
+        }
+
+        // Unescape the JSON
+        inner = inner
+          .replace(/\\n/g, '\n')
+          .replace(/\\t/g, '\t')
+          .replace(/\\r/g, '\r')
+          .replace(/\\"/g, '"')
+          .replace(/\\\\/g, '\\');
+
+        const parsed = JSON.parse(inner);
+
+        // Check if files is still a string (double stringified)
+        if (typeof parsed.files === 'string') {
+          let filesString = parsed.files
+            .replace(/\\n/g, '\n')
+            .replace(/\\t/g, '\t')
+            .replace(/\\r/g, '\r')
+            .replace(/\\"/g, '"')
+            .replace(/\\\\/g, '\\');
+
+          const filesArray = JSON.parse(filesString);
+          if (Array.isArray(filesArray)) {
+            return {
+              files: filesArray,
+              summary: parsed.summary || 'Code changes extracted',
+            };
+          }
+        } else if (Array.isArray(parsed.files)) {
+          return parsed as CodeChanges;
+        }
+        break;
+      }
+
+      case 'trailing-content': {
+        // Extract just the JSON part
+        const match = text.match(/\{[\s\S]*\}/);
+        if (match) {
+          const parsed = JSON.parse(match[0]);
+          if (parsed.files && Array.isArray(parsed.files)) {
+            return parsed as CodeChanges;
+          }
+        }
+        break;
+      }
+
+      case 'narrative-mixed': {
+        // Try to find JSON block after narrative
+        const jsonStart = text.indexOf('{');
+        if (jsonStart > 0) {
+          const jsonPart = text.substring(jsonStart);
+          const match = jsonPart.match(/\{[\s\S]*\}/);
+          if (match) {
+            const parsed = JSON.parse(match[0]);
+            if (parsed.files && Array.isArray(parsed.files)) {
+              return parsed as CodeChanges;
+            }
+          }
+        }
+        break;
+      }
+    }
+  } catch {
+    // Programmatic fix failed
+  }
+
+  return null;
+}
+
+/**
  * Extract CodeChanges with AI fallback for complex cases
+ *
+ * Uses a multi-stage approach:
+ * 1. Try standard extraction (JsonSchemaValidator strategies)
+ * 2. Diagnose the error type
+ * 3. Try programmatic fixes based on diagnosis
+ * 4. Use AI with targeted prompts as last resort
+ *
+ * @param response - The AI response to extract from
+ * @param promptFunction - Function to invoke AI for fix attempts
+ * @param context - Parsing context for logging
+ * @param maxRetries - Maximum AI fix attempts (default: 2)
+ * @returns Extracted CodeChanges or null
  */
 export async function extractCodeChangesWithAiFallback(
   response: any,
   promptFunction: (prompt: string) => Promise<string>,
-  context: JsonParsingContext
+  context: JsonParsingContext,
+  maxRetries: number = 2
 ): Promise<CodeChanges | null> {
-  // First try standard extraction
+  // Stage 1: Try standard extraction
   const codeChanges = extractCodeChanges(response, undefined, context);
-  if (codeChanges) {
+  if (codeChanges && codeChanges.files && Array.isArray(codeChanges.files) && codeChanges.files.length > 0) {
     return codeChanges;
   }
 
-  // If standard extraction fails, use AI to extract
-  try {
-    const extractionPrompt = `Extract the CodeChanges JSON from this response. Return ONLY valid JSON in this exact format:
-{
-  "files": [
-    {
-      "path": "path/to/file",
-      "content": "file content",
-      "operation": "create"
-    }
-  ],
-  "summary": "description"
-}
+  // Stage 2: Diagnose the error
+  const responseText = typeof response === 'string' ? response : JSON.stringify(response);
+  const diagnosis = diagnoseJsonError(responseText);
 
-Response to extract from:
-${typeof response === 'string' ? response : JSON.stringify(response, null, 2)}`;
+  logger.debug(`[json-parser] Diagnosis: ${diagnosis.type} - ${diagnosis.message}`);
 
-    const aiResponse = await promptFunction(extractionPrompt);
-    if (aiResponse) {
-      return extractCodeChanges(aiResponse, undefined, context);
-    }
-  } catch (error) {
-    logger.warn(`[json-parser] AI fallback failed: ${error}`);
+  // Stage 3: Try programmatic fix (no AI needed)
+  const programmaticFix = tryProgrammaticFix(responseText, diagnosis);
+  if (programmaticFix && programmaticFix.files && Array.isArray(programmaticFix.files) && programmaticFix.files.length > 0) {
+    logger.info(`[json-parser] Programmatic fix succeeded for ${diagnosis.type}`);
+
+    // Emit json:sanitized event for programmatic fix
+    emitEvent('json:sanitized', {
+      diagnosisType: diagnosis.type,
+      strategy: 'programmatic_fix',
+      fileCount: programmaticFix.files.length,
+    }, {
+      taskId: context?.taskId,
+      prdId: context?.prdId,
+      phaseId: context?.phaseId ? Number(context.phaseId) : undefined,
+    });
+
+    return programmaticFix;
   }
+
+  // Stage 4: Use AI with targeted prompts
+  for (let attempt = 1; attempt <= maxRetries; attempt++) {
+    try {
+      const fixPrompt = buildTargetedFixPrompt(responseText, diagnosis, attempt);
+
+      logger.debug(`[json-parser] AI fix attempt ${attempt} for ${diagnosis.type}`);
+
+      const aiResponse = await promptFunction(fixPrompt);
+      if (aiResponse) {
+        const parsed = extractCodeChanges(aiResponse, undefined, context);
+        if (parsed && parsed.files && Array.isArray(parsed.files) && parsed.files.length > 0) {
+          logger.info(`[json-parser] AI fix succeeded on attempt ${attempt} for ${diagnosis.type}`);
+
+          // Emit json:ai_fallback_success event
+          emitEvent('json:ai_fallback_success', {
+            diagnosisType: diagnosis.type,
+            attempt,
+            fileCount: parsed.files.length,
+          }, {
+            taskId: context?.taskId,
+            prdId: context?.prdId,
+            phaseId: context?.phaseId ? Number(context.phaseId) : undefined,
+          });
+
+          return parsed;
+        }
+      }
+
+      // Emit json:parse_retry event
+      emitEvent('json:parse_retry', {
+        diagnosisType: diagnosis.type,
+        attempt,
+      }, {
+        taskId: context?.taskId,
+        prdId: context?.prdId,
+        phaseId: context?.phaseId ? Number(context.phaseId) : undefined,
+      });
+    } catch (error) {
+      logger.warn(`[json-parser] AI fix attempt ${attempt} failed: ${error instanceof Error ? error.message : String(error)}`);
+
+      // Emit json:ai_fallback_error event
+      emitEvent('json:ai_fallback_error', {
+        diagnosisType: diagnosis.type,
+        attempt,
+        error: error instanceof Error ? error.message : String(error),
+      }, {
+        taskId: context?.taskId,
+        prdId: context?.prdId,
+        phaseId: context?.phaseId ? Number(context.phaseId) : undefined,
+      });
+    }
+  }
+
+  logger.error(`[json-parser] All ${maxRetries} AI fix attempts failed for ${diagnosis.type}`);
+
+  // Emit json:ai_fallback_failed event
+  emitEvent('json:ai_fallback_failed', {
+    diagnosisType: diagnosis.type,
+    attempts: maxRetries,
+  }, {
+    taskId: context?.taskId,
+    prdId: context?.prdId,
+    phaseId: context?.phaseId ? Number(context.phaseId) : undefined,
+  });
 
   return null;
 }

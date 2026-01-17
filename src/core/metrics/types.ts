@@ -557,6 +557,40 @@ export interface PrdMetricsData {
   codebase?: CodebaseMetrics;
   sessions?: SessionMetrics;
   contributionMode?: ContributionModeMetrics;
+
+  // Code generation metrics (from EventMetricBridge)
+  tokensInput?: number;
+  tokensOutput?: number;
+  codeGenDurationMs?: number;
+  filesGenerated?: number;
+  codeGenFailures?: number;
+
+  // Test metrics (from EventMetricBridge)
+  testsRun?: number;
+  testsPassed?: number;
+  testsFailed?: number;
+  testDurationMs?: number;
+
+  // Task metrics (from EventMetricBridge)
+  tasksStarted?: number;
+  tasksCompleted?: number;
+  tasksSucceeded?: number;
+  tasksFailed?: number;
+  tasksBlocked?: number;
+
+  // File operation metrics (from EventMetricBridge)
+  filesCreated?: number;
+  filesModified?: number;
+  filesDeleted?: number;
+
+  // Failure analysis metrics (from EventMetricBridge)
+  failureAnalyses?: number;
+  errorsAnalyzed?: number;
+  fixTasksCreated?: number;
+
+  // Pattern learning metrics (from EventMetricBridge)
+  patternsLearned?: number;
+  patternsByType?: Record<string, number>;
 }
 
 // Phase Level

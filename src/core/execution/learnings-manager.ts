@@ -10,6 +10,7 @@ import * as fs from 'fs-extra';
 import * as path from 'path';
 import { Config } from '../../config/schema/core';
 import { logger } from '../utils/logger';
+import { PatternSharingManager, SharedPattern, createPatternSharingManager } from './pattern-sharing';
 
 export interface IterationLearning {
   type: 'pattern' | 'gotcha' | 'convention';
@@ -44,15 +45,19 @@ export class LearningsManager {
   private patternsPath: string;
   private rulesPath: string;
   private patternCache: Map<string, Pattern> = new Map();
+  private patternSharingManager: PatternSharingManager;
+  private config: Config;
 
   // Only persist patterns that occur 3+ times
   private static readonly PATTERN_THRESHOLD = 3;
 
   constructor(config: Config) {
+    this.config = config;
     const baseDir = process.cwd();
     this.progressPath = path.resolve(baseDir, '.devloop/progress.md');
     this.patternsPath = path.resolve(baseDir, '.devloop/learned-patterns.md');
     this.rulesPath = this.findRulesFile(baseDir);
+    this.patternSharingManager = createPatternSharingManager(config);
 
     // Load existing patterns into cache
     this.loadPatternCache();
@@ -170,6 +175,48 @@ ${p.guidance}
 
     await fs.writeFile(this.patternsPath, content, 'utf-8');
     logger.info(`[LearningsManager] Updated learned-patterns.md with ${qualifiedPatterns.length} patterns`);
+  }
+
+  /**
+   * Share qualified patterns for cross-PRD access
+   */
+  async shareQualifiedPatterns(prdSetId: string, targetModule?: string): Promise<void> {
+    const qualifiedPatterns = this.getQualifiedPatterns();
+
+    if (qualifiedPatterns.length === 0) {
+      return;
+    }
+
+    const sharedPatterns: SharedPattern[] = qualifiedPatterns.map(pattern => ({
+      name: pattern.name,
+      guidance: pattern.guidance,
+      occurrences: pattern.occurrences,
+      discoveredBy: prdSetId,
+      relevantTo: targetModule ? [`${targetModule}/*`] : [],
+      tags: this.patternSharingManager.extractTags(pattern.guidance),
+      lastSeen: pattern.lastSeen,
+    }));
+
+    await this.patternSharingManager.savePatterns(sharedPatterns);
+    logger.info(`[LearningsManager] Shared ${sharedPatterns.length} patterns from ${prdSetId}`);
+  }
+
+  /**
+   * Get relevant shared patterns for current context
+   */
+  async getSharedPatterns(context: {
+    prdSetId?: string;
+    targetModule?: string;
+    filePaths?: string[];
+  }): Promise<SharedPattern[]> {
+    return this.patternSharingManager.getRelevantPatterns(context);
+  }
+
+  /**
+   * Format shared patterns for handoff document
+   */
+  formatSharedPatternsForHandoff(patterns: SharedPattern[]): string[] {
+    return this.patternSharingManager.formatForHandoff(patterns);
   }
 
   /**

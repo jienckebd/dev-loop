@@ -11,6 +11,7 @@ import { AIProvider } from '../../../../providers/ai/interface';
 import { Config } from '../../../../config/schema/core';
 import { logger } from '../../../utils/logger';
 import { getParallelMetricsTracker } from '../../../metrics/parallel';
+import { emitEvent } from '../../../utils/event-stream';
 
 export interface GenerateCodeNodeConfig {
   aiProvider: AIProvider;
@@ -103,6 +104,19 @@ export function generateCode(nodeConfig: GenerateCodeNodeConfig) {
 
       logger.info(`[GenerateCode] Generated ${filteredChanges.files.length} file change(s) in ${duration}ms`);
 
+      // Emit code:generated event for metrics tracking
+      emitEvent('code:generated', {
+        taskId: String(state.task.id),
+        fileCount: filteredChanges.files.length,
+        tokensInput: tokensUsed.input,
+        tokensOutput: tokensUsed.output,
+        durationMs: duration,
+      }, {
+        taskId: String(state.task.id),
+        prdId: state.prdId,
+        phaseId: state.phaseId,
+      });
+
       return {
         status: 'generating',
         codeChanges: filteredChanges,
@@ -111,6 +125,17 @@ export function generateCode(nodeConfig: GenerateCodeNodeConfig) {
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : String(error);
       logger.error(`[GenerateCode] Error generating code: ${errorMessage}`);
+
+      // Emit code:generation_failed event
+      emitEvent('code:generation_failed', {
+        taskId: state.task ? String(state.task.id) : 'unknown',
+        error: errorMessage,
+        durationMs: Date.now() - startTime,
+      }, {
+        taskId: state.task ? String(state.task.id) : undefined,
+        prdId: state.prdId,
+        phaseId: state.phaseId,
+      });
 
       return {
         status: 'failed',

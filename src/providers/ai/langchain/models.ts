@@ -22,7 +22,7 @@ export interface ModelConfig {
 
 /**
  * Creates a LangChain chat model based on provider configuration.
- * 
+ *
  * @param config - Model configuration
  * @returns A LangChain BaseChatModel instance
  */
@@ -35,6 +35,7 @@ export function createLangChainModel(config: ModelConfig): BaseChatModel {
         anthropicApiKey: apiKey,
         model: model || 'claude-sonnet-4-20250514',
         maxTokens: maxTokens || 4096,
+        streaming: true,  // Required for requests > 10 minutes
       }) as BaseChatModel;
 
     case 'openai':
@@ -64,6 +65,7 @@ export function createLangChainModel(config: ModelConfig): BaseChatModel {
         anthropicApiKey: apiKey || process.env.ANTHROPIC_API_KEY,
         model: 'claude-sonnet-4-20250514',
         maxTokens: maxTokens || 4096,
+        streaming: true,  // Required for requests > 10 minutes
       }) as BaseChatModel;
 
     case 'amp':
@@ -73,6 +75,7 @@ export function createLangChainModel(config: ModelConfig): BaseChatModel {
         anthropicApiKey: apiKey || process.env.ANTHROPIC_API_KEY,
         model: 'claude-sonnet-4-20250514',
         maxTokens: maxTokens || 4096,
+        streaming: true,  // Required for requests > 10 minutes
       }) as BaseChatModel;
 
     default:

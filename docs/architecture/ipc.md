@@ -5,14 +5,14 @@ Dev-loop uses Unix domain sockets for reliable communication between the parent 
 ## Overview
 
 The IPC (Inter-Process Communication) system provides structured, bidirectional communication between:
-- **Parent Agent (IterationRunner/WorkflowEngine)**: Orchestrates task execution
+- **Parent Agent (IterationRunner)**: Orchestrates task execution
 - **Child Agents (Background Cursor Agents)**: Execute code generation tasks
 
 ## Architecture
 
 ```mermaid
 sequenceDiagram
-    participant Parent as WorkflowEngine
+    participant Parent as IterationRunner
     participant Socket as UnixSocket
     participant Child as BackgroundAgent
 

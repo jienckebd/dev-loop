@@ -23,6 +23,7 @@ export interface WorkflowGraphConfig {
   checkpointer?: BaseCheckpointSaver;
   debug?: boolean;
   maxConcurrency?: number;
+  parallelThreshold?: number;
   // Optional component overrides
   validationGate?: {
     validate: (changes: any) => Promise<any>;
@@ -52,7 +53,8 @@ export function createWorkflowGraph(graphConfig: WorkflowGraphConfig) {
     codeContextProvider,
     checkpointer,
     debug,
-    maxConcurrency,
+    maxConcurrency = 1,
+    parallelThreshold = 2,
     validationGate,
     testRunner,
     logAnalyzer,
@@ -130,12 +132,25 @@ export function createWorkflowGraph(graphConfig: WorkflowGraphConfig) {
     // === Linear edges ===
     .addEdge(START, 'fetchTask')
 
-    // After fetch: check if task exists
+    // After fetch: check if task exists and route based on parallel task count
     .addConditionalEdges('fetchTask', (state: WorkflowState) => {
-      if (!state.task) {
+      if (!state.task && (!state.parallelTasks || state.parallelTasks.length === 0)) {
         // No tasks available
+        logger.debug('[Graph] No tasks available, ending workflow');
         return 'end';
       }
+
+      // Check if parallel execution should be used
+      const taskCount = state.parallelTasks?.length || 1;
+      const shouldParallel = taskCount >= parallelThreshold && maxConcurrency > 1;
+
+      if (shouldParallel) {
+        logger.info(`[Graph] Routing to parallel execution: ${taskCount} tasks at level ${state.dependencyLevel}`);
+        // For now, parallel tasks are processed sequentially in this graph
+        // True parallel execution happens at the IterationRunner level
+        // This edge is for future LangGraph parallel branch support
+      }
+
       return 'buildContext';
     }, {
       buildContext: 'buildContext',
@@ -251,6 +266,8 @@ export function createInitialGraphState(
     prdId: prdContext?.prdId,
     phaseId: prdContext?.phaseId,
     prdSetId: prdContext?.prdSetId,
+    parallelTasks: [],
+    parallelResults: [],
   };
 }
 

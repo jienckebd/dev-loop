@@ -34,5 +34,13 @@ export {
   createFileCheckpointer,
 } from './checkpointer';
 
+// Cross-PRD Checkpointer
+export {
+  CrossPrdCheckpointer,
+  CrossPrdCheckpointerConfig,
+  SharedCheckpointState,
+  createCrossPrdCheckpointer,
+} from './cross-prd-checkpointer';
+
 // Nodes
 export * as nodes from './nodes';

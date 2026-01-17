@@ -1,9 +1,9 @@
 /**
  * JSON Schema Validator for CodeChanges
- * 
+ *
  * Validates AI provider responses against the CodeChanges JSON schema
  * to ensure consistent parsing across all providers.
- * 
+ *
  * Uses a multi-strategy extraction pipeline with adaptive ordering
  * and hybrid approach (custom extraction + partial-json-parser-js).
  */
@@ -75,7 +75,7 @@ interface StrategyStats {
 
 /**
  * Simple JSON Schema validator (lightweight, no external dependencies)
- * 
+ *
  * This implements basic JSON Schema validation for CodeChanges structure.
  * Enhanced with multi-strategy extraction and adaptive learning.
  */
@@ -90,7 +90,7 @@ export class JsonSchemaValidator {
    */
   private static loadStrategyStats(): void {
     if (this.statsLoaded) return;
-    
+
     try {
       if (fs.existsSync(this.statsPath)) {
         const data = fs.readJsonSync(this.statsPath);
@@ -100,7 +100,7 @@ export class JsonSchemaValidator {
     } catch (error) {
       logger.warn(`[JsonSchemaValidator] Failed to load strategy stats: ${error}`);
     }
-    
+
     this.statsLoaded = true;
   }
 
@@ -122,7 +122,7 @@ export class JsonSchemaValidator {
    */
   private static updateStrategyStats(strategyName: string, success: boolean): void {
     this.loadStrategyStats();
-    
+
     const stats = this.strategyStats.get(strategyName) || { attempts: 0, successes: 0 };
     stats.attempts++;
     if (success) {
@@ -130,7 +130,7 @@ export class JsonSchemaValidator {
       stats.lastSuccess = Date.now();
     }
     this.strategyStats.set(strategyName, stats);
-    
+
     // Save periodically (every 10 attempts)
     if (stats.attempts % 10 === 0) {
       this.saveStrategyStats();
@@ -158,9 +158,9 @@ export class JsonSchemaValidator {
     // Handle: {\"files\": [...]} -> {"files": [...]}
     // Handle: \\" -> "
     // Handle: \\n -> \n
-    
+
     let unescaped = text;
-    
+
     // Multiple passes for nested escaping
     for (let pass = 0; pass < 3; pass++) {
       // Unescape double-escaped quotes: \\\" -> \"
@@ -174,7 +174,7 @@ export class JsonSchemaValidator {
       // Unescape escaped backslashes: \\\\ -> \\
       unescaped = unescaped.replace(/\\\\\\\\/g, '\\\\');
     }
-    
+
     return unescaped;
   }
 
@@ -243,7 +243,7 @@ export class JsonSchemaValidator {
           /```\s*([\s\S]*?)\s*```/g,
           /`([^`]+)`/g // Inline code blocks
         ];
-        
+
         for (const pattern of patterns) {
           let match;
           while ((match = pattern.exec(text)) !== null) {
@@ -253,7 +253,7 @@ export class JsonSchemaValidator {
             }
           }
         }
-        
+
         return candidates;
       },
       score: (candidate: string): number => {
@@ -289,7 +289,7 @@ export class JsonSchemaValidator {
           'returning:',
           'format:'
         ];
-        
+
         for (const phrase of phrases) {
           const regex = new RegExp(`${phrase.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}[\\s\\n]*([\\s\\S]*?)(?=\\n\\n|\\n\\*|$)`, 'i');
           const match = text.match(regex);
@@ -300,7 +300,7 @@ export class JsonSchemaValidator {
             }
           }
         }
-        
+
         return candidates;
       },
       score: (candidate: string): number => {
@@ -388,14 +388,14 @@ export class JsonSchemaValidator {
       name: 'unescape-json',
       extract: (text: string): string[] => {
         const candidates: string[] = [];
-        
+
         // Find escaped JSON patterns: {\"files\": or {\\\"files\\\":
         const escapedPatterns = [
           /\{\\*"files\\*"/g,
           /\{\\*"summary\\*"/g,
           /\\*"files\\*":/g
         ];
-        
+
         for (const pattern of escapedPatterns) {
           const matches = text.matchAll(pattern);
           for (const match of matches) {
@@ -403,7 +403,7 @@ export class JsonSchemaValidator {
             const startPos = Math.max(0, match.index! - 50);
             const endPos = Math.min(text.length, match.index! + 2000);
             const candidate = text.substring(startPos, endPos);
-            
+
             // Try to find the complete JSON object
             const jsonMatch = candidate.match(/\{[\s\S]*\}/);
             if (jsonMatch) {
@@ -412,7 +412,7 @@ export class JsonSchemaValidator {
             }
           }
         }
-        
+
         return candidates;
       },
       score: (candidate: string): number => {
@@ -429,7 +429,7 @@ export class JsonSchemaValidator {
       name: 'nested-results',
       extract: (text: string): string[] => {
         const candidates: string[] = [];
-        
+
         // Try to parse as JSON object first
         try {
           const parsed = JSON.parse(text);
@@ -437,7 +437,7 @@ export class JsonSchemaValidator {
             // Recursively extract from result fields
             const extractFromResult = (obj: any, depth: number = 0): void => {
               if (depth > 5) return; // Prevent infinite recursion
-              
+
               if (obj && typeof obj === 'object') {
                 if (obj.result && typeof obj.result === 'string') {
                   candidates.push(obj.result);
@@ -455,13 +455,13 @@ export class JsonSchemaValidator {
                 }
               }
             };
-            
+
             extractFromResult(parsed);
           }
         } catch {
           // Not valid JSON, continue
         }
-        
+
         return candidates;
       },
       score: (candidate: string): number => {
@@ -478,11 +478,11 @@ export class JsonSchemaValidator {
       name: 'schema-field-detection',
       extract: (text: string): string[] => {
         const candidates: string[] = [];
-        
+
         // Find positions of "files" and "summary" fields
         const filesMatches = [...text.matchAll(/"files"\s*:/gi)];
         const summaryMatches = [...text.matchAll(/"summary"\s*:/gi)];
-        
+
         // For each "files" match, try to extract the containing JSON object
         for (const match of filesMatches) {
           const startPos = match.index!;
@@ -494,32 +494,32 @@ export class JsonSchemaValidator {
               break;
             }
           }
-          
+
           if (braceStart !== -1) {
             // Look forwards for matching closing brace
             let depth = 0;
             let inString = false;
             let escapeNext = false;
             let braceEnd = -1;
-            
+
             for (let i = braceStart; i < text.length; i++) {
               const char = text[i];
-              
+
               if (escapeNext) {
                 escapeNext = false;
                 continue;
               }
-              
+
               if (char === '\\') {
                 escapeNext = true;
                 continue;
               }
-              
+
               if (char === '"' && !escapeNext) {
                 inString = !inString;
                 continue;
               }
-              
+
               if (!inString) {
                 if (char === '{') {
                   depth++;
@@ -532,14 +532,14 @@ export class JsonSchemaValidator {
                 }
               }
             }
-            
+
             if (braceEnd !== -1) {
               const candidate = text.substring(braceStart, braceEnd + 1);
               candidates.push(candidate);
             }
           }
         }
-        
+
         return candidates;
       },
       score: (candidate: string): number => {
@@ -560,21 +560,21 @@ export class JsonSchemaValidator {
       name: 'regex-extraction',
       extract: (text: string): string[] => {
         const candidates: string[] = [];
-        
+
         // Multiple regex patterns to find JSON objects
         const patterns = [
           /\{\s*"files"\s*:\s*\[[\s\S]*?\]\s*,\s*"summary"\s*:\s*"[^"]*"\s*\}/g,
           /\{\s*"files"\s*:\s*\[[\s\S]*?\]\s*\}/g,
           /\{\s*"summary"\s*:\s*"[^"]*"\s*,\s*"files"\s*:\s*\[[\s\S]*?\]\s*\}/g
         ];
-        
+
         for (const pattern of patterns) {
           const matches = text.matchAll(pattern);
           for (const match of matches) {
             candidates.push(match[0]);
           }
         }
-        
+
         return candidates;
       },
       score: (candidate: string): number => {
@@ -591,11 +591,11 @@ export class JsonSchemaValidator {
       name: 'partial-json-fallback',
       extract: (text: string): string[] => {
         const candidates: string[] = [];
-        
+
         if (!parsePartialJson || !Allow) {
           return candidates; // Not available
         }
-        
+
         // Try to find incomplete JSON objects that might be truncated
         // Look for patterns that suggest incomplete JSON
         const incompletePatterns = [
@@ -603,7 +603,7 @@ export class JsonSchemaValidator {
           /\{\s*"summary"\s*:\s*"[^"]*$/g, // Ends with string
           /\{\s*"files"\s*:\s*\[[\s\S]*?,\s*\{[\s\S]*$/g // Ends in middle of object
         ];
-        
+
         for (const pattern of incompletePatterns) {
           const matches = text.matchAll(pattern);
           for (const match of matches) {
@@ -619,7 +619,7 @@ export class JsonSchemaValidator {
             }
           }
         }
-        
+
         return candidates;
       },
       score: (candidate: string): number => {
@@ -637,19 +637,19 @@ export class JsonSchemaValidator {
       name: 'yaml-to-json',
       extract: (text: string): string[] => {
         const candidates: string[] = [];
-        
+
         // Check if text contains YAML document separators
         if (!text.includes('---')) {
           return candidates;
         }
-        
+
         try {
           // Try to import yaml parser
           const yaml = require('js-yaml');
-          
+
           // Split by YAML document separator and parse each
           const documents = text.split(/^---$/m).filter(doc => doc.trim());
-          
+
           for (const doc of documents) {
             try {
               const parsed = yaml.load(doc.trim());
@@ -663,7 +663,7 @@ export class JsonSchemaValidator {
               // Not valid YAML
             }
           }
-          
+
           // Also try parsing entire text as YAML
           try {
             const parsed = yaml.load(text);
@@ -676,7 +676,7 @@ export class JsonSchemaValidator {
         } catch {
           // js-yaml not available, skip this strategy
         }
-        
+
         return candidates;
       },
       score: (candidate: string): number => {
@@ -694,7 +694,7 @@ export class JsonSchemaValidator {
       name: 'strip-preamble',
       extract: (text: string): string[] => {
         const candidates: string[] = [];
-        
+
         // Common preamble patterns to strip
         const preamblePatterns = [
           /^.*?(?=\{)/s, // Everything before first {
@@ -703,7 +703,7 @@ export class JsonSchemaValidator {
           /^.*?(?:Returning|Generated)[:\s]*/is, // "Returning:" or "Generated:"
           /^.*?(?:I've |I have )?(?:created|generated|produced)[^{]*\{/is // "I've created..." before {
         ];
-        
+
         for (const pattern of preamblePatterns) {
           const strippedText = text.replace(pattern, '{');
           if (strippedText !== text && strippedText.startsWith('{')) {
@@ -712,25 +712,25 @@ export class JsonSchemaValidator {
             let inString = false;
             let escapeNext = false;
             let endPos = -1;
-            
+
             for (let i = 0; i < strippedText.length; i++) {
               const char = strippedText[i];
-              
+
               if (escapeNext) {
                 escapeNext = false;
                 continue;
               }
-              
+
               if (char === '\\') {
                 escapeNext = true;
                 continue;
               }
-              
+
               if (char === '"' && !escapeNext) {
                 inString = !inString;
                 continue;
               }
-              
+
               if (!inString) {
                 if (char === '{') depth++;
                 else if (char === '}') {
@@ -742,7 +742,7 @@ export class JsonSchemaValidator {
                 }
               }
             }
-            
+
             if (endPos > 0) {
               const candidate = strippedText.substring(0, endPos + 1);
               if (candidate.includes('files')) {
@@ -751,7 +751,7 @@ export class JsonSchemaValidator {
             }
           }
         }
-        
+
         return candidates;
       },
       score: (candidate: string): number => {
@@ -774,35 +774,35 @@ export class JsonSchemaValidator {
       name: 'array-to-code-changes',
       extract: (text: string): string[] => {
         const candidates: string[] = [];
-        
+
         // Find array bounds
         const arrayStart = text.indexOf('[');
         if (arrayStart === -1) return candidates;
-        
+
         // Balance brackets to find array end
         let depth = 0;
         let inString = false;
         let escapeNext = false;
         let arrayEnd = -1;
-        
+
         for (let i = arrayStart; i < text.length; i++) {
           const char = text[i];
-          
+
           if (escapeNext) {
             escapeNext = false;
             continue;
           }
-          
+
           if (char === '\\') {
             escapeNext = true;
             continue;
           }
-          
+
           if (char === '"' && !escapeNext) {
             inString = !inString;
             continue;
           }
-          
+
           if (!inString) {
             if (char === '[') depth++;
             else if (char === ']') {
@@ -814,19 +814,19 @@ export class JsonSchemaValidator {
             }
           }
         }
-        
+
         if (arrayEnd > arrayStart) {
           const arrayText = text.substring(arrayStart, arrayEnd + 1);
           try {
             const parsed = JSON.parse(arrayText);
             if (Array.isArray(parsed) && parsed.length > 0) {
               // Check if items look like file operations
-              const looksLikeFiles = parsed.some((item: any) => 
-                item && typeof item === 'object' && 
+              const looksLikeFiles = parsed.some((item: any) =>
+                item && typeof item === 'object' &&
                 (item.path || item.file || item.filename) &&
                 (item.content || item.operation || item.action)
               );
-              
+
               if (looksLikeFiles) {
                 // Convert to CodeChanges format
                 const files = parsed.map((item: any) => ({
@@ -840,14 +840,14 @@ export class JsonSchemaValidator {
                 };
                 candidates.push(JSON.stringify(codeChanges));
               }
-              
+
               // Check if items look like test cases (taskId, testCases pattern)
               const looksLikeTestCases = parsed.some((item: any) =>
                 item && typeof item === 'object' &&
                 (item.taskId || item.task_id) &&
                 (item.testCases || item.test_cases || item.tests)
               );
-              
+
               if (looksLikeTestCases) {
                 // Wrap in object for test case responses
                 const testPlan = {
@@ -856,7 +856,7 @@ export class JsonSchemaValidator {
                 };
                 candidates.push(JSON.stringify(testPlan));
               }
-              
+
               // Generic array - wrap in a results object
               if (!looksLikeFiles && !looksLikeTestCases) {
                 const wrapped = {
@@ -870,7 +870,7 @@ export class JsonSchemaValidator {
             // Not valid JSON array
           }
         }
-        
+
         return candidates;
       },
       score: (candidate: string): number => {
@@ -888,7 +888,7 @@ export class JsonSchemaValidator {
       name: 'aggressive-preamble-strip',
       extract: (text: string): string[] => {
         const candidates: string[] = [];
-        
+
         // Common preamble patterns to strip
         const preamblePatterns = [
           /^.*?Generated\s+\d+.*?:\s*/si,
@@ -898,7 +898,7 @@ export class JsonSchemaValidator {
           /^.*?Summary:?\s*/si,
           /^.*?(?:The )?following (?:is|are).*?:\s*/si,
         ];
-        
+
         for (const pattern of preamblePatterns) {
           const stripped = text.replace(pattern, '');
           if (stripped !== text && stripped.trim()) {
@@ -914,11 +914,190 @@ export class JsonSchemaValidator {
             }
           }
         }
-        
+
         return candidates;
       },
       score: (candidate: string): number => {
         return 0.55; // Lower confidence for stripped preamble
+      }
+    };
+  }
+
+  /**
+   * Strategy 14: Fix Stringified Arrays in Files Field
+   *
+   * Handles the common error where AI returns "files": "[{...}]" (stringified JSON array)
+   * instead of "files": [{...}] (proper array).
+   *
+   * This is a high-priority strategy as it's the most common parsing error observed
+   * in production with multiple AI providers.
+   */
+  private static strategy14_StringifiedArrayFix(text: string): ExtractionStrategy {
+    return {
+      name: 'stringified-array-fix',
+      extract: (text: string): string[] => {
+        const candidates: string[] = [];
+
+        // Pattern: "files": "[{...}]" or "files": '[{...}]' - files is a string containing JSON
+        if (!text.match(/"files"\s*:\s*["']/)) {
+          return [];
+        }
+
+        try {
+          // First, try standard JSON parse
+          const parsed = JSON.parse(text);
+
+          // Check if files is a string instead of array
+          if (typeof parsed.files === 'string') {
+            // Try to parse the stringified files array
+            const filesArray = JSON.parse(parsed.files);
+            if (Array.isArray(filesArray)) {
+              // Reconstruct with proper array
+              const fixed = { ...parsed, files: filesArray };
+              candidates.push(JSON.stringify(fixed));
+              logger.debug('[JsonSchemaValidator] Fixed stringified files array');
+            }
+          }
+        } catch (outerError) {
+          // Outer JSON might also be malformed, try to extract and fix
+          try {
+            // Find the files field value using regex
+            const filesMatch = text.match(/"files"\s*:\s*"(\[[\s\S]*?\])"/);
+            if (filesMatch) {
+              // Unescape the stringified array
+              let filesString = filesMatch[1];
+              filesString = filesString.replace(/\\"/g, '"').replace(/\\\\/g, '\\');
+
+              const filesArray = JSON.parse(filesString);
+              if (Array.isArray(filesArray)) {
+                // Find summary field
+                const summaryMatch = text.match(/"summary"\s*:\s*"([^"]*)"/);
+                const summary = summaryMatch ? summaryMatch[1] : 'Code changes extracted';
+
+                const fixed = { files: filesArray, summary };
+                candidates.push(JSON.stringify(fixed));
+                logger.debug('[JsonSchemaValidator] Fixed stringified files array via regex extraction');
+              }
+            }
+          } catch {
+            // Could not fix via regex
+          }
+        }
+
+        return candidates;
+      },
+      score: (candidate: string): number => {
+        // High priority - this is a common and reliably fixable error
+        return 0.95;
+      }
+    };
+  }
+
+  /**
+   * Strategy 15: Double-Wrapped Stringified JSON
+   *
+   * Handles responses where the entire JSON is wrapped in extra quotes and escaped:
+   * ""{\"files\": \"[{...}]\"...}""
+   *
+   * This happens when LLMs return the JSON as a stringified string, sometimes
+   * with the files field also being stringified, creating triple-encoding.
+   */
+  private static strategy15_DoubleWrappedJson(text: string): ExtractionStrategy {
+    return {
+      name: 'double-wrapped-json',
+      extract: (text: string): string[] => {
+        const candidates: string[] = [];
+
+        // Check for double-quote wrapping pattern: starts with "" or ends with ""
+        // or starts with \" pattern indicating outer stringification
+        if (!text.startsWith('"') && !text.match(/^["']?\{\\"/)) {
+          return [];
+        }
+
+        try {
+          // First pass: try to parse if the outer layer is a string
+          let inner = text;
+
+          // Remove leading/trailing quotes if present
+          if (inner.startsWith('"') && inner.endsWith('"')) {
+            inner = inner.slice(1, -1);
+          }
+
+          // First unescape pass - handle \\n, \\", \\\\ etc
+          inner = inner
+            .replace(/\\n/g, '\n')
+            .replace(/\\t/g, '\t')
+            .replace(/\\r/g, '\r')
+            .replace(/\\"/g, '"')
+            .replace(/\\\\/g, '\\');
+
+          // Try to parse
+          const parsed = JSON.parse(inner);
+
+          // Check if files is still a string (double stringified)
+          if (typeof parsed.files === 'string') {
+            try {
+              // Second unescape for nested stringification
+              let filesString = parsed.files
+                .replace(/\\n/g, '\n')
+                .replace(/\\t/g, '\t')
+                .replace(/\\r/g, '\r')
+                .replace(/\\"/g, '"')
+                .replace(/\\\\/g, '\\');
+
+              const filesArray = JSON.parse(filesString);
+              if (Array.isArray(filesArray)) {
+                const fixed = { ...parsed, files: filesArray };
+                candidates.push(JSON.stringify(fixed));
+                logger.debug('[JsonSchemaValidator] Fixed double-wrapped stringified JSON');
+              }
+            } catch {
+              // Files couldn't be parsed, but outer object is valid
+              // Let other strategies handle it
+            }
+          } else if (Array.isArray(parsed.files)) {
+            // Already properly parsed
+            candidates.push(JSON.stringify(parsed));
+            logger.debug('[JsonSchemaValidator] Unwrapped double-quoted JSON');
+          }
+        } catch {
+          // Try more aggressive extraction
+          try {
+            // Look for the pattern: {"files": "[...]", "summary": "..."}
+            // but escaped: {\"files\": \"[...]\"...}
+            const unescaped = text
+              .replace(/^["']+/, '')  // Remove leading quotes
+              .replace(/["']+$/, '')  // Remove trailing quotes
+              .replace(/\\"/g, '"')
+              .replace(/\\\\n/g, '\n')
+              .replace(/\\\\t/g, '\t')
+              .replace(/\\\\r/g, '\r')
+              .replace(/\\\\\\\\/g, '\\')
+              .replace(/\\\\/g, '\\');
+
+            const parsed = JSON.parse(unescaped);
+
+            if (typeof parsed.files === 'string') {
+              // Parse the stringified files
+              const filesArray = JSON.parse(parsed.files);
+              if (Array.isArray(filesArray)) {
+                const fixed = { ...parsed, files: filesArray };
+                candidates.push(JSON.stringify(fixed));
+                logger.debug('[JsonSchemaValidator] Fixed deeply escaped JSON');
+              }
+            } else if (Array.isArray(parsed.files)) {
+              candidates.push(JSON.stringify(parsed));
+            }
+          } catch {
+            // Could not recover
+          }
+        }
+
+        return candidates;
+      },
+      score: (candidate: string): number => {
+        // Very high priority - this is a critical fix for common LLM output errors
+        return 0.97;
       }
     };
   }
@@ -940,7 +1119,9 @@ export class JsonSchemaValidator {
       this.strategy10_YamlToJson(text),
       this.strategy11_StripPreamble(text),
       this.strategy12_ArrayToCodeChanges(text),
-      this.strategy13_AggressivePreambleStrip(text)
+      this.strategy13_AggressivePreambleStrip(text),
+      this.strategy14_StringifiedArrayFix(text),
+      this.strategy15_DoubleWrappedJson(text)
     ];
   }
 
@@ -949,7 +1130,7 @@ export class JsonSchemaValidator {
    */
   private static getOrderedStrategies(text: string): ExtractionStrategy[] {
     const allStrategies = this.getAllStrategies(text);
-    
+
     // Sort by success rate (highest first)
     return allStrategies.sort((a, b) => {
       const rateA = this.getStrategySuccessRate(a.name);
@@ -963,7 +1144,7 @@ export class JsonSchemaValidator {
    */
   private static scoreCandidate(candidate: Candidate, strategy: ExtractionStrategy): number {
     let score = strategy.score(candidate.json);
-    
+
     // Factor 1: Schema validation (valid = 1.0, invalid = 0.0)
     if (candidate.validationResult) {
       if (candidate.validationResult.valid) {
@@ -972,28 +1153,28 @@ export class JsonSchemaValidator {
         score = 0.0; // Invalid schema = lowest score
       }
     }
-    
+
     // Factor 2: Strategy success rate (if valid)
     if (candidate.validationResult?.valid) {
       const strategyRate = this.getStrategySuccessRate(strategy.name);
       score = score * 0.7 + strategyRate * 0.3; // Weighted combination
     }
-    
+
     // Factor 3: JSON completeness
     if (candidate.json.includes('"files"') && candidate.json.includes('"summary"')) {
       score += 0.1;
     }
-    
+
     // Factor 4: Size/complexity (prefer larger, more complete objects)
     const sizeScore = Math.min(candidate.json.length / 1000, 0.1); // Max 0.1 bonus
     score += sizeScore;
-    
+
     return Math.min(1.0, score);
   }
 
   /**
    * Validate an object against a schema based on validation mode
-   * 
+   *
    * @param data - The data to validate
    * @param mode - Validation mode: 'code-changes' (default), 'array', 'object', or 'any'
    * @param arrayItemSchema - Optional schema for array item validation
@@ -1199,10 +1380,10 @@ export class JsonSchemaValidator {
 
   /**
    * Extract and validate JSON from text using multi-strategy approach
-   * 
+   *
    * This method tries multiple strategies to extract valid JSON,
    * then validates it against the schema.
-   * 
+   *
    * @param text - Text to extract JSON from
    * @param suppressWarnings - If true, don't log warnings or record to build metrics
    */
@@ -1223,26 +1404,26 @@ export class JsonSchemaValidator {
     for (const strategy of strategies) {
       try {
         const candidates = strategy.extract(text);
-        
+
         for (const candidateJson of candidates) {
           // Try to parse the candidate
           const parseResult = this.tryParseJson(candidateJson);
-          
+
           if (parseResult.success && parseResult.parsed) {
             // Validate against schema
             const validationResult = this.validate(parseResult.parsed);
-            
+
             const candidate: Candidate = {
               json: candidateJson,
               strategy: strategy.name,
               score: 0, // Will be calculated
               validationResult
             };
-            
+
             // Score the candidate
             candidate.score = this.scoreCandidate(candidate, strategy);
             allCandidates.push(candidate);
-            
+
             // If valid, update stats and return immediately
             if (validationResult.valid) {
               this.updateStrategyStats(strategy.name, true);
@@ -1251,7 +1432,7 @@ export class JsonSchemaValidator {
             }
           }
         }
-        
+
         // Update stats (strategy attempted but didn't find valid result)
         if (candidates.length > 0) {
           this.updateStrategyStats(strategy.name, false);
@@ -1266,12 +1447,12 @@ export class JsonSchemaValidator {
     if (allCandidates.length > 0) {
       allCandidates.sort((a, b) => b.score - a.score);
       const bestCandidate = allCandidates[0];
-      
+
       // Only log and record warning if not suppressed
       if (!suppressWarnings) {
         const warningMsg = `Best candidate (strategy: ${bestCandidate.strategy}, score: ${bestCandidate.score.toFixed(2)}) failed validation: ${bestCandidate.validationResult?.errors.join(', ')}`;
         logger.warn(`[JsonSchemaValidator] ${warningMsg}`);
-        
+
         // Record warning in build metrics if available
         try {
           const { getBuildMetrics } = require('../../core/metrics/build');
@@ -1280,7 +1461,7 @@ export class JsonSchemaValidator {
           // Build metrics not available
         }
       }
-      
+
       return bestCandidate.validationResult || {
         valid: false,
         errors: ['Could not extract valid JSON from text'],
@@ -1298,11 +1479,11 @@ export class JsonSchemaValidator {
 
   /**
    * Extract and validate JSON from text with configurable validation mode
-   * 
+   *
    * This method uses the same extraction strategies but validates according
    * to the specified mode, avoiding CodeChanges-specific validation errors
    * when extracting arrays or generic objects.
-   * 
+   *
    * @param text - Text to extract JSON from
    * @param mode - Validation mode: 'code-changes', 'array', 'object', or 'any'
    * @param options - Additional options for validation
@@ -1333,14 +1514,14 @@ export class JsonSchemaValidator {
     for (const strategy of strategies) {
       try {
         const candidates = strategy.extract(text);
-        
+
         for (const candidateJson of candidates) {
           // Try to parse the candidate
           const parseResult = this.tryParseJson(candidateJson);
-          
+
           if (parseResult.success && parseResult.parsed !== undefined) {
             const parsed = parseResult.parsed;
-            
+
             // Determine type
             let type: GenericValidationResult['type'] = 'null';
             if (Array.isArray(parsed)) {
@@ -1353,7 +1534,7 @@ export class JsonSchemaValidator {
 
             // Validate according to mode
             const validationResult = this.validate(parsed, mode, options?.arrayItemSchema);
-            
+
             if (validationResult.valid) {
               this.updateStrategyStats(strategy.name, true);
               logger.debug(`[JsonSchemaValidator] Successfully extracted ${type} using strategy: ${strategy.name}`);
@@ -1367,7 +1548,7 @@ export class JsonSchemaValidator {
             }
           }
         }
-        
+
         // Update stats (strategy attempted but didn't find valid result)
         if (candidates.length > 0) {
           this.updateStrategyStats(strategy.name, false);

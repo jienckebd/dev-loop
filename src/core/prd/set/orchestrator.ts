@@ -17,6 +17,9 @@ import * as path from 'path';
 import { TaskMasterBridge } from '../../execution/task-bridge';
 import { SpecKitContext, ResolvedClarification, ResearchFinding, ConstitutionRules } from '../parser/planning-doc-parser';
 import { emitEvent } from '../../utils/event-stream';
+import { parse as yamlParse } from 'yaml';
+import { Task, TaskStatus } from '../../../types';
+import { CrossPrdCheckpointer, createCrossPrdCheckpointer } from '../../execution/langgraph/cross-prd-checkpointer';
 
 export interface PrdSetMetadata {
   setId: string;
@@ -209,6 +212,12 @@ export class PrdSetOrchestrator {
       logger.debug(`[PrdSetOrchestrator] Applied PRD set config overlay for ${discoveredSet.setId}`);
     }
 
+    // Create shared checkpointer for cross-PRD coordination
+    const sharedCheckpointer = createCrossPrdCheckpointer({
+      prdSetId: discoveredSet.setId,
+      debug: this.debug,
+    });
+
     // Load spec-kit context if available (will be passed to IterationRunner)
     const specKitContext = await this.loadSpecKitContext(discoveredSet.directory);
 
@@ -218,6 +227,16 @@ export class PrdSetOrchestrator {
     // Set active.prdSetId in execution state so task filtering works correctly
     await this.coordinator.setActivePrdSetId(discoveredSet.setId);
     logger.info(`[PrdSetOrchestrator] Set active PRD set: ${discoveredSet.setId}`);
+
+    // Populate tasks.json from PRD phase files before execution
+    // This is critical: IterationRunner uses TaskMasterBridge which reads from tasks.json
+    const taskPopulationResult = await this.populateTasksFromPrdSet(discoveredSet);
+    if (taskPopulationResult.tasksCreated > 0) {
+      logger.info(`[PrdSetOrchestrator] Populated ${taskPopulationResult.tasksCreated} tasks from PRD set`);
+    }
+    if (taskPopulationResult.errors.length > 0) {
+      logger.warn(`[PrdSetOrchestrator] Task population errors: ${taskPopulationResult.errors.join(', ')}`);
+    }
 
     // Build dependency graph
     const graph = this.graphBuilder.buildGraph(discoveredSet.prdSet);
@@ -348,6 +367,7 @@ export class PrdSetOrchestrator {
 
             // Create fresh IterationRunner per PRD (Ralph pattern)
             // Pass specKitContext if available for design decisions injection
+            // Pass sharedCheckpointer for cross-PRD checkpoint coordination
             const runner = new IterationRunner(this.baseConfig, {
               maxIterations: 100,
               contextThreshold: 90,
@@ -355,7 +375,7 @@ export class PrdSetOrchestrator {
               persistLearnings: true,
               updatePatterns: true,
               handoffInterval: 5,
-            }, specKitContext || undefined);
+            }, specKitContext || undefined, sharedCheckpointer);
 
             // Execute PRD with fresh context
             const iterResult = await runner.runWithFreshContext(prd.path);
@@ -369,6 +389,15 @@ export class PrdSetOrchestrator {
               status: iterResult.status === 'complete' ? 'complete' : 'failed',
               endTime: new Date(),
             });
+
+            // Mark PRD complete in shared checkpointer for cross-PRD coordination
+            if (iterResult.status === 'complete') {
+              await sharedCheckpointer.markPrdComplete(prdId, {
+                tasksCompleted: iterResult.tasksCompleted,
+                tasksFailed: iterResult.tasksFailed || 0,
+                tokensUsed: (iterResult.metrics?.tokensUsed?.input || 0) + (iterResult.metrics?.tokensUsed?.output || 0),
+              });
+            }
 
             return {
               prdId,
@@ -407,7 +436,45 @@ export class PrdSetOrchestrator {
             const prdId = batch[j].prdId;
 
             if (settled.status === 'fulfilled') {
-              result.completedPrds.push(settled.value.prdId);
+              const { prdId: completedPrdId, result: iterResult } = settled.value;
+              
+              // Record PRD completion with metrics from IterationResult
+              this.prdSetMetrics.recordPrdCompletion(completedPrdId, {
+                prdId: completedPrdId,
+                prdVersion: '1.0.0',
+                prdSetId: discoveredSet.setId,
+                startTime: new Date().toISOString(),
+                status: iterResult.status === 'complete' ? 'completed' : 'failed',
+                duration: iterResult.duration,
+                tokens: {
+                  totalInput: iterResult.metrics?.tokensUsed?.input || 0,
+                  totalOutput: iterResult.metrics?.tokensUsed?.output || 0,
+                },
+                tests: {
+                  total: iterResult.metrics?.testsRun || 0,
+                  passing: iterResult.metrics?.testsPassed || 0,
+                  failing: iterResult.metrics?.testsFailed || 0,
+                  passRate: (iterResult.metrics?.testsRun || 0) > 0
+                    ? (iterResult.metrics?.testsPassed || 0) / (iterResult.metrics?.testsRun || 0) : 0,
+                },
+                tasks: {
+                  total: iterResult.tasksCompleted + iterResult.tasksFailed,
+                  completed: iterResult.tasksCompleted,
+                  failed: iterResult.tasksFailed,
+                  successRate: (iterResult.tasksCompleted + iterResult.tasksFailed) > 0
+                    ? iterResult.tasksCompleted / (iterResult.tasksCompleted + iterResult.tasksFailed) : 0,
+                },
+                phases: { total: 1, completed: 1, failed: 0, successRate: 1, phaseMetrics: [] },
+                timing: { totalMs: iterResult.duration, avgPhaseMs: iterResult.duration, avgTaskMs: 0, avgAiCallMs: 0, avgTestRunMs: 0 },
+                errors: { total: iterResult.tasksFailed, byCategory: {}, byType: {} },
+                efficiency: { tokensPerTask: 0, iterationsPerTask: iterResult.iterations / Math.max(1, iterResult.tasksCompleted), avgRetries: 0 },
+                features: { used: [], featureMetrics: {} },
+                schema: { operations: [], schemaMetrics: { totalOperations: 0, operationsByType: {}, operationsBySchemaType: {}, successRate: 0, avgDuration: 0, errors: { total: 0, byOperation: {}, bySchemaType: {} } } },
+                observations: { total: 0, byType: {}, bySeverity: {}, resolutionRate: 0 },
+                patterns: { totalMatched: iterResult.patternsDiscovered, byType: {}, effectiveness: 0, successRate: 0 },
+              });
+              
+              result.completedPrds.push(completedPrdId);
             } else {
               result.failedPrds.push(prdId);
               result.errors.push(`PRD ${prdId} execution failed: ${settled.reason?.message || 'Unknown error'}`);
@@ -528,6 +595,116 @@ export class PrdSetOrchestrator {
     }
 
     return dependencies;
+  }
+
+  /**
+   * Populate tasks.json from PRD phase files
+   * 
+   * Extracts tasks from all PRD phase files in the discovered set
+   * and creates them in tasks.json for TaskMasterBridge to find.
+   * Each task includes prdSetId in details for filtering.
+   */
+  private async populateTasksFromPrdSet(
+    discoveredSet: DiscoveredPrdSet
+  ): Promise<{ tasksCreated: number; errors: string[] }> {
+    const taskBridge = new TaskMasterBridge(this.baseConfig);
+    const errors: string[] = [];
+    let tasksCreated = 0;
+
+    if (this.debug) {
+      logger.debug(`[PrdSetOrchestrator] Populating tasks from PRD set: ${discoveredSet.setId}`);
+    }
+
+    // Process all PRDs in the set (parent + children)
+    for (const prd of discoveredSet.prdSet.prds) {
+      try {
+        const prdPath = prd.path;
+        if (!prdPath || !await fs.pathExists(prdPath)) {
+          if (this.debug) {
+            logger.debug(`[PrdSetOrchestrator] PRD file not found: ${prdPath}`);
+          }
+          continue;
+        }
+
+        // Read and parse the PRD file
+        const content = await fs.readFile(prdPath, 'utf-8');
+        const frontmatterMatch = content.match(/^---\n([\s\S]*?)\n---/);
+        if (!frontmatterMatch) {
+          if (this.debug) {
+            logger.debug(`[PrdSetOrchestrator] No YAML frontmatter in ${prdPath}`);
+          }
+          continue;
+        }
+
+        const prdYaml = yamlParse(frontmatterMatch[1]);
+        const phases = prdYaml.requirements?.phases || [];
+
+        for (const phase of phases) {
+          const phaseTasks = phase.tasks || [];
+          const phaseId = phase.id;
+
+          for (const taskDef of phaseTasks) {
+            try {
+              // Skip tasks that already exist
+              const existingTask = await taskBridge.getTask(taskDef.id);
+              if (existingTask) {
+                if (this.debug) {
+                  logger.debug(`[PrdSetOrchestrator] Task ${taskDef.id} already exists, skipping`);
+                }
+                continue;
+              }
+
+              // Create task with prdSetId for filtering
+              const task: Omit<Task, 'status'> & { status?: TaskStatus } = {
+                id: taskDef.id,
+                title: taskDef.title || `Task ${taskDef.id}`,
+                description: taskDef.description || '',
+                priority: taskDef.priority || 'medium',
+                status: 'pending' as TaskStatus,
+                // Store prdSetId, prdId, phaseId in details for filtering
+                details: JSON.stringify({
+                  prdSetId: discoveredSet.setId,
+                  prdId: prd.id,
+                  phaseId: phaseId,
+                  acceptanceCriteria: taskDef.acceptanceCriteria,
+                  targetFiles: taskDef.targetFiles,
+                  validation: taskDef.validation,
+                }),
+              };
+
+              // Add dependencies if present
+              if (taskDef.dependencies && Array.isArray(taskDef.dependencies)) {
+                (task as any).dependencies = taskDef.dependencies;
+              }
+
+              await taskBridge.createTask(task);
+              tasksCreated++;
+
+              if (this.debug) {
+                logger.debug(`[PrdSetOrchestrator] Created task: ${taskDef.id} (PRD: ${prd.id}, Phase: ${phaseId})`);
+              }
+            } catch (taskError: any) {
+              errors.push(`Failed to create task ${taskDef.id}: ${taskError.message}`);
+            }
+          }
+        }
+      } catch (prdError: any) {
+        errors.push(`Failed to process PRD ${prd.id}: ${prdError.message}`);
+      }
+    }
+
+    if (this.debug) {
+      logger.debug(`[PrdSetOrchestrator] Task population complete: ${tasksCreated} tasks created, ${errors.length} errors`);
+    }
+
+    // Emit event for metrics (use prdId for PRD set-level events)
+    emitEvent('prd_set:tasks_populated', {
+      prdSetId: discoveredSet.setId,
+      tasksCreated,
+      errors: errors.length,
+    }, { prdId: discoveredSet.setId });
+
+    return { tasksCreated, errors };
   }
 }
 

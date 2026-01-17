@@ -26,7 +26,7 @@ Boundary enforcement ensures that outer and inner agents can only edit files wit
 
 Boundary validation is implemented in:
 
-1. **WorkflowEngine** - Early file filtering and post-execution validation
+1. **IterationRunner + LangGraph nodes** - Early file filtering and post-execution validation
 2. **ValidationGate** - Validate file paths before code changes are applied
 3. **Contribution Mode Manager** - Validate boundaries on contribution mode start/stop
 4. **MCP Server** - Validate boundaries for MCP tool calls
@@ -52,7 +52,7 @@ flowchart LR
 
 ### Implementation
 
-In `WorkflowEngine.applyChanges()`:
+In `applyChanges` LangGraph node (`src/core/execution/langgraph/nodes/apply-changes.ts`):
 
 ```typescript
 // Early filtering before validation
@@ -62,7 +62,7 @@ if (targetModule && changes.files && changes.files.length > 0) {
   changes.files = changes.files.filter(file => {
     const allowed = this.isFileInTargetModule(file.path, targetModule);
     if (!allowed) {
-      logger.warn(`[WorkflowEngine] FILTERED: ${file.path} (outside target module ${targetModule})`);
+      logger.warn(`[ApplyChanges] FILTERED: ${file.path} (outside target module ${targetModule})`);
       this.eventStream.emit('file:filtered', {
         path: file.path,
         targetModule,

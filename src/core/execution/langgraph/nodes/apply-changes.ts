@@ -10,6 +10,7 @@ import { WorkflowState, ApplyResult } from '../state';
 import { Config } from '../../../../config/schema/core';
 import { logger } from '../../../utils/logger';
 import { findFuzzyMatch, findAggressiveMatch } from '../../../utils/string-matcher';
+import { emitEvent } from '../../../utils/event-stream';
 import * as fs from 'fs-extra';
 import * as path from 'path';
 
@@ -90,7 +91,7 @@ export function applyChanges(nodeConfig: ApplyChangesNodeConfig) {
       for (const file of state.codeChanges.files) {
         try {
           const result = await applyFileChange(file, debug);
-          
+
           switch (result.type) {
             case 'created':
               filesCreated.push(file.path);
@@ -117,6 +118,44 @@ export function applyChanges(nodeConfig: ApplyChangesNodeConfig) {
       const allFiles = [...filesModified, ...filesCreated];
 
       logger.info(`[ApplyChanges] Applied changes: ${filesCreated.length} created, ${filesModified.length} modified, ${filesDeleted.length} deleted`);
+
+      // Emit file:created events for each created file
+      for (const filePath of filesCreated) {
+        emitEvent('file:created', {
+          path: filePath,
+          taskId: state.task ? String(state.task.id) : undefined,
+        }, {
+          taskId: state.task ? String(state.task.id) : undefined,
+          prdId: state.prdId,
+          phaseId: state.phaseId,
+        });
+      }
+
+      // Emit file:modified events for each modified file
+      for (const filePath of filesModified) {
+        emitEvent('file:modified', {
+          path: filePath,
+          taskId: state.task ? String(state.task.id) : undefined,
+        }, {
+          taskId: state.task ? String(state.task.id) : undefined,
+          prdId: state.prdId,
+          phaseId: state.phaseId,
+        });
+      }
+
+      // Emit changes:applied summary event
+      emitEvent('changes:applied', {
+        taskId: state.task ? String(state.task.id) : undefined,
+        filesCreated: filesCreated.length,
+        filesModified: filesModified.length,
+        filesDeleted: filesDeleted.length,
+        success,
+        errorCount: errors.length,
+      }, {
+        taskId: state.task ? String(state.task.id) : undefined,
+        prdId: state.prdId,
+        phaseId: state.phaseId,
+      });
 
       return {
         status: 'applying',

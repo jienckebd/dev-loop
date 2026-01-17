@@ -209,6 +209,26 @@ export const WorkflowStateAnnotation = Annotation.Root({
     reducer: (_, b) => b,
     default: () => undefined,
   }),
+
+  // === Parallel Task Execution ===
+
+  /** Tasks to execute in parallel at current dependency level */
+  parallelTasks: Annotation<Task[]>({
+    reducer: (_, b) => b,
+    default: () => [],
+  }),
+
+  /** Aggregated results from parallel task execution */
+  parallelResults: Annotation<Array<{
+    taskId: string;
+    success: boolean;
+    filesModified: string[];
+    learnings: IterationLearning[];
+    error?: string;
+  }>>({
+    reducer: (a, b) => [...(a || []), ...(b || [])],
+    default: () => [],
+  }),
 });
 
 /**
@@ -239,6 +259,8 @@ export function createInitialState(overrides?: Partial<WorkflowState>): Partial<
     phaseId: undefined,
     prdSetId: undefined,
     dependencyLevel: undefined,
+    parallelTasks: [],
+    parallelResults: [],
     ...overrides,
   };
 }

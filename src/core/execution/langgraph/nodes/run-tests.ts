@@ -9,6 +9,7 @@ import { TestResult } from '../../../../types';
 import { WorkflowState, RunMetrics } from '../state';
 import { Config } from '../../../../config/schema/core';
 import { logger } from '../../../utils/logger';
+import { emitEvent } from '../../../utils/event-stream';
 import { spawn } from 'child_process';
 
 export interface RunTestsNodeConfig {
@@ -69,8 +70,29 @@ export function runTests(nodeConfig: RunTestsNodeConfig) {
 
       if (testResult.success) {
         logger.info(`[RunTests] Tests passed in ${duration}ms`);
+
+        // Emit test:passed event
+        emitEvent('test:passed', {
+          taskId: state.task ? String(state.task.id) : undefined,
+          durationMs: duration,
+        }, {
+          taskId: state.task ? String(state.task.id) : undefined,
+          prdId: state.prdId,
+          phaseId: state.phaseId,
+        });
       } else {
         logger.warn(`[RunTests] Tests failed in ${duration}ms`);
+
+        // Emit test:failed event
+        emitEvent('test:failed', {
+          taskId: state.task ? String(state.task.id) : undefined,
+          durationMs: duration,
+          output: testResult.output?.substring(0, 500), // Truncate for event
+        }, {
+          taskId: state.task ? String(state.task.id) : undefined,
+          prdId: state.prdId,
+          phaseId: state.phaseId,
+        });
       }
 
       return {

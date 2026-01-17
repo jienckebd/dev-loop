@@ -435,7 +435,7 @@ dev-loop report --phase <prdId>:<phaseId>
 dev-loop report --latest
 
 # Generate reports for all PRDs
-dev-loop report --all
+dev-loop report --prd-set <setId>
 
 # Specify format (json, markdown, html)
 dev-loop report --prd <prdId> --format html

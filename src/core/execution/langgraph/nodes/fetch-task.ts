@@ -10,6 +10,7 @@ import { WorkflowState, RunMetrics } from '../state';
 import { TaskMasterBridge } from '../../task-bridge';
 import { Config } from '../../../../config/schema/core';
 import { logger } from '../../../utils/logger';
+import { emitEvent } from '../../../utils/event-stream';
 
 export interface FetchTaskNodeConfig {
   taskBridge: TaskMasterBridge;
@@ -20,6 +21,7 @@ export interface FetchTaskNodeConfig {
 
 export interface FetchTaskResult {
   task: Task | null;
+  parallelTasks?: Task[];
   context: null;
   status: 'fetching' | 'complete';
   error?: string;
@@ -100,18 +102,19 @@ export function fetchTask(nodeConfig: FetchTaskNodeConfig) {
 
       logger.info(`[FetchTask] Found ${codeTasks.length} task(s) in ${dependencyLevels.length} level(s), max concurrency: ${maxConcurrency}`);
 
-      // Get first task from first available level
-      // In LangGraph, we process one task at a time per graph invocation
-      // Parallel execution happens at the IterationRunner level
+      // Get tasks from first available level
       const firstLevel = dependencyLevels[0];
       if (!firstLevel || firstLevel.length === 0) {
         return {
           task: null,
+          parallelTasks: [],
           status: 'complete',
         };
       }
 
-      const selectedTask = firstLevel[0];
+      // Collect tasks for parallel execution (up to maxConcurrency)
+      const tasksToReturn = firstLevel.slice(0, maxConcurrency);
+      const selectedTask = tasksToReturn[0];
 
       // Extract PRD/phase context if available
       const taskDetails = selectedTask.details ? JSON.parse(selectedTask.details) : {};
@@ -119,10 +122,32 @@ export function fetchTask(nodeConfig: FetchTaskNodeConfig) {
       const phaseId = taskDetails.phaseId || (selectedTask as any).phaseId;
       const prdSetId = taskDetails.prdSetId || (selectedTask as any).prdSetId;
 
-      logger.info(`[FetchTask] Selected task: ${selectedTask.id} - ${selectedTask.title}`);
+      // Log parallel task selection
+      if (tasksToReturn.length > 1) {
+        logger.info(`[FetchTask] Selected ${tasksToReturn.length} parallel tasks at level 0`);
+        for (const task of tasksToReturn) {
+          logger.info(`  - Task ${task.id}: ${task.title}`);
+        }
+      } else {
+        logger.info(`[FetchTask] Selected task: ${selectedTask.id} - ${selectedTask.title}`);
+      }
+
+      // Emit task:started event for metrics tracking
+      emitEvent('task:started', {
+        taskId: String(selectedTask.id),
+        title: selectedTask.title,
+        parallelTaskCount: tasksToReturn.length,
+        dependencyLevel: 0,
+        durationMs: Date.now() - startTime,
+      }, {
+        taskId: String(selectedTask.id),
+        prdId,
+        phaseId,
+      });
 
       return {
-        task: selectedTask,
+        task: selectedTask,             // Primary task for sequential processing
+        parallelTasks: tasksToReturn,   // All tasks for parallel processing
         status: 'fetching',
         dependencyLevel: 0,
         prdId,

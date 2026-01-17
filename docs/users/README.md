@@ -191,7 +191,7 @@ module.exports = {
 |---------|-------------|
 | `dev-loop init` | Initialize project |
 | `dev-loop prd-set execute <path>` | Execute PRD set (primary method) |
-| `dev-loop run [--task ID] [--debug]` | Execute one iteration |
+| `dev-loop run [--debug]` | Execute continuous workflow |
 | `dev-loop status` | Current progress |
 | `dev-loop pause` / `resume` | Control execution |
 
@@ -249,7 +249,7 @@ See [PRD_BUILDING.md](./PRD_BUILDING.md) for complete PRD building guide.
 | `dev-loop metrics --schema` | Show schema operation metrics |
 | `dev-loop report [--prd <id>] [--prd-set <id>] [--phase <prdId:phaseId>]` | Generate execution reports |
 | `dev-loop report --latest` | Generate report for most recent PRD |
-| `dev-loop report --all` | Generate reports for all PRDs |
+| `dev-loop report --prd-set <id>` | Generate reports for all PRDs in set |
 | `dev-loop archive [--prd-name <name>] [--compress]` | Archive state files (see [ARCHIVE.md](./ARCHIVE.md) for details) |
 
 See [METRICS.md](./METRICS.md) for detailed metrics guide and [REPORTS.md](./REPORTS.md) for report generation.

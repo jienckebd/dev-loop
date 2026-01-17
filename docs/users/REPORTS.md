@@ -51,7 +51,7 @@ dev-loop report --latest
 ### Generate All PRD Reports
 
 ```bash
-dev-loop report --all
+dev-loop report --prd-set <setId>
 ```
 
 ### Compare Reports
@@ -231,7 +231,7 @@ dev-loop report --latest --format html
 ### Generate All Reports in JSON Format
 
 ```bash
-dev-loop report --all --format json
+dev-loop report --prd-set <setId> --format json
 ```
 
 ### Compare Two PRD Executions

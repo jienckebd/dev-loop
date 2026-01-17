@@ -56,14 +56,9 @@ program
 
 program
   .command('run')
-  .description('Execute workflow (default: fresh-context mode)')
+  .description('Execute workflow with fresh-context mode')
   .option('-c, --config <path>', 'Path to config file', 'devloop.config.js')
   .option('-d, --debug', 'Enable debug mode with verbose output')
-  .option('--task <id>', 'Run specific task by ID')
-  .option('--all', 'Run all pending tasks sequentially')
-  .option('--until <id>', 'Run tasks until reaching specified task')
-  .option('--skip <id>', 'Skip specific task and continue')
-  .option('--legacy', 'Use legacy single-iteration mode (deprecated)')
   .option('--max-iterations <n>', 'Maximum iterations for fresh-context mode', (v) => parseInt(v, 10))
   .option('--context-threshold <n>', 'Context threshold for auto-handoff (0-100)', (v) => parseInt(v, 10))
   .option('--no-persist-learnings', 'Disable learnings persistence to progress.md')
@@ -135,10 +130,6 @@ program
   .description('Re-run a task')
   .option('-c, --config <path>', 'Path to config file', 'devloop.config.js')
   .option('--dry-run', 'Show what would be executed without running')
-  .option('--with-context <path>', 'Add extra context from file')
-  .option('--with-pattern <id>', 'Apply specific pattern')
-  .option('--with-template <name>', 'Use different template')
-  .option('--compare', 'Compare with previous run')
   .action(async (taskId, options) => {
     await replayCommand({ ...options, taskId });
   });
@@ -346,13 +337,11 @@ program
   .description('Execute PRD autonomously via test-driven development')
   .option('-c, --config <path>', 'Path to config file', 'devloop.config.js')
   .option('-d, --debug', 'Enable debug mode')
-  .option('--resume', 'Resume from previous execution state')
   .action(async (prdPath, options) => {
     await prdCommand({
       prd: prdPath,
       config: options.config,
       debug: options.debug,
-      resume: options.resume,
     });
   });
 

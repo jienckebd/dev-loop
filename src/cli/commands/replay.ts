@@ -1,17 +1,13 @@
 import chalk from 'chalk';
 import ora from 'ora';
 import { loadConfig } from '../../config/loader';
-import { TaskMasterBridge } from "../../core/execution/task-bridge";
-import { WorkflowEngine } from "../../core/execution/workflow";
+import { TaskMasterBridge } from '../../core/execution/task-bridge';
+import { IterationRunner } from '../../core/execution/iteration-runner';
 
 export async function replayCommand(options: {
   config?: string;
   taskId: string;
   dryRun?: boolean;
-  withContext?: string;
-  withPattern?: string;
-  withTemplate?: string;
-  compare?: boolean;
 }): Promise<void> {
   const spinner = ora('Loading configuration').start();
 
@@ -43,32 +39,15 @@ export async function replayCommand(options: {
     await taskBridge.updateTaskStatus(task.id, 'pending');
     spinner.succeed('Task reset to pending');
 
-    if (options.withTemplate) {
-      spinner.info(`Would use template: ${options.withTemplate}`);
-      // TODO: Implement template override
-    }
+    // Run with fresh-context mode
+    spinner.start('Re-running task with fresh-context mode');
+    const iterationRunner = new IterationRunner(config, {
+      maxIterations: 1, // Only run once for replay
+      autoHandoff: false,
+    });
+    const result = await iterationRunner.runWithFreshContext();
 
-    if (options.withPattern) {
-      spinner.info(`Would apply pattern: ${options.withPattern}`);
-      // TODO: Implement pattern application
-    }
-
-    if (options.withContext) {
-      spinner.info(`Would add context from: ${options.withContext}`);
-      // TODO: Implement additional context
-    }
-
-    if (options.compare) {
-      spinner.info('Comparison mode - will compare with previous run');
-      // TODO: Implement comparison with previous run
-    }
-
-    // Run the task
-    spinner.start('Re-running task');
-    const engine = new WorkflowEngine(config);
-    const result = await engine.runOnce();
-
-    if (result.completed) {
+    if (result.status === 'complete') {
       spinner.succeed('Task replayed successfully');
       console.log(chalk.green(`✓ Task ${options.taskId} completed`));
     } else {

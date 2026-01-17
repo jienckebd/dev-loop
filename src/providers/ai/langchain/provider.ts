@@ -14,7 +14,8 @@ import { Session, SessionContext } from '../session-manager';
 import { createLangChainModel, getApiKeyEnvVar, ModelConfig } from './models';
 import { CodeChangesSchema, AnalysisSchema } from './schemas';
 import { CursorCLIAdapter } from './cursor-adapter';
-import { parseCodeChangesFromText } from '../json-parser';
+import { parseCodeChangesFromText, extractCodeChangesWithAiFallback, diagnoseJsonError, tryProgrammaticFix } from '../json-parser';
+import { jsonParsingMetrics } from '../../../core/metrics/json-parsing-metrics';
 import { logger } from '../../../core/utils/logger';
 
 export interface LangChainProviderConfig {
@@ -85,6 +86,9 @@ export class LangChainProvider implements AIProvider {
 
   /**
    * Generate code changes from a task context
+   *
+   * Uses structured output as primary method, with OutputFixingParser as fallback
+   * to recover from malformed JSON responses.
    */
   async generateCode(prompt: string, context: TaskContext): Promise<CodeChanges> {
     const startTime = Date.now();
@@ -99,7 +103,15 @@ export class LangChainProvider implements AIProvider {
         );
 
         const content = result.generations[0]?.text || '';
-        return this.parseCodeChanges(content);
+        const parsed = this.parseCodeChanges(content);
+
+        // If parsing failed, try OutputFixingParser
+        if (!parsed.files || parsed.files.length === 0) {
+          const fixed = await this.tryOutputFixingParser(content, context);
+          if (fixed) return fixed;
+        }
+
+        return parsed;
       }
 
       // Use structured output for other providers
@@ -115,17 +127,115 @@ export class LangChainProvider implements AIProvider {
       // Track token usage if available
       this.trackTokenUsage(result);
 
-      logger.debug(`[LangChainProvider] Code generation completed in ${Date.now() - startTime}ms`);
+      // Validate the result has valid files array
+      if (result && result.files && Array.isArray(result.files) && result.files.length > 0) {
+        logger.debug(`[LangChainProvider] Code generation completed in ${Date.now() - startTime}ms`);
+        return result as CodeChanges;
+      }
 
-      return result as CodeChanges;
+      // Structured output returned but empty/invalid - try raw generation with OutputFixingParser
+      logger.warn('[LangChainProvider] Structured output returned empty files, trying raw generation');
+      return await this.generateCodeWithFallback(prompt, context);
+
     } catch (error) {
-      logger.error(`[LangChainProvider] Code generation failed: ${error}`);
+      logger.warn(`[LangChainProvider] Structured output failed: ${error}`);
 
-      // Return empty result on error
+      // Try raw generation with OutputFixingParser
+      try {
+        const fallbackResult = await this.generateCodeWithFallback(prompt, context);
+        if (fallbackResult.files && fallbackResult.files.length > 0) {
+          logger.info('[LangChainProvider] Successfully recovered with OutputFixingParser');
+          return fallbackResult;
+        }
+      } catch (fallbackError) {
+        logger.error(`[LangChainProvider] Fallback also failed: ${fallbackError}`);
+      }
+
+      logger.error(`[LangChainProvider] Code generation failed: ${error}`);
       return {
         files: [],
         summary: `Error generating code: ${error}`,
       };
+    }
+  }
+
+  /**
+   * Generate code without structured output constraint, using OutputFixingParser
+   */
+  private async generateCodeWithFallback(prompt: string, context: TaskContext): Promise<CodeChanges> {
+    const messages = [
+      new SystemMessage(this.getSystemPrompt('code-generation')),
+      new HumanMessage(this.buildCodeGenPrompt(prompt, context)),
+    ];
+
+    // Get raw response without structured output constraint
+    const rawResult = await this.model.invoke(messages);
+    const content = typeof rawResult.content === 'string'
+      ? rawResult.content
+      : String(rawResult.content);
+
+    // Try OutputFixingParser
+    const fixed = await this.tryOutputFixingParser(content, context);
+    if (fixed) return fixed;
+
+    // Last resort: try standard parsing
+    return this.parseCodeChanges(content);
+  }
+
+  /**
+   * Attempt to fix malformed JSON using the consolidated json-parser
+   *
+   * Uses the unified extractCodeChangesWithAiFallback which includes:
+   * 1. Standard extraction via JsonSchemaValidator strategies
+   * 2. Error diagnosis for targeted fix prompts
+   * 3. Programmatic fixes (no AI needed)
+   * 4. AI-based fixes with targeted prompts
+   */
+  private async tryOutputFixingParser(
+    content: string,
+    context: TaskContext
+  ): Promise<CodeChanges | null> {
+    try {
+      // Diagnose error for metrics tracking
+      const diagnosis = diagnoseJsonError(content);
+      jsonParsingMetrics.trackFixAttempt(this.config.provider, diagnosis.type);
+
+      // First try programmatic fix (fast, no AI call)
+      const programmaticFix = tryProgrammaticFix(content, diagnosis);
+      if (programmaticFix && programmaticFix.files && programmaticFix.files.length > 0) {
+        jsonParsingMetrics.trackFixSuccess(this.config.provider, diagnosis.type, 0, 'programmatic');
+        return programmaticFix;
+      }
+
+      // Use consolidated extractCodeChangesWithAiFallback
+      const promptFunction = async (prompt: string): Promise<string> => {
+        const result = await this.model.invoke([new HumanMessage(prompt)]);
+        return typeof result.content === 'string' ? result.content : String(result.content);
+      };
+
+      const fixed = await extractCodeChangesWithAiFallback(
+        content,
+        promptFunction,
+        {
+          providerName: this.config.provider,
+          taskId: context.task?.id ? String(context.task.id) : undefined,
+          prdId: context.prdId,
+        },
+        2 // maxRetries
+      );
+
+      if (fixed && fixed.files && fixed.files.length > 0) {
+        // AI fix succeeded - we don't know exact attempt count, assume 1
+        jsonParsingMetrics.trackFixSuccess(this.config.provider, diagnosis.type, 1, 'ai');
+        return fixed;
+      }
+
+      // Fix failed
+      jsonParsingMetrics.trackFixFailure(this.config.provider, diagnosis.type);
+      return null;
+    } catch (error) {
+      logger.warn(`[LangChainProvider] JSON fix error: ${error}`);
+      return null;
     }
   }
 

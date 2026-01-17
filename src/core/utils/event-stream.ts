@@ -9,6 +9,18 @@ export type EventType =
   | 'task:completed'
   | 'task:failed'
   | 'task:blocked'
+  // Code generation events
+  | 'code:generated'
+  | 'code:generation_failed'
+  // Changes application events
+  | 'changes:applied'
+  // Test events
+  | 'test:passed'
+  | 'test:failed'
+  // Failure analysis events
+  | 'failure:analyzed'
+  // Fix task events
+  | 'fix_task:created'
   // Agent events
   | 'agent:started'
   | 'agent:response'
@@ -23,6 +35,11 @@ export type EventType =
   | 'json:ai_fallback_success'
   | 'json:ai_fallback_failed'
   | 'json:ai_fallback_error'
+  // OutputFixingParser events
+  | 'json-parsing:fix-attempt'
+  | 'json-parsing:fix-success'
+  | 'json-parsing:fix-failed'
+  | 'json-parsing:diagnosis'
   // File filtering
   | 'file:filtered'
   | 'file:filtered_predictive'
@@ -63,6 +80,11 @@ export type EventType =
   | 'task:stalled'
   // Progress tracking
   | 'progress:stalled'
+  // Workflow/Iteration events
+  | 'iteration:started'
+  | 'iteration:completed'
+  | 'workflow:stalled'
+  | 'context:handoff_triggered'
   // Investigation consolidation
   | 'investigation:consolidated'
   // Token budget tracking
@@ -112,11 +134,8 @@ export type EventType =
   | 'recovery:attempted'
   | 'recovery:succeeded'
   | 'recovery:failed'
-  // Iteration/handoff events (fresh-context mode)
-  | 'iteration:started'
-  | 'iteration:completed'
-  | 'context:handoff_triggered'
-  | 'workflow:stalled';
+  // PRD set task population events
+  | 'prd_set:tasks_populated';
 
 export type EventSeverity = 'info' | 'warn' | 'error' | 'critical';
 
@@ -147,22 +166,22 @@ export interface EventFilter {
 /**
  * Singleton event stream for dev-loop
  * Buffers events and provides polling interface
- * 
+ *
  * **Persistence Model**: Events are stored in-memory only (not persisted to disk).
  * Events are cleared when the dev-loop process restarts. This is intentional:
  * - Events provide real-time monitoring during execution
  * - Historical events are not needed after execution completes
  * - In-memory buffer is efficient for active monitoring
  * - Outer agent should poll events during active execution, not after restart
- * 
- * **Buffer Behavior**: 
+ *
+ * **Buffer Behavior**:
  * - Maximum 1000 events (oldest removed when exceeded)
  * - Circular buffer - newest events are kept, oldest discarded
- * - Buffer is shared across all dev-loop execution (prd-set execute, run, etc.)
- * - Events are emitted by the execution process itself
- * 
+ * - Buffer is shared across all dev-loop execution (watch mode, prd-set execute, etc.)
+ * - Events are emitted by the execution process itself, not a separate daemon
+ *
  * **Event Lifecycle**:
- * 1. Events are emitted during execution (prd-set execute or run)
+ * 1. Events are emitted during execution (watch mode or prd-set execute)
  * 2. Events are buffered in memory (max 1000 events)
  * 3. Events are polled via MCP tools (devloop_events_poll, devloop_events_latest)
  * 4. Buffer is cleared on process restart
@@ -229,11 +248,11 @@ class EventStreamImpl {
 
   /**
    * Poll for events matching filter criteria
-   * 
+   *
    * **Note**: Events are in-memory only. After process restart, historical events are not available.
    * Poll events during active execution, not after restart. Events are emitted by the execution
-   * process itself (prd-set execute or run).
-   * 
+   * process itself (watch mode or prd-set execute), not a separate daemon.
+   *
    * @param filter - Filter criteria for events (since, types, severity, taskId, prdId, limit)
    * @returns Filtered array of events matching criteria
    */
@@ -330,7 +349,7 @@ class EventStreamImpl {
 
   /**
    * Clear all events from the buffer
-   * 
+   *
    * **Note**: This clears the in-memory buffer. Events are automatically cleared on process restart,
    * but this method allows manual clearing (useful for testing or resetting state).
    * Events are not persisted, so clearing does not affect any persisted data.

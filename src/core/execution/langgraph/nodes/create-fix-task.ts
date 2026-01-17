@@ -10,6 +10,7 @@ import { WorkflowState } from '../state';
 import { TaskMasterBridge } from '../../task-bridge';
 import { Config } from '../../../../config/schema/core';
 import { logger } from '../../../utils/logger';
+import { emitEvent } from '../../../utils/event-stream';
 
 export interface CreateFixTaskNodeConfig {
   taskBridge: TaskMasterBridge;
@@ -74,6 +75,18 @@ export function createFixTask(nodeConfig: CreateFixTaskNodeConfig) {
       await taskBridge.createTask(fixTask);
 
       logger.info(`[CreateFixTask] Created fix task: ${fixTask.id}`);
+
+      // Emit fix_task:created event
+      emitEvent('fix_task:created', {
+        taskId: fixTask.id,
+        originalTaskId: originalTask?.id,
+        errorCount: analysis.errors?.length || 0,
+        recommendationCount: analysis.recommendations?.length || 0,
+      }, {
+        taskId: originalTask ? String(originalTask.id) : undefined,
+        prdId: state.prdId,
+        phaseId: state.phaseId,
+      });
 
       return {
         status: 'creating-fix',

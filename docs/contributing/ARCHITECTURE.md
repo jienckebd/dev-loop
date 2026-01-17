@@ -129,20 +129,6 @@ Graph-based workflow orchestration with 10 nodes:
 - `checkpointer.ts` - File-based checkpoint persistence
 - `nodes/*.ts` - Individual node implementations
 
-### WorkflowEngine (Legacy Direct Execution)
-
-**Location:** `src/core/execution/workflow.ts`
-
-Direct task execution engine (used for single `run` commands):
-- Fetches tasks from Task Master
-- Executes AI code generation
-- Applies code changes
-- Runs tests
-- Analyzes logs
-- Creates fix tasks on failure
-
-**Note:** For continuous execution, use `IterationRunner` which wraps workflow execution with the Ralph pattern.
-
 ### TaskMasterBridge
 
 **Location:** `src/core/execution/task-bridge.ts`
@@ -620,7 +606,7 @@ Tasks are grouped by dependency level using topological sorting:
 - Multiple tasks at the same level execute concurrently
 - Maximum concurrency is controlled by `autonomous.maxConcurrency` config
 
-**Location:** `src/core/execution/workflow.ts` - `runOnce()` method and `groupTasksByDependencyLevel()`
+**Location:** `src/core/execution/iteration-runner.ts` and `src/core/execution/langgraph/nodes/fetch-task.ts`
 
 ### Concurrency Control
 
@@ -713,7 +699,7 @@ Context is snapshotted at task start for parallel execution:
 - Module-scoped (only files in `docroot/modules/share/{module}/`)
 - Live updates are disabled during parallel execution
 
-**Location:** `src/core/analysis/code/context-provider.ts` and `src/core/execution/workflow.ts` - `getCodebaseContext()`
+**Location:** `src/core/analysis/code/context-provider.ts` and `src/core/execution/langgraph/nodes/build-context.ts`
 
 ## Code Cleanup Status
 

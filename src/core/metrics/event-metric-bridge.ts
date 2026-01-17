@@ -1,6 +1,6 @@
 /**
  * Event-to-Metrics Bridge
- * 
+ *
  * Automatically updates metrics when events are emitted from the event stream.
  * Subscribes to event stream and maps event types to metric update functions.
  */
@@ -68,7 +68,7 @@ export class EventMetricBridge {
     }
 
     const eventStream = getEventStream();
-    
+
     // Create event listener
     this.eventListener = (event: DevLoopEvent) => {
       this.handleEvent(event);
@@ -81,7 +81,7 @@ export class EventMetricBridge {
     this.saveTimer = setInterval(() => {
       this.flushPendingSaves();
     }, 5000);
-    
+
     if (this.debug) {
       logger.info('[EventMetricBridge] Started event-to-metrics bridge');
     }
@@ -95,16 +95,16 @@ export class EventMetricBridge {
       const eventStream = getEventStream();
       eventStream.removeListener(this.eventListener);
       this.eventListener = undefined;
-      
+
       // Flush any pending saves
       this.flushPendingSaves();
-      
+
       // Clear save timer
       if (this.saveTimer) {
         clearInterval(this.saveTimer);
         this.saveTimer = undefined;
       }
-      
+
       if (this.debug) {
         logger.info('[EventMetricBridge] Stopped event-to-metrics bridge');
       }
@@ -122,7 +122,7 @@ export class EventMetricBridge {
 
     const count = this.pendingSaves.size;
     this.pendingSaves.clear();
-    
+
     if (this.debug && count > 0) {
       logger.debug(`[EventMetricBridge] Cleared ${count} pending metric saves (metrics will persist on next workflow save)`);
     }
@@ -156,6 +156,20 @@ export class EventMetricBridge {
         this.updateValidationMetrics(event, prdId, phaseId);
       } else if (event.type.startsWith('ipc:')) {
         this.updateIpcMetrics(event, prdId, phaseId);
+      } else if (event.type.startsWith('code:')) {
+        this.updateCodeGenerationMetrics(event, prdId, phaseId);
+      } else if (event.type.startsWith('test:')) {
+        this.updateTestMetrics(event, prdId, phaseId);
+      } else if (event.type.startsWith('task:')) {
+        this.updateTaskMetrics(event, prdId, phaseId);
+      } else if (event.type === 'changes:applied') {
+        this.updateChangesAppliedMetrics(event, prdId, phaseId);
+      } else if (event.type === 'failure:analyzed') {
+        this.updateFailureAnalysisMetrics(event, prdId, phaseId);
+      } else if (event.type === 'fix_task:created') {
+        this.updateFixTaskMetrics(event, prdId, phaseId);
+      } else if (event.type === 'pattern:learned') {
+        this.updatePatternMetrics(event, prdId, phaseId);
       } else if (event.type.startsWith('intervention:')) {
         // Intervention metrics are handled by InterventionMetricsTracker directly
         // Just mark PRD for save if it has intervention context
@@ -193,8 +207,8 @@ export class EventMetricBridge {
     switch (event.type) {
       case 'json:parse_failed':
         metrics.totalAttempts++;
-        const reason = (event.data.reason as string) || 
-                       (event.data.attemptedStrategies as string[] || []).join(',') || 
+        const reason = (event.data.reason as string) ||
+                       (event.data.attemptedStrategies as string[] || []).join(',') ||
                        'unknown';
         metrics.failuresByReason[reason] = (metrics.failuresByReason[reason] || 0) + 1;
         break;
@@ -522,6 +536,177 @@ export class EventMetricBridge {
 
     // Mark for save
     this.pendingSaves.add(setId);
+  }
+
+  /**
+   * Update code generation metrics from event
+   */
+  private updateCodeGenerationMetrics(event: DevLoopEvent, prdId: string, phaseId?: number): void {
+    if (!this.prdMetrics) return;
+
+    const prdMetric = this.prdMetrics.getPrdMetrics(prdId);
+    if (!prdMetric) return;
+
+    const tokensInput = (event.data.tokensInput as number) || 0;
+    const tokensOutput = (event.data.tokensOutput as number) || 0;
+    const durationMs = (event.data.durationMs as number) || 0;
+    const fileCount = (event.data.fileCount as number) || 0;
+
+    switch (event.type) {
+      case 'code:generated':
+        // Update token metrics
+        prdMetric.tokensInput = (prdMetric.tokensInput || 0) + tokensInput;
+        prdMetric.tokensOutput = (prdMetric.tokensOutput || 0) + tokensOutput;
+        // Track code generation timing
+        if (durationMs > 0) {
+          prdMetric.codeGenDurationMs = (prdMetric.codeGenDurationMs || 0) + durationMs;
+        }
+        // Track files generated
+        prdMetric.filesGenerated = (prdMetric.filesGenerated || 0) + fileCount;
+        break;
+
+      case 'code:generation_failed':
+        prdMetric.codeGenFailures = (prdMetric.codeGenFailures || 0) + 1;
+        break;
+    }
+
+    this.pendingSaves.add(prdId);
+  }
+
+  /**
+   * Update test metrics from event
+   */
+  private updateTestMetrics(event: DevLoopEvent, prdId: string, phaseId?: number): void {
+    if (!this.prdMetrics) return;
+
+    const prdMetric = this.prdMetrics.getPrdMetrics(prdId);
+    if (!prdMetric) return;
+
+    const durationMs = (event.data.durationMs as number) || 0;
+
+    switch (event.type) {
+      case 'test:passed':
+        prdMetric.testsRun = (prdMetric.testsRun || 0) + 1;
+        prdMetric.testsPassed = (prdMetric.testsPassed || 0) + 1;
+        if (durationMs > 0) {
+          prdMetric.testDurationMs = (prdMetric.testDurationMs || 0) + durationMs;
+        }
+        break;
+
+      case 'test:failed':
+        prdMetric.testsRun = (prdMetric.testsRun || 0) + 1;
+        prdMetric.testsFailed = (prdMetric.testsFailed || 0) + 1;
+        if (durationMs > 0) {
+          prdMetric.testDurationMs = (prdMetric.testDurationMs || 0) + durationMs;
+        }
+        break;
+    }
+
+    this.pendingSaves.add(prdId);
+  }
+
+  /**
+   * Update task metrics from event
+   */
+  private updateTaskMetrics(event: DevLoopEvent, prdId: string, phaseId?: number): void {
+    if (!this.prdMetrics) return;
+
+    const prdMetric = this.prdMetrics.getPrdMetrics(prdId);
+    if (!prdMetric) return;
+
+    switch (event.type) {
+      case 'task:started':
+        prdMetric.tasksStarted = (prdMetric.tasksStarted || 0) + 1;
+        break;
+
+      case 'task:completed':
+        prdMetric.tasksCompleted = (prdMetric.tasksCompleted || 0) + 1;
+        const success = (event.data.success as boolean) || false;
+        if (success) {
+          prdMetric.tasksSucceeded = (prdMetric.tasksSucceeded || 0) + 1;
+        }
+        break;
+
+      case 'task:failed':
+        prdMetric.tasksFailed = (prdMetric.tasksFailed || 0) + 1;
+        break;
+
+      case 'task:blocked':
+        prdMetric.tasksBlocked = (prdMetric.tasksBlocked || 0) + 1;
+        break;
+    }
+
+    this.pendingSaves.add(prdId);
+  }
+
+  /**
+   * Update changes applied metrics from event
+   */
+  private updateChangesAppliedMetrics(event: DevLoopEvent, prdId: string, phaseId?: number): void {
+    if (!this.prdMetrics) return;
+
+    const prdMetric = this.prdMetrics.getPrdMetrics(prdId);
+    if (!prdMetric) return;
+
+    const filesCreated = (event.data.filesCreated as number) || 0;
+    const filesModified = (event.data.filesModified as number) || 0;
+    const filesDeleted = (event.data.filesDeleted as number) || 0;
+
+    prdMetric.filesCreated = (prdMetric.filesCreated || 0) + filesCreated;
+    prdMetric.filesModified = (prdMetric.filesModified || 0) + filesModified;
+    prdMetric.filesDeleted = (prdMetric.filesDeleted || 0) + filesDeleted;
+
+    this.pendingSaves.add(prdId);
+  }
+
+  /**
+   * Update failure analysis metrics from event
+   */
+  private updateFailureAnalysisMetrics(event: DevLoopEvent, prdId: string, phaseId?: number): void {
+    if (!this.prdMetrics) return;
+
+    const prdMetric = this.prdMetrics.getPrdMetrics(prdId);
+    if (!prdMetric) return;
+
+    prdMetric.failureAnalyses = (prdMetric.failureAnalyses || 0) + 1;
+    const errorCount = (event.data.errorCount as number) || 0;
+    prdMetric.errorsAnalyzed = (prdMetric.errorsAnalyzed || 0) + errorCount;
+
+    this.pendingSaves.add(prdId);
+  }
+
+  /**
+   * Update fix task metrics from event
+   */
+  private updateFixTaskMetrics(event: DevLoopEvent, prdId: string, phaseId?: number): void {
+    if (!this.prdMetrics) return;
+
+    const prdMetric = this.prdMetrics.getPrdMetrics(prdId);
+    if (!prdMetric) return;
+
+    prdMetric.fixTasksCreated = (prdMetric.fixTasksCreated || 0) + 1;
+
+    this.pendingSaves.add(prdId);
+  }
+
+  /**
+   * Update pattern learning metrics from event
+   */
+  private updatePatternMetrics(event: DevLoopEvent, prdId: string, phaseId?: number): void {
+    if (!this.prdMetrics) return;
+
+    const prdMetric = this.prdMetrics.getPrdMetrics(prdId);
+    if (!prdMetric) return;
+
+    prdMetric.patternsLearned = (prdMetric.patternsLearned || 0) + 1;
+
+    const type = (event.data.type as string) || 'unknown';
+    if (!prdMetric.patternsByType) {
+      prdMetric.patternsByType = {};
+    }
+    prdMetric.patternsByType[type] = (prdMetric.patternsByType[type] || 0) + 1;
+
+    this.pendingSaves.add(prdId);
   }
 }
 

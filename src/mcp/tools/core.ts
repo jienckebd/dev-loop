@@ -1,11 +1,11 @@
 import { z } from 'zod';
-import { WorkflowEngine } from "../../core/execution/workflow";
-import { TaskMasterBridge } from "../../core/execution/task-bridge";
+import { IterationRunner } from '../../core/execution/iteration-runner';
+import { TaskMasterBridge } from '../../core/execution/task-bridge';
 import { ConfigLoader, FastMCPType } from './index';
 import { truncateMcpResponse } from '../utils/truncate-response';
 
 export function registerCoreTools(mcp: FastMCPType, getConfig: ConfigLoader): void {
-  // devloop_run - Execute one workflow iteration
+  // devloop_run - Execute workflow with fresh-context mode
   mcp.addTool({
     name: 'devloop_run',
     description: 'Execute one workflow iteration',
@@ -19,53 +19,14 @@ export function registerCoreTools(mcp: FastMCPType, getConfig: ConfigLoader): vo
         (config as any).debug = true;
       }
 
-      const engine = new WorkflowEngine(config);
-      const result = await engine.runOnce();
+      const runner = new IterationRunner(config, { maxIterations: 1 });
+      const result = await runner.runWithFreshContext();
 
       return JSON.stringify({
-        completed: result.completed,
-        noTasks: result.noTasks,
-        taskId: result.taskId,
-        error: result.error,
-      });
-    },
-  });
-
-  // devloop_run_task - Run specific task by ID
-  mcp.addTool({
-    name: 'devloop_run_task',
-    description: 'Run specific task by ID',
-    parameters: z.object({
-      taskId: z.string().describe('Task ID to run'),
-      config: z.string().optional().describe('Path to config file (optional)'),
-      debug: z.boolean().optional().describe('Enable debug mode'),
-    }),
-    execute: async (args: { taskId: string; config?: string; debug?: boolean }, context: any) => {
-      const config = await getConfig(args.config);
-      if (args.debug) {
-        (config as any).debug = true;
-      }
-
-      const taskBridge = new TaskMasterBridge(config);
-      const task = await taskBridge.getTask(args.taskId);
-
-      if (!task) {
-        return JSON.stringify({
-          error: `Task not found: ${args.taskId}`,
-        });
-      }
-
-      // Ensure task is pending
-      if (task.status !== 'pending' && task.status !== 'in-progress') {
-        await taskBridge.updateTaskStatus(task.id, 'pending');
-      }
-
-      const engine = new WorkflowEngine(config);
-      const result = await engine.runOnce();
-
-      return JSON.stringify({
-        completed: result.completed,
-        taskId: result.taskId,
+        status: result.status,
+        iterations: result.iterations,
+        tasksCompleted: result.tasksCompleted,
+        tasksFailed: result.tasksFailed,
         error: result.error,
       });
     },
@@ -81,13 +42,13 @@ export function registerCoreTools(mcp: FastMCPType, getConfig: ConfigLoader): vo
     execute: async (args: { config?: string }, context: any) => {
       const config = await getConfig(args.config);
       const taskBridge = new TaskMasterBridge(config);
-      
+
       // Get status from task counts
       const allTasks = await taskBridge.getAllTasks();
       const pendingTasks = allTasks.filter((t: any) => t.status === 'pending');
       const completedTasks = allTasks.filter((t: any) => t.status === 'done');
       const inProgressTasks = allTasks.filter((t: any) => t.status === 'in-progress');
-      
+
       const currentTask = inProgressTasks[0] || pendingTasks[0];
       const totalTasks = allTasks.length;
       const completedCount = completedTasks.length;
@@ -214,11 +175,11 @@ export function registerCoreTools(mcp: FastMCPType, getConfig: ConfigLoader): vo
       const maxOutputTokens = mcpConfig.maxOutputTokens || 25000;
       const warningThreshold = mcpConfig.truncationWarningThreshold || 10000;
       const truncated = truncateMcpResponse(response, maxOutputTokens, warningThreshold);
-      
+
       if (truncated.warning) {
         console.warn(`[MCP] ${truncated.warning}`);
       }
-      
+
       return truncated.response;
     },
   });
@@ -231,9 +192,8 @@ export function registerCoreTools(mcp: FastMCPType, getConfig: ConfigLoader): vo
       prdPath: z.string().describe('Path to PRD file'),
       config: z.string().optional().describe('Path to config file (optional)'),
       debug: z.boolean().optional().describe('Enable debug mode'),
-      resume: z.boolean().optional().describe('Resume from previous execution state'),
     }),
-    execute: async (args: { prdPath: string; config?: string; debug?: boolean; resume?: boolean }, context: any) => {
+    execute: async (args: { prdPath: string; config?: string; debug?: boolean }, context: any) => {
       const config = await getConfig(args.config);
       if (args.debug) {
         (config as any).debug = true;
@@ -273,7 +233,6 @@ export function registerCoreTools(mcp: FastMCPType, getConfig: ConfigLoader): vo
             prd: args.prdPath,
             config: args.config,
             debug: args.debug,
-            resume: args.resume,
           }),
           timeoutPromise,
         ]);

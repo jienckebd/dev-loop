@@ -220,7 +220,7 @@ addLoggedTool({
   execute: async (args: { config?: string; debug?: boolean }) => {
     // Dynamic import of CommonJS modules
     const { loadConfig } = await import('../config/loader.js');
-    const { WorkflowEngine } = await import('../core/execution/workflow.js');
+    const { IterationRunner } = await import('../core/execution/iteration-runner.js');
 
     const config = await loadConfig(args.config);
     if (args.debug) {
@@ -229,13 +229,14 @@ addLoggedTool({
     // Mark as MCP mode to suppress console.log output (which breaks JSON-RPC)
     (config as any).mcpMode = true;
 
-    const engine = new WorkflowEngine(config);
-    const result = await engine.runOnce();
+    const runner = new IterationRunner(config, { maxIterations: 1 });
+    const result = await runner.runWithFreshContext();
 
     return JSON.stringify({
-      completed: result.completed,
-      noTasks: result.noTasks,
-      taskId: result.taskId,
+      status: result.status,
+      iterations: result.iterations,
+      tasksCompleted: result.tasksCompleted,
+      tasksFailed: result.tasksFailed,
       error: result.error,
     });
   },
@@ -253,13 +254,13 @@ addLoggedTool({
 
     const config = await loadConfig(args.config);
     const taskBridge = new TaskMasterBridge(config);
-    
+
     // Get status from task counts
     const allTasks = await taskBridge.getAllTasks();
     const pendingTasks = allTasks.filter((t: any) => t.status === 'pending');
     const completedTasks = allTasks.filter((t: any) => t.status === 'done');
     const inProgressTasks = allTasks.filter((t: any) => t.status === 'in-progress');
-    
+
     const currentTask = inProgressTasks[0] || pendingTasks[0];
     const totalTasks = allTasks.length;
     const completedCount = completedTasks.length;
@@ -326,9 +327,8 @@ addLoggedTool({
     prdPath: z.string().describe('Path to PRD file'),
     config: z.string().optional().describe('Path to config file (optional)'),
     debug: z.boolean().optional().describe('Enable debug mode'),
-    resume: z.boolean().optional().describe('Resume from previous execution state'),
   }),
-  execute: async (args: { prdPath: string; config?: string; debug?: boolean; resume?: boolean }) => {
+  execute: async (args: { prdPath: string; config?: string; debug?: boolean }) => {
     const { loadConfig } = await import('../config/loader.js');
     const { prdCommand } = await import('../cli/commands/prd.js');
 
@@ -342,7 +342,6 @@ addLoggedTool({
         prd: args.prdPath,
         config: args.config,
         debug: args.debug,
-        resume: args.resume,
       });
 
       return JSON.stringify({
@@ -382,27 +381,13 @@ addLoggedTool({
       const retryCounts = taskBridge.getAllRetryCounts();
       const skipInvestigation = (config as any).autonomous?.skipInvestigation;
 
-      // Read retry counts from file
-      let persistedRetryCounts: Record<string, number> = {};
-      try {
-        const fs = await import('fs-extra');
-        const path = await import('path');
-        const retryCountsPath = path.resolve(process.cwd(), '.devloop/retry-counts.json');
-        if (await fs.pathExists(retryCountsPath)) {
-          persistedRetryCounts = await fs.readJson(retryCountsPath);
-        }
-      } catch {
-        // Ignore - use in-memory retry counts from taskBridge as fallback
-        persistedRetryCounts = retryCounts;
-      }
-
       return JSON.stringify({
         blockedTasks: blockedTasks.map((t: any) => ({ id: t.id, title: t.title })),
         blockedCount: blockedTasks.length,
         investigationTasks: investigationTasks.map((t: any) => ({ id: t.id, status: t.status })),
         investigationCount: investigationTasks.length,
         skipInvestigationConfig: skipInvestigation ?? false,
-        retryCounts: persistedRetryCounts,
+        retryCounts: retryCounts,
         maxRetries: (config as any).autonomous?.maxTaskRetries || 3,
         pendingCount: allTasks.filter((t: any) => t.status === 'pending').length,
         totalTasks: allTasks.length,

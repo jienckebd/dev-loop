@@ -70,6 +70,7 @@ export class CursorCLIAdapter extends BaseChatModel {
         model: 'claude-sonnet-4-20250514',
         maxTokens: config.maxTokens || 4096,
         temperature: config.temperature || 0.7,
+        streaming: true,  // Required for requests > 10 minutes
       });
     }
   }

@@ -5,6 +5,7 @@ import { promisify } from 'util';
 import { Config } from '../../config/schema/core';
 import { Task, TaskStatus, TaskType } from '../../types';
 import { emitEvent } from '../utils/event-stream';
+import { logger } from '../utils/logger';
 
 const execAsync = promisify(exec);
 
@@ -290,10 +291,12 @@ export class TaskMasterBridge {
   async updateTaskStatus(taskId: string, status: TaskStatus): Promise<void> {
     try {
       const tasks = await this.loadTasks();
-      const task = tasks.find((t) => t.id === taskId);
+      // Compare as string since task IDs can be numbers or strings
+      const task = tasks.find((t) => String(t.id) === String(taskId));
       if (task) {
         task.status = status;
         await this.saveTasks(tasks);
+        logger.info(`[TaskBridge] Updated task ${taskId} status to ${status}`);
       } else {
         throw new Error(`Task not found: ${taskId}`);
       }

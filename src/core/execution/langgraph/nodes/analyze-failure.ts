@@ -10,6 +10,7 @@ import { WorkflowState } from '../state';
 import { AIProvider } from '../../../../providers/ai/interface';
 import { Config } from '../../../../config/schema/core';
 import { logger } from '../../../utils/logger';
+import { emitEvent } from '../../../utils/event-stream';
 
 export interface AnalyzeFailureNodeConfig {
   aiProvider: AIProvider;
@@ -69,6 +70,19 @@ export function analyzeFailure(nodeConfig: AnalyzeFailureNodeConfig) {
       }
 
       logger.info(`[AnalyzeFailure] Found ${analysis.errors.length} error(s), ${analysis.warnings.length} warning(s)`);
+
+      // Emit failure:analyzed event
+      emitEvent('failure:analyzed', {
+        taskId: state.task ? String(state.task.id) : undefined,
+        errorCount: analysis.errors.length,
+        warningCount: analysis.warnings.length,
+        summary: analysis.summary,
+        recommendationCount: analysis.recommendations?.length || 0,
+      }, {
+        taskId: state.task ? String(state.task.id) : undefined,
+        prdId: state.prdId,
+        phaseId: state.phaseId,
+      });
 
       return {
         status: 'analyzing',

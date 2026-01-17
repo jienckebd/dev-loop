@@ -4,38 +4,31 @@ This directory contains workflow orchestration and task execution functionality.
 
 ## Structure
 
-- **workflow.ts** - WorkflowEngine class (main orchestration loop)
+- **iteration-runner.ts** - IterationRunner class (main entry point, implements Ralph pattern)
 - **task-bridge.ts** - TaskMasterBridge (wrapper around task-master-ai MCP)
-- **intervention.ts** - InterventionSystem for hybrid mode approval flows
-- **improvement-suggester.ts** - ImprovementSuggester for evolution mode insights
-- **rollback-manager.ts** - RollbackManager for rollback functionality
+- **langgraph/** - LangGraph workflow nodes and state management
+- **context-handoff.ts** - Context handoff generation for fresh AI context
+- **learnings-manager.ts** - Learnings and pattern persistence
 
 ## Key Features
 
-- **Workflow Orchestration**: Main TDD loop (fetch task → generate code → run tests → analyze logs)
+- **Fresh-Context Execution**: Ralph pattern with clean AI context per iteration
+- **LangGraph Orchestration**: Node-based workflow (fetch → context → generate → apply → test)
 - **Task Management**: Bridge to Task Master MCP for task operations
-- **Intervention Support**: Hybrid mode with approval workflows
-- **Evolution Mode**: Improvement suggestions based on observations
-- **Rollback Support**: Rollback functionality for failed executions
+- **Learnings Persistence**: Progress tracking and pattern discovery
+- **Cross-PRD Checkpointing**: Shared state across PRD sets
 
 ## Usage
 
 ```typescript
-import { WorkflowEngine } from './execution/workflow';
+import { IterationRunner } from './execution/iteration-runner';
 import { TaskMasterBridge } from './execution/task-bridge';
 
-// Initialize workflow engine
-const engine = new WorkflowEngine(config);
-const result = await engine.runOnce();
+// Initialize and run with fresh-context mode
+const runner = new IterationRunner(config);
+const result = await runner.runWithFreshContext();
 
 // Task management
 const taskBridge = new TaskMasterBridge(config);
 const task = await taskBridge.getTask(taskId);
 ```
-
-## Related Files
-
-- `src/core/prd/set/orchestrator.ts` - PRD set orchestration (higher level)
-- `src/core/testing/` - Test execution
-- `src/core/analysis/` - Error analysis and pattern learning
-
