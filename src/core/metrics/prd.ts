@@ -294,7 +294,7 @@ export class PrdMetrics {
           // Use default provider/model for cost calculation
           // In a real scenario, we'd track the actual provider/model used
           try {
-            const { CostCalculator } = require('./cost-calculator');
+            const { CostCalculator } = require('../utils/cost-calculator');
             const costCalculation = CostCalculator.calculateCost(
               'anthropic', // Default provider
               'claude-3-5-sonnet-20241022', // Default model

@@ -149,7 +149,7 @@ function buildCodebaseConfig(
 /**
  * Detect file extensions from relevant files
  */
-export function detectExtensions(files: string[]): string[] {
+function detectExtensions(files: string[]): string[] {
   const extCounts = new Map<string, number>();
 
   for (const file of files) {
@@ -169,7 +169,7 @@ export function detectExtensions(files: string[]): string[] {
 /**
  * Detect search directories from file paths
  */
-export function detectSearchDirs(analysis: CodebaseAnalysisResult): string[] {
+function detectSearchDirs(analysis: CodebaseAnalysisResult): string[] {
   const dirCounts = new Map<string, number>();
 
   for (const file of analysis.relevantFiles) {
@@ -191,7 +191,7 @@ export function detectSearchDirs(analysis: CodebaseAnalysisResult): string[] {
 /**
  * Detect exclude directories
  */
-export function detectExcludeDirs(analysis: CodebaseAnalysisResult): string[] {
+function detectExcludeDirs(analysis: CodebaseAnalysisResult): string[] {
   const commonExcludes = [
     'node_modules',
     'vendor',
@@ -214,7 +214,7 @@ export function detectExcludeDirs(analysis: CodebaseAnalysisResult): string[] {
 /**
  * Detect ignore patterns from codebase structure
  */
-export function detectIgnorePatterns(
+function detectIgnorePatterns(
   analysis: CodebaseAnalysisResult,
   framework?: FrameworkPlugin | null
 ): string[] {
@@ -251,7 +251,7 @@ export function detectIgnorePatterns(
 /**
  * Detect editable paths based on analysis and framework
  */
-export function detectEditablePaths(
+function detectEditablePaths(
   analysis: CodebaseAnalysisResult,
   framework?: FrameworkPlugin | null
 ): string[] {
@@ -283,7 +283,7 @@ export function detectEditablePaths(
 /**
  * Detect protected paths based on analysis and framework
  */
-export function detectProtectedPaths(
+function detectProtectedPaths(
   analysis: CodebaseAnalysisResult,
   framework?: FrameworkPlugin | null
 ): string[] {
@@ -310,7 +310,7 @@ export function detectProtectedPaths(
 /**
  * Detect common stopwords in identifiers
  */
-export function detectCommonStopwords(analysis: CodebaseAnalysisResult): string[] {
+function detectCommonStopwords(analysis: CodebaseAnalysisResult): string[] {
   // Framework-agnostic common stopwords
   const stopwords = ['get', 'set', 'is', 'has', 'can', 'do', 'on', 'the', 'a', 'an'];
 
@@ -327,7 +327,7 @@ export function detectCommonStopwords(analysis: CodebaseAnalysisResult): string[
 /**
  * Detect documentation paths from analysis
  */
-export function detectDocumentationPaths(analysis: CodebaseAnalysisResult): string[] {
+function detectDocumentationPaths(analysis: CodebaseAnalysisResult): string[] {
   const docPaths: string[] = [];
   const docIndicators = ['docs', 'documentation', 'README', 'CLAUDE.md', '.md'];
 
@@ -378,7 +378,7 @@ function buildValidationConfig(
 /**
  * Detect base URL for validation
  */
-export function detectBaseUrl(projectRoot: string, framework?: FrameworkPlugin | null): string {
+function detectBaseUrl(projectRoot: string, framework?: FrameworkPlugin | null): string {
   // Framework-specific defaults
   if (framework?.name === 'drupal') {
     return 'https://sysf.ddev.site'; // DDEV default
@@ -392,7 +392,7 @@ export function detectBaseUrl(projectRoot: string, framework?: FrameworkPlugin |
 /**
  * Detect important URLs from test patterns
  */
-export function detectImportantUrls(analysis: CodebaseAnalysisResult): string[] {
+function detectImportantUrls(analysis: CodebaseAnalysisResult): string[] {
   const urls: string[] = ['/'];
 
   // Add common validation URLs based on framework
@@ -536,7 +536,7 @@ function buildRulesConfig(projectRoot: string): Config['rules'] | null {
 /**
  * Detect .cursorrules file path
  */
-export function detectCursorRulesPath(projectRoot: string): string | null {
+function detectCursorRulesPath(projectRoot: string): string | null {
   const possiblePaths = ['.cursorrules', '.cursor/rules', 'CLAUDE.md'];
 
   for (const relPath of possiblePaths) {

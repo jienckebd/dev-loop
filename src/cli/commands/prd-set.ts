@@ -25,9 +25,9 @@ import { writePidFileForPrdSet, removePidFileForPrdSet } from './stop';
  * - PRD set has defined completion criteria
  * - Want to execute all PRDs in a single command
  * 
- * **Why not daemon mode**: PRD sets orchestrate multiple PRDs and naturally complete
- * when all PRDs finish. Unlike single PRDs that may require continuous iteration,
- * PRD sets have defined completion criteria and don't need daemon mode.
+ * **Execution model**: PRD sets use parallel IterationRunner instances per PRD,
+ * with dependency-aware scheduling. Each PRD gets a fresh context following the
+ * Ralph pattern. Execution completes when all PRDs finish.
  * 
  * **Not for**: Single PRDs (use `watch --until-complete` instead)
  * 
@@ -75,7 +75,7 @@ export async function prdSetExecuteCommand(options: {
     console.log(chalk.dim(`  PRDs in set: ${discoveredSet.prdSet.prds.length}`));
     console.log(chalk.dim(`  Parent PRD: ${discoveredSet.manifest.parentPrd.id}`));
     console.log(chalk.dim(`  Child PRDs: ${discoveredSet.manifest.childPrds.length}`));
-    console.log(chalk.dim(`  Mode: Unified daemon (tasks created in Task Master, watch mode executes them)\n`));
+    console.log(chalk.dim(`  Mode: Parallel execution (fresh IterationRunner per PRD)\n`));
 
     spinner.start('Initializing PRD set orchestrator');
     const orchestrator = new PrdSetOrchestrator(config, debug);
@@ -109,10 +109,9 @@ export async function prdSetExecuteCommand(options: {
       console.log(`  Failed PRDs: ${result.failedPrds.length}`);
       console.log(`  Set ID: ${discoveredSet.setId}`);
       console.log('');
-      console.log(chalk.yellow('Next Steps:'));
-      console.log(`  1. Run: ${chalk.cyan('npx dev-loop watch --until-complete')}`);
-      console.log(`  2. Watch mode daemon will execute tasks from Task Master`);
-      console.log(`  3. Stop execution: ${chalk.cyan('npx dev-loop stop')}`);
+      console.log(chalk.yellow('Execution Complete:'));
+      console.log(`  All PRDs executed using parallel IterationRunner instances.`);
+      console.log(`  Check .devloop/progress.md for learnings and .devloop/handoff.md for context.`);
       console.log('');
     } else if (result.status === 'blocked') {
       console.log(chalk.red('╔════════════════════════════════════════════════════════════╗'));

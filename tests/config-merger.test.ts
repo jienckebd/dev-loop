@@ -16,7 +16,7 @@ import {
   clearPrdConfig,
   clearAllOverlays,
   mergeOverlays,
-} from '../src/core/config-merger';
+} from '../src/config/merger';
 import { Config, ConfigOverlay, validateConfigOverlay } from '../src/config/schema';
 import { defaultConfig } from '../src/config/defaults';
 

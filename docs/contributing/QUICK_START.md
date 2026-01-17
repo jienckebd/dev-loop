@@ -16,13 +16,11 @@ contribution_mode: true
 
 # Quick Start: Contribution Mode
 
-Quick-start guide for common contribution mode scenarios.
+Quick-start guide for common contribution mode scenarios using the IterationRunner architecture.
 
-## Scenario 1: Monitoring a Single PRD (Watch Mode - Unified Daemon)
+## Scenario 1: PRD Set Execution
 
-**Use case**: Working on a single PRD that needs iterative improvement until complete.
-
-**Note**: With unified daemon mode, watch mode handles both task creation (from PRD) and execution. No separate task creation step needed for single PRDs.
+**Use case**: Working on PRDs with continuous iteration until complete.
 
 ### Setup
 
@@ -30,16 +28,22 @@ Quick-start guide for common contribution mode scenarios.
 # Terminal 1: Start contribution mode
 npx dev-loop contribution start --prd .taskmaster/docs/my-prd.md
 
-# Terminal 2: Start watch mode (daemon)
-# Watch mode parses PRD, creates tasks in Task Master, and executes them
-npx dev-loop watch --until-complete
+# Terminal 2: Execute PRD set (IterationRunner with fresh context per iteration)
+npx dev-loop prd-set execute .taskmaster/planning/my-set/
 ```
 
-### Monitoring (Choose One)
+### What Happens
+
+1. IterationRunner generates `handoff.md` with current context
+2. LangGraph executes single workflow iteration
+3. Learnings persist to `progress.md`
+4. Check if complete - if not, repeat with fresh context
+5. Exit when all tasks done and tests pass
+
+### Monitoring
 
 **Option A: Manual Polling**
 ```typescript
-// Terminal 3: Monitor events manually
 let lastEventId = null;
 
 while (true) {
@@ -52,17 +56,16 @@ while (true) {
   
   for (const event of events) {
     console.log(`[${event.severity}] ${event.type}`);
-    // Handle events...
   }
   
   lastEventId = newLastEventId;
-  await sleep(5000); // Poll every 5 seconds
+  await sleep(5000);
 }
 ```
 
 **Option B: Automated Monitoring**
 ```javascript
-// Configure in devloop.config.js
+// devloop.config.js
 mcp: {
   eventMonitoring: {
     enabled: true,
@@ -73,49 +76,18 @@ mcp: {
     }
   }
 }
-
-// Service starts automatically when contribution mode activates
-// Monitor status:
-const { status } = await devloop_event_monitor_status();
-```
-
-**Option C: Hybrid Approach**
-```typescript
-// Start automated monitoring
-await devloop_event_monitor_start();
-
-// Also poll manually for custom logic
-let lastEventId = null;
-setInterval(async () => {
-  const { events, lastEventId: newLastEventId } = await devloop_events_poll({
-    since: lastEventId,
-    types: ['test:stalled', 'progress:stalled'],
-    limit: 20
-  });
-  
-  // Custom handling for specific events
-  events.forEach(event => {
-    if (event.type === 'test:stalled') {
-      // Custom logic
-    }
-  });
-  
-  lastEventId = newLastEventId;
-}, 5000);
 ```
 
 ### Expected Behavior
 
-- Watch mode parses PRD and creates tasks in Task Master automatically
-- Watch mode runs in continuous loop, executing tasks from Task Master
-- Events are emitted during task execution
-- Outer agent monitors events and reacts to issues
-- Watch mode exits when PRD is 100% complete (all tasks done, tests passing)
-- Stop execution: `npx dev-loop stop` (stops watch mode daemon)
+- Each iteration gets fresh AI context (Ralph pattern)
+- Learnings accumulate in `progress.md` across iterations
+- Exits when PRD is 100% complete
+- Stop execution: `npx dev-loop stop` or `Ctrl+C`
 
-## Scenario 2: Monitoring a PRD Set (Unified Daemon Mode)
+## Scenario 2: PRD Set Execution (Parallel IterationRunners)
 
-**Use case**: Creating tasks from multiple related PRDs and executing them via unified daemon.
+**Use case**: Executing multiple related PRDs with parallel processing.
 
 ### Setup
 
@@ -123,37 +95,52 @@ setInterval(async () => {
 # Terminal 1: Start contribution mode
 npx dev-loop contribution start --prd .taskmaster/planning/my-set/index.md.yml
 
-# Terminal 2: Create tasks from PRD set (exits immediately after task creation)
+# Terminal 2: Execute PRD set (parallel IterationRunners per PRD)
 npx dev-loop prd-set execute .taskmaster/planning/my-set --debug
-
-# Terminal 3: Execute tasks via watch mode daemon (unified daemon)
-npx dev-loop watch --until-complete
 ```
 
-### Monitoring
+### What Happens
 
-Same monitoring options as Scenario 1 (manual polling, automated monitoring, or hybrid).
+1. PrdSetOrchestrator discovers PRDs in set
+2. DependencyGraphBuilder determines execution levels
+3. For each level, parallel IterationRunners execute concurrently
+4. Each PRD gets fresh context isolation
+5. Results aggregated when all complete
 
-**Note**: Events are emitted by watch mode daemon during task execution. PRD set execute doesn't emit events (exits immediately after task creation).
+### Expected Output
 
-### Expected Behavior
+```
+Executing PRD set: my-set
+  PRDs in set: 5
+  Mode: Parallel execution (fresh IterationRunner per PRD)
 
-- PRD set execute creates tasks in Task Master and exits immediately
-- Watch mode daemon picks up tasks from Task Master and executes them
-- Events are emitted during task execution (watch mode daemon)
-- Outer agent monitors events and reacts to issues
-- Watch mode exits when PRD is 100% complete (all tasks done, tests passing)
-- Stop execution: `npx dev-loop stop` (stops watch mode daemon)
+Level 0: Executing 2 PRDs in parallel
+  ✓ PRD-A completed (15 iterations, 8 tasks)
+  ✓ PRD-B completed (12 iterations, 6 tasks)
 
-## Scenario 3: Unified Daemon Mode with Automated Monitoring
+Level 1: Executing 3 PRDs in parallel
+  ✓ PRD-C completed (10 iterations, 5 tasks)
+  ...
 
-**Use case**: Unattended execution with automatic issue resolution using unified daemon architecture.
+Execution Complete:
+  All PRDs executed using parallel IterationRunner instances.
+```
+
+## Scenario 3: Unattended Execution with Automated Monitoring
+
+**Use case**: Long-running execution with automatic issue resolution.
 
 ### Configuration
 
 ```javascript
 // devloop.config.js
 module.exports = {
+  iteration: {
+    maxIterations: 100,
+    contextThreshold: 90,
+    autoHandoff: true,
+    persistLearnings: true,
+  },
   mcp: {
     eventMonitoring: {
       enabled: true,
@@ -161,7 +148,7 @@ module.exports = {
       thresholds: {
         'json:parse_failed': {
           count: 3,
-          windowMs: 600000,  // 10 minutes
+          windowMs: 600000,
           autoAction: true,
           confidence: 0.8
         },
@@ -170,11 +157,6 @@ module.exports = {
           autoAction: true,
           confidence: 0.7
         },
-        'file:boundary_violation': {
-          count: 1,
-          autoAction: true,
-          confidence: 0.9
-        },
         'contribution:issue_detected': {
           count: 1,
           autoAction: true,
@@ -182,19 +164,8 @@ module.exports = {
         }
       },
       actions: {
-        requireApproval: ['validation:failed'],
-        autoExecute: [
-          'json:parse_failed',
-          'task:blocked',
-          'file:boundary_violation',
-          'contribution:issue_detected'
-        ],
+        autoExecute: ['json:parse_failed', 'task:blocked', 'contribution:issue_detected'],
         maxInterventionsPerHour: 10
-      },
-      metrics: {
-        trackInterventions: true,
-        trackSuccessRate: true,
-        trackRollbacks: true
       }
     }
   }
@@ -207,20 +178,14 @@ module.exports = {
 # Start contribution mode
 npx dev-loop contribution start --prd <path>
 
-# For Single PRD: Watch mode handles everything
-npx dev-loop watch --until-complete
+# Execute PRD set
+npx dev-loop prd-set execute <path>
 
-# For PRD Set: Create tasks, then execute via watch mode
-npx dev-loop prd-set execute <path>  # Creates tasks, exits
-npx dev-loop watch --until-complete  # Executes tasks, exits when complete
-
-# To stop execution:
-npx dev-loop stop  # Stops watch mode daemon (which executes all tasks)
+# To stop
+npx dev-loop stop
 ```
 
-### Monitoring
-
-The monitoring service starts automatically when contribution mode is activated (if enabled in config). Check status periodically:
+### Monitoring Status
 
 ```typescript
 // Check monitoring status
@@ -228,16 +193,6 @@ const { status, metrics, effectiveness } = await devloop_event_monitor_status();
 
 console.log(`Monitoring: ${status.isRunning ? 'Active' : 'Inactive'}`);
 console.log(`Interventions: ${metrics.totalInterventions} (${(metrics.successRate * 100).toFixed(1)}% success)`);
-
-// Review recent interventions
-const { interventions, summary } = await devloop_event_monitor_interventions({
-  limit: 10
-});
-
-interventions.forEach(intervention => {
-  const status = intervention.success ? '✓' : '✗';
-  console.log(`${status} ${intervention.issueType} (${intervention.strategy})`);
-});
 ```
 
 ## Scenario 4: Debugging Specific Issues
@@ -247,11 +202,8 @@ interventions.forEach(intervention => {
 ### Setup
 
 ```bash
-# Start contribution mode
-npx dev-loop contribution start --prd <path>
-
-# Start execution
-npx dev-loop watch --until-complete
+# Start with debug logging
+npx dev-loop prd-set execute <path> --debug
 ```
 
 ### Focused Monitoring
@@ -259,23 +211,32 @@ npx dev-loop watch --until-complete
 ```typescript
 // Monitor specific event types
 const { events } = await devloop_events_poll({
-  types: ['json:parse_failed', 'json:parse_retry'],
-  taskId: 'task-123',  // Specific task if needed
+  types: ['json:parse_failed', 'task:blocked'],
+  taskId: 'REQ-1.1',
   limit: 100
 });
 
-// Analyze pattern
 events.forEach(event => {
   console.log(`[${event.timestamp}] ${event.type}`);
   console.log(`  Severity: ${event.severity}`);
   console.log(`  Data: ${JSON.stringify(event.data, null, 2)}`);
 });
+```
 
-// Check intervention effectiveness for specific issue
-const { interventions } = await devloop_event_monitor_interventions({
-  issueType: 'json-parsing-failure',
-  limit: 20
-});
+### Check State Files
+
+```bash
+# View current handoff context
+cat .devloop/handoff.md
+
+# View accumulated learnings
+cat .devloop/progress.md
+
+# View discovered patterns
+cat .devloop/learned-patterns.md
+
+# Check retry counts
+cat .devloop/retry-counts.json
 ```
 
 ## Scenario 5: Multi-Terminal Workflow
@@ -286,41 +247,32 @@ const { interventions } = await devloop_event_monitor_interventions({
 
 **Terminal 1: Contribution Mode**
 ```bash
-# Start contribution mode
 npx dev-loop contribution start --prd <path>
-
-# Monitor contribution mode status
 npx dev-loop contribution status
 ```
 
 **Terminal 2: Execution**
 ```bash
-# Start execution
-npx dev-loop watch --until-complete
-# OR
-npx dev-loop prd-set execute <path> --debug > /tmp/execution.log 2>&1
+# Execute PRD set
+npx dev-loop prd-set execute <path> --debug
 ```
 
-**Terminal 3: Event Monitoring**
+**Terminal 3: Monitoring**
 ```bash
-# Monitor events via script or MCP tools
-# Using script:
-node scripts/monitor-events.js
+# Follow logs
+tail -f .devloop/progress.md
 
-# Or use MCP tools directly in Cursor
-# devloop_events_poll, devloop_event_monitor_status, etc.
+# Or use MCP tools in Cursor
+# devloop_events_poll, devloop_event_monitor_status
 ```
 
 **Terminal 4: Dev-Loop Development (Optional)**
 ```bash
-# Edit dev-loop code when issues detected
 cd node_modules/dev-loop
 npm run build
 
-# Commit and push changes
 git add .
-git commit -m "fix: enhance JSON parser for edge cases"
-git push
+git commit -m "fix: enhance error handling"
 ```
 
 ## Common Workflow Patterns
@@ -329,76 +281,68 @@ git push
 
 ```bash
 # 1. Start contribution mode
-npx dev-loop contribution start --prd .taskmaster/docs/my-prd.md
+npx dev-loop contribution start --prd <path>
 
-# 2. Start watch mode in background
-npx dev-loop watch --until-complete > /tmp/watch.log 2>&1 &
+# 2. Start execution in background
+npx dev-loop prd-set execute <path> > /tmp/execution.log 2>&1 &
 
-# 3. Monitor events actively
-# Use Cursor MCP tools or script to poll events every 3-5 seconds
+# 3. Monitor progress
+tail -f .devloop/progress.md
 
 # 4. When issue detected:
-#    - Review event details
+#    - Review .devloop/handoff.md for context
 #    - Fix dev-loop code
 #    - Rebuild: cd node_modules/dev-loop && npm run build
-#    - Continue monitoring
 ```
 
 ### Pattern B: Unattended Execution
 
 ```bash
 # 1. Configure automated monitoring in devloop.config.js
-# 2. Start contribution mode
+# 2. Start execution
 npx dev-loop contribution start --prd <path>
+npx dev-loop prd-set execute <path>
 
-# 3. Start execution
-npx dev-loop watch --until-complete
-
-# 4. Check periodically:
-#    - Review intervention metrics
-#    - Check execution status
-#    - Verify progress
+# 3. Check periodically:
+cat .devloop/progress.md | tail -50
 ```
 
 ### Pattern C: Debug Session
 
 ```bash
-# 1. Start contribution mode with debug
-npx dev-loop contribution start --prd <path>
+# 1. Start with debug
+npx dev-loop prd-set execute <path> --debug 2>&1 | tee /tmp/debug.log
 
-# 2. Start execution with debug logging
-npx dev-loop watch --until-complete --debug > /tmp/debug.log 2>&1
+# 2. Review checkpoints
+ls -la .devloop/checkpoints/
 
-# 3. Monitor specific event types
-# 4. Analyze patterns in logs and events
-# 5. Fix issues and restart
+# 3. Analyze learnings
+cat .devloop/learned-patterns.md
 ```
 
-## Tips for Efficient Monitoring
+## Tips for Efficient Execution
 
-1. **Filter Events**: Only poll for events you care about to reduce noise
-2. **Poll Interval**: Use 5-10 seconds for active monitoring, 30+ seconds for background
-3. **Event Persistence**: Remember events are in-memory only - poll during execution
-4. **Hybrid Approach**: Use automated monitoring for common issues, manual polling for specific cases
-5. **Intervention Tracking**: Monitor intervention effectiveness to tune thresholds
-6. **Multiple Terminals**: Separate concerns across terminals for clarity
-7. **Log Monitoring**: Combine event polling with log monitoring for complete picture
+1. **Use fresh context**: IterationRunner resets AI context each iteration
+2. **Review learnings**: Check `progress.md` for accumulated insights
+3. **Monitor patterns**: Check `learned-patterns.md` for reusable solutions
+4. **State recovery**: Checkpoints enable crash recovery
+5. **Parallel PRDs**: Use PRD sets for concurrent execution
+6. **Event polling**: Poll every 5-10s for active monitoring
 
 ## Next Steps
 
 After running through these quick-start scenarios:
 
 1. Review [Contribution Mode Guide](CONTRIBUTION_MODE.md) for complete workflow
-2. Read [Execution Modes Guide](EXECUTION_MODES.md) to understand watch vs prd-set execute
-3. Study [Outer Agent Monitoring Guide](OUTER_AGENT_MONITORING.md) for monitoring best practices
-4. Check [Event Streaming Guide](EVENT_STREAMING.md) for event architecture details
-5. Explore [Proactive Monitoring Guide](PROACTIVE_MONITORING.md) for automated intervention system
+2. Study [Execution Modes Guide](EXECUTION_MODES.md) for detailed mode comparison
+3. Read [Outer Agent Monitoring Guide](OUTER_AGENT_MONITORING.md) for monitoring best practices
+4. Check [Event Streaming Guide](EVENT_STREAMING.md) for event architecture
+5. Explore [Architecture Guide](ARCHITECTURE.md) for codebase structure
 
 ## Related Documentation
 
-- [Contribution Mode Guide](CONTRIBUTION_MODE.md) - Complete contribution mode workflow
-- [Execution Modes Guide](EXECUTION_MODES.md) - Watch mode vs PRD set execute
-- [Outer Agent Monitoring Guide](OUTER_AGENT_MONITORING.md) - Monitoring best practices
+- [Contribution Mode Guide](CONTRIBUTION_MODE.md) - Two-agent architecture
+- [Execution Modes Guide](EXECUTION_MODES.md) - PRD set execution
+- [Outer Agent Monitoring Guide](OUTER_AGENT_MONITORING.md) - Monitoring practices
 - [Event Streaming Guide](EVENT_STREAMING.md) - Event streaming architecture
-- [Proactive Monitoring Guide](PROACTIVE_MONITORING.md) - Automated intervention system
 - [Getting Started Guide](GETTING_STARTED.md) - Development environment setup

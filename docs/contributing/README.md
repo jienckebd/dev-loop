@@ -26,7 +26,7 @@ Welcome! This guide helps you contribute to dev-loop's core codebase.
 ### Core Concepts
 
 - [Contribution Mode](CONTRIBUTION_MODE.md) - Two-agent architecture guide
-- [Execution Modes](EXECUTION_MODES.md) - Watch mode vs PRD set execute, when to use each
+- [Execution Modes](EXECUTION_MODES.md) - PRD set execution and run modes
 - [Outer Agent Monitoring](OUTER_AGENT_MONITORING.md) - Best practices for monitoring inner agent execution
 
 ### Observability & Monitoring
@@ -56,12 +56,12 @@ This activates two-agent architecture where:
 
 ### Execution Modes
 
-Contribution mode supports two execution modes:
+Contribution mode supports two execution modes using IterationRunner:
 
-- **Watch Mode (Single PRD)**: `npx dev-loop watch --until-complete` - Daemon mode for continuous iteration
-- **PRD Set Execute**: `npx dev-loop prd-set execute <path>` - One-shot execution for orchestrated PRD sets
+- **PRD Set Execute**: `npx dev-loop prd-set execute <path>` - Parallel IterationRunner instances per PRD (primary method)
+- **Single Run**: `npx dev-loop run` - Single iteration for debugging
 
-**See [Execution Modes Guide](EXECUTION_MODES.md) for when to use each mode.**
+**See [Execution Modes Guide](EXECUTION_MODES.md) for the IterationRunner architecture.**
 
 ### Event Monitoring
 

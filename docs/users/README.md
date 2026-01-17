@@ -34,22 +34,28 @@ Complete user guide for dev-loop - the autonomous development orchestrator that 
 
 ## Overview
 
-Dev-loop implements a **test-driven development loop**:
+Dev-loop implements a **test-driven development loop** using the Ralph pattern (fresh context per iteration):
 
 ```mermaid
 flowchart LR
-    PRD[PRD] --> Tasks[Task Master]
-    Tasks --> AI[AI Provider]
+    PRD[PRD] --> IR[IterationRunner]
+    IR --> LG[LangGraph]
+    LG --> AI[AI Provider]
     AI --> Code[Code Changes]
     Code --> Tests[Test Runner]
     Tests --> Logs[Log Analyzer]
-    Logs -->|Pass| Done[Mark Done]
+    Logs -->|Pass| Learn[Capture Learnings]
     Logs -->|Fail| Fix[Create Fix Task]
-    Fix --> AI
-    Done --> Tasks
+    Fix --> LG
+    Learn --> Done[Mark Done]
+    Done --> IR
 ```
 
-**Key principle**: Every task bundles feature code + test code. The loop continues until all tests pass.
+**Key principles**:
+- Every task bundles feature code + test code
+- Fresh AI context per iteration (Ralph pattern)
+- Learnings persist via `handoff.md` and `progress.md`
+- The loop continues until all tests pass
 
 ## Installation
 
@@ -67,10 +73,11 @@ echo "ANTHROPIC_API_KEY=your_key" > .env
 dev-loop init
 task-master init
 
-# Run
-task-master parse-prd --input=prd.md   # Create tasks from PRD
-dev-loop run                            # Execute one iteration
-dev-loop watch                          # Continuous mode
+# Execute PRD set (loop behavior determined by PRD set schema)
+dev-loop prd-set execute .taskmaster/planning/my-set/
+
+# Single iteration (for debugging)
+dev-loop run
 ```
 
 ## Configuration
@@ -183,8 +190,8 @@ module.exports = {
 | Command | Description |
 |---------|-------------|
 | `dev-loop init` | Initialize project |
+| `dev-loop prd-set execute <path>` | Execute PRD set (primary method) |
 | `dev-loop run [--task ID] [--debug]` | Execute one iteration |
-| `dev-loop watch [--debug]` | Continuous execution |
 | `dev-loop status` | Current progress |
 | `dev-loop pause` / `resume` | Control execution |
 
@@ -367,7 +374,7 @@ See [`../contributing/EVENT_STREAMING.md`](../contributing/EVENT_STREAMING.md) f
 ```mermaid
 stateDiagram-v2
     [*] --> Idle
-    Idle --> FetchingTask: run/watch
+    Idle --> FetchingTask: prd-set execute
     FetchingTask --> NoTasks: none pending
     FetchingTask --> ExecutingAI: task found
     NoTasks --> [*]
@@ -378,8 +385,8 @@ stateDiagram-v2
     RunningTests --> AnalyzingLogs: complete
     AnalyzingLogs --> MarkingDone: passed
     AnalyzingLogs --> CreatingFixTask: failed
-    MarkingDone --> FetchingTask: watch mode
-    MarkingDone --> [*]: run mode
+    MarkingDone --> FetchingTask: more tasks
+    MarkingDone --> [*]: complete
     CreatingFixTask --> FetchingTask
 ```
 
@@ -387,9 +394,9 @@ stateDiagram-v2
 
 | Component | Purpose |
 |-----------|---------|
-| **WorkflowEngine** | Main orchestration loop, state machine |
+| **IterationRunner** | Fresh context execution loop (Ralph pattern) |
+| **LangGraph StateGraph** | Workflow orchestration with checkpoints |
 | **TaskMasterBridge** | Wrapper around task-master-ai |
-| **StateManager** | JSON/YAML persistence, state recovery |
 | **CodeContextProvider** | Extract file signatures, imports, error context |
 | **ValidationGate** | Pre-apply validation, syntax checking |
 | **PatternLearningSystem** | Learn from outcomes, inject guidance |
@@ -645,7 +652,7 @@ Contribution mode enables two-agent architecture for contributing to dev-loop it
 **Quick Overview:**
 - **Outer Agent (You)**: Enhances dev-loop, manages tasks, monitors progress
 - **Inner Agent (Dev-Loop)**: Implements project code according to PRD requirements
-- **Execution**: Watch mode daemon executes tasks from Task Master
+- **Execution**: IterationRunner executes tasks with fresh context per iteration
 - **Monitoring**: Event streaming and proactive monitoring tools available
 
 **Outer agent responsibilities:**

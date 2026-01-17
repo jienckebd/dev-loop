@@ -3,7 +3,7 @@ title: "Execution Modes Guide"
 type: "guide"
 category: "contributing"
 audience: "both"
-keywords: ["execution", "watch", "daemon", "prd-set", "execute", "modes", "contribution"]
+keywords: ["execution", "prd-set", "execute", "modes", "iteration", "langgraph"]
 related_docs:
   - "CONTRIBUTION_MODE.md"
   - "EVENT_STREAMING.md"
@@ -16,251 +16,228 @@ contribution_mode: true
 
 # Execution Modes Guide
 
-Complete guide to dev-loop's execution modes: when to use `watch` (daemon mode) vs `prd-set execute` (one-shot execution).
+Complete guide to dev-loop's execution model using PRD sets, IterationRunner, and LangGraph architecture.
 
 ## Overview
 
-Dev-loop uses a **unified daemon mode architecture** where watch mode monitors Task Master for tasks from any source (PRD or PRD set).
-
-**Unified Architecture**:
-1. **PRD Set Execute**: Creates tasks in Task Master and exits immediately (one-shot)
-2. **Watch Mode (Daemon)**: Monitors Task Master for tasks from any source and executes them (continuous loop)
+Dev-loop's execution loop is determined by the **PRD set schema**. The `PrdSetOrchestrator` spawns parallel `IterationRunner` instances for each PRD, with each runner implementing the Ralph pattern of fresh AI context per iteration.
 
 ```mermaid
-flowchart TD
-    PRDSet[PRD Set] --> Execute[prd-set execute]
-    SinglePRD[Single PRD] --> Parse[Parse PRD]
-    Execute --> CreateTasks[Create Tasks in Task Master]
-    Parse --> CreateTasks
-    CreateTasks --> TaskMaster[Task Master<br/>All Tasks]
-    TaskMaster --> Watch[watch --until-complete<br/>Daemon Mode]
-    Watch --> Monitor[Monitor Task Master]
-    Monitor --> GetTasks[Get Pending Tasks]
-    GetTasks --> ExecuteTask[Execute Tasks]
-    ExecuteTask --> Complete{Complete?}
-    Complete -->|No| Monitor
-    Complete -->|Yes| Exit[Exit]
+flowchart TB
+    subgraph entry [Entry Points]
+        PRDSet[prd-set execute] --> PSO[PrdSetOrchestrator]
+        PSO --> IR1[IterationRunner PRD-1]
+        PSO --> IR2[IterationRunner PRD-2]
+        Run[run command] --> WE[WorkflowEngine]
+    end
+
+    subgraph iteration [Ralph Pattern]
+        IR1 --> Loop[Fresh Context Loop]
+        IR2 --> Loop
+        Loop --> Handoff[Generate handoff.md]
+        Handoff --> LG[LangGraph Iteration]
+        LG --> Learn[Persist Learnings]
+        Learn --> Check{Complete?}
+        Check -->|No| Loop
+        Check -->|Yes| Done[Exit]
+    end
 ```
 
-**Key Insight**: PRD sets create tasks in Task Master instead of executing directly. Watch mode (daemon) then monitors Task Master for tasks from any source and executes them. This unified approach ensures:
-- Single execution path via Task Master
-- `dev-loop stop` works universally (stops watch mode daemon)
-- All tasks visible in Task Master regardless of source
-- Better task coordination and visibility
+**Key concepts:**
+- **PRD Set Schema**: Defines dependencies and parallel execution structure
+- **PrdSetOrchestrator**: Spawns parallel IterationRunner instances per PRD
+- **IterationRunner**: Fresh context per iteration (Ralph pattern)
+- **LangGraph StateGraph**: Workflow orchestration with checkpoints
 
-## Watch Mode (Unified Daemon Mode)
-
-**Command**: `npx dev-loop watch --until-complete`
-
-**Mode**: Daemon (continuous loop until complete)
-
-**Use Case**: Universal daemon that monitors Task Master for tasks from any source (single PRD or PRD set)
-
-**Characteristics**:
-- Monitors Task Master for pending tasks from any source (PRD or PRD set)
-- Runs in a continuous loop until all tasks are done and tests pass
-- Exits automatically when PRD is 100% complete
-- Suitable for both single PRDs and PRD sets (unified execution)
-- Event streaming is active during execution
-- Writes PID file (`.devloop.pid`) so `dev-loop stop` can stop it
-- Can be stopped with `Ctrl+C` or `npx dev-loop stop`
-
-**How it works**:
-1. Calls `workflowEngine.runOnce()` in a loop
-2. `runOnce()` gets pending tasks from Task Master via `taskBridge.getPendingTasks()`
-3. Executes tasks in dependency order
-4. Continues until all tasks complete and tests pass
-
-**Example**:
-```bash
-# Start contribution mode
-npx dev-loop contribution start --prd .taskmaster/docs/my-prd.md
-
-# Start watch mode (daemon)
-npx dev-loop watch --until-complete
-```
-
-**Output**:
-```
-Starting daemon mode (--until-complete: will exit when PRD is 100% complete)...
-Iteration 1: Running workflow
-Iteration 2: Task completed
-  ✓ Task: task-1
-Iteration 3: Running workflow
-...
-✓ PRD COMPLETE - All tasks done, tests passing
-```
-
-## PRD Set Execute (Task Creation Mode)
+## PRD Set Execute (Primary Method)
 
 **Command**: `npx dev-loop prd-set execute <path>`
 
-**Mode**: One-shot (creates tasks and exits immediately)
+**Use Case**: Execute PRD sets with parallel IterationRunner instances. The loop behavior is determined by the PRD set schema.
 
-**Use Case**: Create tasks from multiple related PRDs orchestrated together
+**How it works**:
+1. `PrdSetOrchestrator` discovers PRD set from `index.md.yml`
+2. `DependencyGraphBuilder` determines execution levels
+3. For each level, creates parallel `IterationRunner` per PRD
+4. Each runner executes independently with fresh context
+5. Results aggregated when all PRDs complete
 
-**Characteristics**:
-- Creates tasks in Task Master from all PRDs in the set
-- Exits immediately after task creation (does not execute tasks)
-- Suitable for orchestrating multiple PRDs with dependencies
-- Does NOT write PID file (exits immediately, no daemon needed)
-- Tasks are picked up by watch mode daemon for execution
+```mermaid
+flowchart TB
+    PRDSet[PRD Set] --> Discover[Discover PRDs]
+    Discover --> Deps[Build Dependency Graph]
+    Deps --> Levels[Execution Levels]
+    
+    Levels --> L0[Level 0]
+    Levels --> L1[Level 1]
+    
+    L0 --> IR_A[IterationRunner PRD-A]
+    L0 --> IR_B[IterationRunner PRD-B]
+    
+    L1 -->|waits for L0| IR_C[IterationRunner PRD-C]
+    
+    IR_A --> LG_A[LangGraph A]
+    IR_B --> LG_B[LangGraph B]
+    IR_C --> LG_C[LangGraph C]
+```
 
-**Example**:
 ```bash
-# Start contribution mode
-npx dev-loop contribution start --prd .taskmaster/planning/my-set/index.md.yml
+# Execute PRD set with parallel runners
+npx dev-loop prd-set execute .taskmaster/planning/my-set/
 
-# Create tasks from PRD set (exits after task creation)
-npx dev-loop prd-set execute .taskmaster/planning/my-set --debug
+# With concurrency limit
+npx dev-loop prd-set execute .taskmaster/planning/my-set/ --max-concurrent 3
 
-# Execute tasks via watch mode daemon
-npx dev-loop watch --until-complete
+# With debug logging
+npx dev-loop prd-set execute .taskmaster/planning/my-set/ --debug
 ```
 
 **Output**:
 ```
-Creating tasks from PRD set: my-set
+Executing PRD set: my-set
   PRDs in set: 5
-  Parent PRD: parent-prd
-  Child PRDs: 4
-  Mode: Unified daemon (tasks created in Task Master, watch mode executes them)
+  Mode: Parallel execution (fresh IterationRunner per PRD)
 
-✓ PRD SET TASKS CREATED - All PRD tasks in Task Master
-  PRDs with tasks created: 5/5
-  Failed PRDs: 0
-  Set ID: my-set
+Level 0: Executing 2 PRDs in parallel
+  ✓ PRD-A completed (15 iterations, 8 tasks)
+  ✓ PRD-B completed (12 iterations, 6 tasks)
 
-Next Steps:
-  1. Run: npx dev-loop watch --until-complete
-  2. Watch mode daemon will execute tasks from Task Master
-  3. Stop execution: npx dev-loop stop
+Level 1: Executing 3 PRDs in parallel
+  ✓ PRD-C completed (10 iterations, 5 tasks)
+  ✓ PRD-D completed (8 iterations, 4 tasks)
+  ✓ PRD-E completed (6 iterations, 3 tasks)
+
+Execution Complete:
+  All PRDs executed using parallel IterationRunner instances.
+  Check .devloop/progress.md for learnings and .devloop/handoff.md for context.
 ```
 
-## Unified Daemon Architecture
+**State files created**:
+- `.devloop/handoff.md` - Context for next iteration
+- `.devloop/progress.md` - Learnings and progress
+- `.devloop/learned-patterns.md` - Discovered patterns
+- `.devloop/checkpoints/` - LangGraph state checkpoints
 
-**Key Insight**: With unified daemon mode, PRD sets create tasks in Task Master instead of executing directly. Watch mode (daemon) then monitors Task Master for tasks from any source and executes them.
+## Single Run Mode
 
-**Benefits**:
-- **Single Execution Path**: All tasks executed via Task Master regardless of source
-- **Universal Stop Command**: `dev-loop stop` stops watch mode daemon (which executes all tasks)
-- **Task Visibility**: All tasks visible in Task Master regardless of source (PRD or PRD set)
-- **Better Coordination**: PRD sets create tasks, daemon executes them
-- **Simpler Mental Model**: PRD sets create tasks, watch mode executes them
+**Command**: `npx dev-loop run`
 
-**Why This Architecture**:
-- **PRD Sets**: Create tasks and exit (natural task creation, no execution needed)
-- **Watch Mode**: Monitors Task Master for all tasks (unified execution daemon)
-- **Stop Command**: Only watch mode needs PID file (PRD sets exit immediately after task creation)
+**Use Case**: Execute a single workflow iteration (for debugging).
+
+**How it works**:
+1. `WorkflowEngine.runOnce()` executes directly
+2. Fetches next pending task
+3. Generates code, applies, tests
+4. Marks done or creates fix task
+5. Exits after single iteration
+
+```bash
+# Run single iteration
+npx dev-loop run
+
+# With specific task
+npx dev-loop run --task REQ-1.1
+```
+
+**Note**: For continuous execution, use `prd-set execute` which uses IterationRunner with fresh context per iteration.
 
 ## Execution Mode Comparison
 
-| Aspect | Watch Mode | PRD Set Execute |
-|--------|------------|-----------------|
-| **Command** | `npx dev-loop watch --until-complete` | `npx dev-loop prd-set execute <path>` |
-| **Execution Type** | Daemon (continuous loop) | One-shot (runs to completion) |
-| **Use Case** | Single PRD | PRD set (multiple PRDs) |
-| **Completion** | When PRD is 100% complete | When all PRDs finish |
-| **Iteration** | Continuous until complete | Single execution |
-| **Event Streaming** | Active during execution | Active during execution |
-| **Stopping** | `Ctrl+C` or `npx dev-loop stop` | Exits when complete |
-| **Best For** | Iterative improvement | Orchestrated execution |
+| Aspect | PRD Set Execute | Single Run |
+|--------|-----------------|------------|
+| **Command** | `prd-set execute <path>` | `run` |
+| **Entry Point** | PrdSetOrchestrator | WorkflowEngine |
+| **Context** | Fresh per PRD iteration | Single context |
+| **Use Case** | Continuous execution | Debugging |
+| **Parallel** | Yes (per PRD) | No |
+| **Learnings** | Persisted per PRD | Not persisted |
+| **State Recovery** | Checkpoints per PRD | None |
 
-## Event Streaming in Unified Architecture
+## The Ralph Pattern
 
-With unified daemon mode, event streaming works as follows:
+All execution modes use the "Ralph pattern" for fresh context execution:
 
-- **Events Emitted**: Watch mode daemon emits events during task execution
-- **Event Buffer**: Events are buffered in-memory (max 1000 events)
-- **Polling**: Outer agent can poll events via `devloop_events_poll` MCP tool
-- **Monitoring**: Proactive monitoring service can run alongside watch mode daemon
+1. **Generate Handoff**: Create `handoff.md` with current state and context
+2. **Execute Iteration**: Run LangGraph workflow with fresh AI context
+3. **Persist Learnings**: Save discoveries to `progress.md`
+4. **Update Patterns**: Store reusable patterns in `learned-patterns.md`
+5. **Check Completion**: Continue if tasks remain, exit if complete
 
-**Important**: Events are emitted by watch mode daemon (the execution process), not a separate daemon. PRD set execute doesn't emit events because it only creates tasks and exits immediately. Event streaming is active when watch mode daemon is executing tasks.
+**Why fresh context?**
+- Prevents context pollution from previous iterations
+- Each iteration starts clean with handoff document
+- Learnings persist across iterations via files, not AI memory
+- Enables long-running executions without context degradation
 
-## Choosing the Right Workflow
+## State Files
 
-### For Single PRD:
-1. Start contribution mode: `npx dev-loop contribution start --prd <path>`
-2. Start watch mode: `npx dev-loop watch --until-complete`
-   - Watch mode parses PRD and creates tasks automatically
-   - Then executes tasks until complete
-   - Exits when PRD is 100% complete
+| File | Purpose | Created By |
+|------|---------|------------|
+| `.devloop/handoff.md` | Context for next iteration | ContextHandoff |
+| `.devloop/progress.md` | Learnings and progress | LearningsManager |
+| `.devloop/learned-patterns.md` | Discovered patterns | LearningsManager |
+| `.devloop/checkpoints/*.json` | LangGraph state | FileCheckpointer |
+| `.devloop/retry-counts.json` | Task retry tracking | TaskMasterBridge |
+| `.devloop/execution-state.json` | PRD coordination | PrdCoordinator |
 
-### For PRD Set:
-1. Start contribution mode: `npx dev-loop contribution start --prd <path>`
-2. Create tasks from PRD set: `npx dev-loop prd-set execute <path>`
-   - PRD set orchestrator creates tasks in Task Master
-   - Exits immediately after task creation
-3. Execute tasks via daemon: `npx dev-loop watch --until-complete`
-   - Watch mode daemon picks up tasks from Task Master
-   - Executes tasks until complete
-   - Exits when PRD is 100% complete
+## Configuration
 
-**Key Difference**: 
-- **Single PRD**: Watch mode handles both task creation and execution
-- **PRD Set**: PRD set execute creates tasks, watch mode executes them
+Configure iteration behavior in `devloop.config.js`:
 
-**Why This Architecture**:
-- PRD sets create tasks and exit (no execution needed)
-- Watch mode executes tasks from any source (unified daemon)
-- Single execution path via Task Master
-- `dev-loop stop` works universally (stops watch mode daemon)
-
-## Integration with Contribution Mode
-
-Unified daemon mode works seamlessly with contribution mode:
-
-```bash
-# Start contribution mode
-npx dev-loop contribution start --prd <path>
-
-# For Single PRD:
-npx dev-loop watch --until-complete
-# Watch mode parses PRD, creates tasks, and executes them
-
-# For PRD Set:
-npx dev-loop prd-set execute <path>  # Creates tasks, exits
-npx dev-loop watch --until-complete  # Executes tasks, exits when complete
-
-# To stop execution:
-npx dev-loop stop  # Stops watch mode daemon (which executes all tasks)
+```javascript
+module.exports = {
+  iteration: {
+    maxIterations: 100,        // Max iterations before stopping
+    contextThreshold: 90,      // Context usage % for auto-handoff
+    autoHandoff: true,         // Enable automatic handoff
+    persistLearnings: true,    // Save learnings to progress.md
+    updatePatterns: true,      // Update learned-patterns.md
+    handoffInterval: 5,        // Handoff every N iterations
+  },
+  prdSet: {
+    maxConcurrent: 3,          // Max parallel PRD runners
+    parallel: true,            // Enable parallel execution
+  },
+};
 ```
 
-Event monitoring:
-- Events are emitted during task execution (watch mode daemon)
-- Outer agent can poll events via MCP tools (`devloop_events_poll`)
-- Proactive monitoring service can run automatically (if enabled in config)
-- PRD set execute doesn't emit events (exits immediately after task creation)
+## Stopping Execution
+
+```bash
+# Stop all dev-loop processes
+npx dev-loop stop
+
+# Ctrl+C also works for interactive sessions
+```
+
+The `stop` command terminates all running IterationRunner instances and PrdSetOrchestrator processes.
 
 ## Troubleshooting
 
-### Watch Mode Issues
-
-**Watch mode not exiting when PRD is complete**:
-- Check if all tasks are marked as "done"
-- Verify tests are passing (PRD tracker checks test status)
-- Check for blocked tasks that may prevent completion
-
-**Watch mode stopping unexpectedly**:
-- Check for errors in dev-loop logs
-- Verify contribution mode is still active
-- Check if max iterations reached (configurable via `--max-iterations`)
-
 ### PRD Set Execution Issues
 
-**PRD set execution blocking**:
-- Check if PRDs have unresolved dependencies
-- Verify all PRDs in the set are valid
-- Check PRD set state file for status
+- Verify all PRDs in set are valid
+- Check dependency graph for circular dependencies
+- Review per-PRD checkpoints in `.devloop/checkpoints/`
+- Check `maxConcurrent` setting if hitting resource limits
 
-**PRD set not completing**:
-- Review failed PRDs in the result
-- Check execution logs for errors
-- Verify PRD set orchestrator is progressing
+### Execution Not Completing
+
+- Check if all tasks are marked as "done"
+- Verify tests are passing
+- Check for blocked tasks with unresolved dependencies
+- Review `.devloop/progress.md` for stalled patterns
+
+### State Recovery
+
+If execution crashes, IterationRunner can recover from checkpoints:
+- LangGraph checkpoints preserve workflow state
+- Handoff document preserves context
+- Retry counts prevent infinite loops
 
 ## Related Documentation
 
-- [Contribution Mode Guide](CONTRIBUTION_MODE.md) - Complete contribution mode workflow
-- [Event Streaming Guide](EVENT_STREAMING.md) - Event streaming architecture and usage
-- [Outer Agent Monitoring Guide](OUTER_AGENT_MONITORING.md) - Best practices for monitoring execution
-- [Quick Start Guide](QUICK_START.md) - Quick-start scenarios for common use cases
+- [Contribution Mode Guide](CONTRIBUTION_MODE.md) - Two-agent architecture
+- [Event Streaming Guide](EVENT_STREAMING.md) - Event monitoring
+- [Outer Agent Monitoring Guide](OUTER_AGENT_MONITORING.md) - Monitoring best practices
+- [Architecture Guide](ARCHITECTURE.md) - Codebase structure

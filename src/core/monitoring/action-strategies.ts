@@ -12,7 +12,8 @@ import { IssueClassification } from './issue-classifier';
 import { DevLoopEvent } from '../utils/event-stream';
 import { logger } from '../utils/logger';
 import { getEventStream } from '../utils/event-stream';
-import { UnifiedStateManager } from '../state/StateManager';
+import { TaskMasterBridge } from '../execution/task-bridge';
+import { loadConfig } from '../../config/loader';
 
 export interface ActionStrategy {
   name: string;
@@ -172,17 +173,11 @@ export function createTaskBlockingStrategy(config: Config): ActionStrategy {
           }
         }
 
-        // Reset retry count using UnifiedStateManager
+        // Reset retry count using TaskBridge
         try {
-          const stateManager = new UnifiedStateManager(process.cwd());
-          await stateManager.initialize();
-          await stateManager.updateExecutionState((draft) => {
-            // Reset retry count for task in current PRD if active
-            if (draft.active.prdId && draft.prds[draft.active.prdId]) {
-              const prd = draft.prds[draft.active.prdId];
-              prd.retryCounts[taskId] = 0;
-            }
-          });
+          const config = await loadConfig();
+          const taskBridge = new TaskMasterBridge(config);
+          await taskBridge.resetRetryCount(taskId);
         } catch (error) {
           logger.warn('[TaskBlockingStrategy] Failed to reset retry count:', error);
         }
@@ -810,19 +805,13 @@ async function fixTaskDependencyDeadlock(config: Config, classification: IssueCl
     }
 
     if (blockedTasks.length > 0) {
-      // Reset retry counts for blocked tasks using UnifiedStateManager
+      // Reset retry counts for blocked tasks using TaskBridge
       try {
-        const stateManager = new UnifiedStateManager(process.cwd());
-        await stateManager.initialize();
-        await stateManager.updateExecutionState((draft) => {
-          // Reset retry counts for all blocked tasks in current PRD if active
-          if (draft.active.prdId && draft.prds[draft.active.prdId]) {
-            const prd = draft.prds[draft.active.prdId];
-            for (const taskId of blockedTasks) {
-              prd.retryCounts[taskId] = 0;
-            }
-          }
-        });
+        const config = await loadConfig();
+        const taskBridge = new TaskMasterBridge(config);
+        for (const taskId of blockedTasks) {
+          await taskBridge.resetRetryCount(taskId);
+        }
         logger.info(`[ContributionModeStrategy] Reset retry counts for ${blockedTasks.length} blocked tasks`);
       } catch (error) {
         logger.warn('[ContributionModeStrategy] Failed to reset retry counts:', error);

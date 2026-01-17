@@ -227,14 +227,14 @@ async function hybridMonitoring() {
 
 ## Typical Workflow
 
-### For Single PRD (Watch Mode)
+### PRD Set Execution
 
 ```bash
 # Terminal 1: Start contribution mode
 npx dev-loop contribution start --prd .taskmaster/docs/my-prd.md
 
-# Terminal 2: Start watch mode (daemon)
-npx dev-loop watch --until-complete
+# Terminal 2: Execute PRD set (IterationRunner per PRD)
+npx dev-loop prd-set execute .taskmaster/planning/my-set/
 
 # Terminal 3: Monitor events (outer agent)
 # Option A: Manual polling
@@ -480,7 +480,7 @@ events.forEach(event => {
 **Problem**: Events poll returns empty array
 
 **Possible Causes**:
-1. Execution not active (check if watch/prd-set execute is running)
+1. Execution not active (check if prd-set execute is running)
 2. Events not yet emitted (execution may be in early phase)
 3. Event buffer cleared (events are in-memory, cleared on restart)
 4. Filter too restrictive (check event filters)
@@ -522,6 +522,6 @@ events.forEach(event => {
 
 - [Contribution Mode Guide](CONTRIBUTION_MODE.md) - Complete contribution mode workflow
 - [Event Streaming Guide](EVENT_STREAMING.md) - Event streaming architecture and usage
-- [Execution Modes Guide](EXECUTION_MODES.md) - Watch mode vs PRD set execute
+- [Execution Modes Guide](EXECUTION_MODES.md) - PRD set execution
 - [Proactive Monitoring Guide](PROACTIVE_MONITORING.md) - Automated intervention system
 - [Quick Start Guide](QUICK_START.md) - Quick-start scenarios

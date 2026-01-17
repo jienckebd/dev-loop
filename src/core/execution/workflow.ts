@@ -4,10 +4,10 @@ import { exec } from 'child_process';
 import { promisify } from 'util';
 import * as crypto from 'crypto';
 import { Config } from '../../config/schema/core';
-import { Task, WorkflowState, CodeChanges, TaskContext } from '../../types';
+import { Task, CodeChanges, TaskContext } from '../../types';
 import { TaskMasterBridge } from './task-bridge';
-import { StateManager } from '../utils/state-manager';
 import { TemplateManager } from '../utils/template-manager';
+import { findFuzzyMatch, findAggressiveMatch, calculateSimilarity, levenshteinDistance } from '../utils/string-matcher';
 import { InterventionSystem } from './intervention';
 import { AIProviderFactory } from '../../providers/ai/factory';
 import { TestRunnerFactory } from '../../providers/test-runners/factory';
@@ -88,7 +88,6 @@ interface HookContext {
 
 export class WorkflowEngine {
   private taskBridge: TaskMasterBridge;
-  private stateManager: StateManager;
   private templateManager: TemplateManager;
   private frameworkLoader: FrameworkLoader;
   private frameworkPlugin?: FrameworkPlugin;
@@ -160,7 +159,6 @@ export class WorkflowEngine {
     this.loadTokenUsage();
     
     this.taskBridge = new TaskMasterBridge(config);
-    this.stateManager = new StateManager(config);
     this.templateManager = new TemplateManager(
       config.templates.source,
       config.templates.customPath,
@@ -186,41 +184,6 @@ export class WorkflowEngine {
       this.debug
     );
 
-    // Initialize validation infrastructure
-    try {
-      const { ValidationScriptExecutor } = require('../validation/script-executor');
-      const { AssertionValidatorRegistry } = require('../validation/assertion-validators');
-      const { ValidationGateExecutor } = require('../validation/gate-executor');
-      const { PrerequisiteValidator } = require('../validation/prerequisite-validator');
-      const { TestDataManager } = require('../testing/data');
-      const { TestSpecExecutor } = require('../testing/spec-executor');
-
-      const scriptExecutor = new ValidationScriptExecutor(this.debug);
-      const assertionRegistry = new AssertionValidatorRegistry(scriptExecutor, this.debug);
-      const validationGateExecutor = new ValidationGateExecutor(scriptExecutor, assertionRegistry, this.debug);
-      const prerequisiteValidator = new PrerequisiteValidator(scriptExecutor, this.debug);
-      const testDataManager = new TestDataManager(this.debug);
-      const testSpecExecutor = new TestSpecExecutor(
-        this.testRunner,
-        scriptExecutor,
-        assertionRegistry,
-        testDataManager,
-        this.debug
-      );
-
-      // Store for use in workflow
-      (this as any).validationScriptExecutor = scriptExecutor;
-      (this as any).assertionValidatorRegistry = assertionRegistry;
-      (this as any).validationGateExecutor = validationGateExecutor;
-      (this as any).prerequisiteValidator = prerequisiteValidator;
-      (this as any).testDataManager = testDataManager;
-      (this as any).testSpecExecutor = testSpecExecutor;
-    } catch (err) {
-      if (this.debug) {
-        console.warn('[WorkflowEngine] Could not initialize validation infrastructure:', err);
-      }
-    }
-
     // Initialize debug metrics if enabled
     if ((config as any).metrics?.enabled !== false) {
       const metricsPath = (config as any).metrics?.path || '.devloop/metrics.json';
@@ -241,7 +204,6 @@ export class WorkflowEngine {
 
       // CostCalculator is static, no instance needed
       // Note: These classes still use direct file I/O but now point to unified metrics.json
-      // TODO: Refactor to use UnifiedStateManager.recordMetrics() for full consolidation
       this.prdMetrics = new PrdMetrics(prdMetricsPath);
       this.phaseMetrics = new PhaseMetrics(phaseMetricsPath);
       this.prdSetMetrics = new PrdSetMetrics();
@@ -293,30 +255,6 @@ export class WorkflowEngine {
       }
     }
 
-    // Initialize complex issue analyzers
-    try {
-      const { FrameworkPatternLibrary } = require('../analysis/pattern/framework-pattern-library');
-      const { DebuggingStrategyAdvisor } = require('../analysis/code/debugging-strategy-advisor');
-      const { InvestigationTaskGenerator } = require('../generation/investigation-task-generator');
-      const { ExecutionOrderAnalyzer } = require('../analysis/code/execution-order-analyzer');
-      const { ComponentInteractionAnalyzer } = require('../analysis/code/component-interaction-analyzer');
-      const { RootCauseAnalyzer } = require('../analysis/error/root-cause-analyzer');
-
-      this.frameworkPatternLibrary = new FrameworkPatternLibrary();
-      this.debuggingStrategyAdvisor = new DebuggingStrategyAdvisor(this.frameworkPatternLibrary, this.debug);
-      this.investigationTaskGenerator = new InvestigationTaskGenerator(this.debuggingStrategyAdvisor, this.debug);
-      this.executionOrderAnalyzer = new ExecutionOrderAnalyzer(this.frameworkPatternLibrary, this.debug);
-      this.componentInteractionAnalyzer = new ComponentInteractionAnalyzer(this.frameworkPatternLibrary, this.debug);
-      this.rootCauseAnalyzer = new RootCauseAnalyzer(
-        this.executionOrderAnalyzer,
-        this.componentInteractionAnalyzer,
-        this.debug
-      );
-    } catch (err) {
-      if (this.debug) {
-        console.warn('[WorkflowEngine] Could not initialize complex issue analyzers:', err);
-      }
-    }
   }
 
   /**
@@ -610,8 +548,6 @@ export class WorkflowEngine {
 
   async runOnce(): Promise<WorkflowResult> {
     try {
-      // Update state: FetchingTask
-      await this.updateState({ status: 'fetching-task' });
 
       // Load PRD metadata if not already loaded (for watch mode)
       // This ensures maxConcurrency from PRD is respected
@@ -622,7 +558,6 @@ export class WorkflowEngine {
       // Fetch next pending task
       const tasks = await this.taskBridge.getPendingTasks();
       if (tasks.length === 0) {
-        await this.updateState({ status: 'idle' });
         return { completed: false, noTasks: true };
       }
 
@@ -657,7 +592,6 @@ export class WorkflowEngine {
           console.log('[INFO] All pending tasks are validation tasks that require external execution.');
           console.log('[INFO] Run browser/drush/playwright tests manually, then mark tasks as done.');
         }
-        await this.updateState({ status: 'idle' });
         return {
           completed: false,
           noTasks: true, // Effectively no tasks dev-loop can process
@@ -749,11 +683,9 @@ export class WorkflowEngine {
       }
 
       // All levels processed
-      await this.updateState({ status: 'idle' });
       return { completed: true, noTasks: false };
     } catch (error) {
       logger.error(`[WorkflowEngine] Error in runOnce: ${error instanceof Error ? error.message : String(error)}`);
-      await this.updateState({ status: 'idle' });
       return {
         completed: false,
         noTasks: false,
@@ -778,10 +710,6 @@ export class WorkflowEngine {
       }
     }
     try {
-      await this.updateState({
-        status: 'executing-ai',
-        currentTask: task,
-      });
 
       // Start metrics tracking
       const startTime = Date.now();
@@ -838,7 +766,6 @@ export class WorkflowEngine {
               }
               // Don't create more investigation tasks, just wait for existing ones
               await this.taskBridge.updateTaskStatus(task.id, 'pending');
-              await this.updateState({ status: 'idle' });
               return { completed: false, noTasks: false };
             }
             // All investigation tasks are done - proceed with main task
@@ -914,7 +841,6 @@ export class WorkflowEngine {
                 // Mark original task as pending to wait for investigation
                 await this.taskBridge.updateTaskStatus(task.id, 'pending');
                 console.log(`[WorkflowEngine] Task ${task.id} marked as pending - investigation tasks must complete first`);
-                await this.updateState({ status: 'idle' });
                 return { completed: false, noTasks: false }; // Exit early - investigation tasks created
               }
             }
@@ -1519,7 +1445,6 @@ export class WorkflowEngine {
               await this.taskBridge.updateTaskStatus(task.id, 'pending');
             }
 
-            await this.updateState({ status: 'idle' });
             return {
               completed: false,
               noTasks: false,
@@ -1546,7 +1471,6 @@ export class WorkflowEngine {
             codeChanges: changes,
           });
 
-          await this.updateState({ status: 'idle' });
           return {
             completed: true,
             noTasks: false,
@@ -1578,7 +1502,6 @@ export class WorkflowEngine {
             codeChanges: changes,
           });
 
-          await this.updateState({ status: 'idle' });
           return {
             completed: true,
             noTasks: false,
@@ -1588,13 +1511,10 @@ export class WorkflowEngine {
         }
       }
 
-      // Update state: ApplyingChanges
-      await this.updateState({ status: 'applying-changes' });
 
       // Check if approval is needed
       const needsApproval = await this.intervention.requiresApproval(changes);
       if (needsApproval) {
-        await this.updateState({ status: 'awaiting-approval' });
         const approval = await this.intervention.requestApproval(changes);
         if (!approval.approved) {
           // Reject changes, mark task as pending again
@@ -1604,7 +1524,6 @@ export class WorkflowEngine {
             this.debugMetrics.completeRun('failed');
           }
           await this.taskBridge.updateTaskStatus(task.id, 'pending');
-          await this.updateState({ status: 'idle' });
           return {
             completed: false,
             noTasks: false,
@@ -1784,7 +1703,6 @@ export class WorkflowEngine {
                   // Don't mark as failed - we're retrying after recovery
                 }
 
-                await this.updateState({ status: 'idle' });
                 return {
                   completed: false,
                   noTasks: false,
@@ -1828,7 +1746,6 @@ export class WorkflowEngine {
             }
           }
 
-          await this.updateState({ status: 'idle' });
           return {
             completed: false,
             noTasks: false,
@@ -1894,7 +1811,6 @@ export class WorkflowEngine {
         console.error('[WorkflowEngine] Failed patches:\n' + patchErrors);
 
         // Create fix task with patch failure details AND actual file content
-        await this.updateState({ status: 'creating-fix-task' });
 
         // Extract actual file content for failed patches to help next agent
         let fileContextForFix = '';
@@ -1950,7 +1866,6 @@ export class WorkflowEngine {
           }
         }
 
-        await this.updateState({ status: 'idle' });
         return {
           completed: false,
           noTasks: false,
@@ -2028,7 +1943,6 @@ export class WorkflowEngine {
             await this.taskBridge.updateTaskStatus(task.id, 'pending');
           }
 
-          await this.updateState({ status: 'idle' });
           return {
             completed: false,
             noTasks: false,
@@ -2041,7 +1955,6 @@ export class WorkflowEngine {
       // Execute post-apply hooks (e.g., cache clearing for Drupal)
       if (this.config.hooks?.postApply && this.config.hooks.postApply.length > 0) {
         console.log('[WorkflowEngine] Running post-apply hooks...');
-        await this.updateState({ status: 'running-post-apply-hooks' });
         await this.executePostApplyHooks();
         console.log('[WorkflowEngine] Post-apply hooks completed');
       }
@@ -2049,13 +1962,10 @@ export class WorkflowEngine {
       // Execute pre-test hooks (e.g., cache clearing)
       if (this.config.hooks?.preTest && this.config.hooks.preTest.length > 0) {
         console.log('[WorkflowEngine] Running pre-test hooks...');
-        await this.updateState({ status: 'running-pre-test-hooks' });
         await this.executePreTestHooks();
         console.log('[WorkflowEngine] Pre-test hooks completed');
       }
 
-      // Update state: RunningTests
-      await this.updateState({ status: 'running-tests' });
 
       // Check testStrategy to determine if we should run full test suite
       const testStrategy = (task as any).testStrategy as string | undefined;
@@ -2117,8 +2027,6 @@ export class WorkflowEngine {
         );
       }
 
-      // Update state: AnalyzingLogs
-      await this.updateState({ status: 'analyzing-logs' });
 
       // Analyze logs if configured
       const logAnalysisStart = Date.now();
@@ -2190,8 +2098,8 @@ export class WorkflowEngine {
       // Filter test failures to only consider those related to task's modified files
       let relevantTestFailure = false;
       if (!testResult.success && testResult.output) {
-        const currentState = await this.stateManager.getWorkflowState();
-        const modifiedFiles = (currentState as any).filesModified || [];
+        // Get modified files from the changes object
+        const modifiedFiles = changes.files.map(f => f.path);
         // Check if test failure mentions any of the modified files
         const failureRelatesToTask = modifiedFiles.some((file: string) => {
           // Extract filename from path
@@ -2233,7 +2141,6 @@ export class WorkflowEngine {
       if (hasErrors) {
         try {
         // Create fix task
-        await this.updateState({ status: 'creating-fix-task' });
 
         // Build comprehensive error description including log errors and smoke test failures
         let errorDescription = '';
@@ -2514,8 +2421,6 @@ export class WorkflowEngine {
           this.debugMetrics.completeRun('failed');
         }
 
-        await this.updateState({ status: 'idle' });
-
         return {
           completed: false,
           noTasks: false,
@@ -2531,8 +2436,6 @@ export class WorkflowEngine {
         }
       }
 
-      // Update state: MarkingDone
-      await this.updateState({ status: 'marking-done' });
 
       // Mark task as done
       await this.taskBridge.updateTaskStatus(task.id, 'done');
@@ -2566,13 +2469,7 @@ export class WorkflowEngine {
         this.debugMetrics.completeRun('completed');
       }
 
-      // Update workflow state
-      const state = await this.stateManager.getWorkflowState();
-      await this.updateState({
-        status: 'idle',
-        completedTasks: state.completedTasks + 1,
-        currentTask: undefined,
-      });
+      // State is now managed by LangGraph - no legacy state update needed
 
       return {
         completed: true,
@@ -2584,7 +2481,6 @@ export class WorkflowEngine {
       if (this.debugMetrics) {
         this.debugMetrics.completeRun('failed');
       }
-      await this.updateState({ status: 'idle' });
       return {
         completed: false,
         noTasks: false,
@@ -2693,7 +2589,7 @@ export class WorkflowEngine {
               if (this.debug) {
                 console.log(`[WorkflowEngine] Exact match failed for patch ${i + 1}, attempting fuzzy match...`);
               }
-              const fuzzyMatch = this.findFuzzyMatch(content, patch.search);
+              const fuzzyMatch = findFuzzyMatch(content, patch.search);
               if (fuzzyMatch) {
                 content = content.replace(fuzzyMatch, patch.replace);
                 console.log(`[WorkflowEngine] Applied patch ${i + 1} using fuzzy match (whitespace tolerance)`);
@@ -3151,14 +3047,16 @@ export class WorkflowEngine {
       return { healthy: true };
     }
 
-    // If URL provided, do HTTP health check
+    // If URL provided, do HTTP health check (uses native fetch, Node 18+)
     if (healthCheckUrl) {
       try {
-        const { default: fetch } = await import('node-fetch');
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 15000);
         const response = await fetch(healthCheckUrl, {
           method: 'GET',
-          timeout: 15000,
+          signal: controller.signal,
         });
+        clearTimeout(timeoutId);
 
         if (response.status >= 200 && response.status < 500) {
           return { healthy: true };
@@ -3273,171 +3171,6 @@ export class WorkflowEngine {
   }
 
   /**
-   * Find fuzzy match for search string with whitespace tolerance
-   */
-  private findFuzzyMatch(content: string, search: string): string | null {
-    // Normalize whitespace in search string
-    const normalizedSearch = search.replace(/\s+/g, ' ').trim();
-    const searchLines = normalizedSearch.split('\n');
-
-    if (searchLines.length === 0) return null;
-
-    // Try to find first line of search string
-    const firstLine = searchLines[0].trim();
-    if (firstLine.length < 10) return null; // Too short for reliable matching
-
-    // Find all occurrences of first line (with whitespace tolerance)
-    const contentLines = content.split('\n');
-    const candidates: Array<{ startIdx: number; match: string }> = [];
-
-    for (let i = 0; i < contentLines.length; i++) {
-      const normalizedLine = contentLines[i].replace(/\s+/g, ' ').trim();
-      if (normalizedLine.includes(firstLine) || firstLine.includes(normalizedLine)) {
-        // Found potential match, try to match full search string
-        let matchedLines: string[] = [];
-        let searchIdx = 0;
-        let contentIdx = i;
-
-        // Try to match consecutive lines
-        while (searchIdx < searchLines.length && contentIdx < contentLines.length) {
-          const normalizedSearchLine = searchLines[searchIdx].replace(/\s+/g, ' ').trim();
-          const normalizedContentLine = contentLines[contentIdx].replace(/\s+/g, ' ').trim();
-
-          if (normalizedContentLine.includes(normalizedSearchLine) ||
-              normalizedSearchLine.includes(normalizedContentLine) ||
-              (normalizedSearchLine.length > 20 && normalizedContentLine.length > 20 &&
-               this.calculateSimilarity(normalizedSearchLine, normalizedContentLine) > 0.8)) {
-            matchedLines.push(contentLines[contentIdx]);
-            searchIdx++;
-            contentIdx++;
-          } else {
-            // Allow skipping blank lines in content
-            if (normalizedContentLine.trim() === '') {
-              contentIdx++;
-              continue;
-            }
-            break;
-          }
-        }
-
-        // If we matched most of the search string, consider it a match
-        if (matchedLines.length >= Math.max(1, searchLines.length * 0.7)) {
-          candidates.push({
-            startIdx: i,
-            match: matchedLines.join('\n')
-          });
-        }
-      }
-    }
-
-    // Return the first candidate that's close enough
-    if (candidates.length > 0) {
-      return candidates[0].match;
-    }
-
-    return null;
-  }
-
-  /**
-   * Aggressive content matching - try to find the right place to apply a patch
-   * even when exact and fuzzy matching fail
-   */
-  private findAggressiveMatch(
-    content: string,
-    search: string,
-    replace: string
-  ): { newContent: string; lineNumber: number } | null {
-    const searchLines = search.split('\n');
-    const contentLines = content.split('\n');
-
-    if (searchLines.length === 0) return null;
-
-    // Strategy 1: Find a unique identifier in the search string (method name, variable, etc.)
-    const identifierMatch = search.match(/(?:function|class|const|public|private|protected)\s+([a-zA-Z_][a-zA-Z0-9_]*)/);
-    if (identifierMatch) {
-      const identifier = identifierMatch[1];
-
-      // Find lines containing this identifier
-      for (let i = 0; i < contentLines.length; i++) {
-        if (contentLines[i].includes(identifier)) {
-          // Check if this looks like the right context
-          // Get context around the identifier
-          const contextStart = Math.max(0, i - 5);
-          const contextEnd = Math.min(contentLines.length, i + searchLines.length + 5);
-          const contextBlock = contentLines.slice(contextStart, contextEnd).join('\n');
-
-          // Check similarity of context to search string
-          const similarity = this.calculateSimilarity(
-            contextBlock.replace(/\s+/g, ' ').trim().substring(0, 500),
-            search.replace(/\s+/g, ' ').trim().substring(0, 500)
-          );
-
-          if (similarity > 0.5) {
-            // Found a good match - try to determine the exact replacement range
-            const replaceStart = i;
-            const replaceEnd = Math.min(contentLines.length, i + searchLines.length);
-
-            // Create new content with the replacement
-            const newLines = [
-              ...contentLines.slice(0, replaceStart),
-              replace,
-              ...contentLines.slice(replaceEnd)
-            ];
-
-            return {
-              newContent: newLines.join('\n'),
-              lineNumber: i + 1
-            };
-          }
-        }
-      }
-    }
-
-    // Strategy 2: Look for first and last line anchors
-    const firstSearchLine = searchLines[0].trim();
-    const lastSearchLine = searchLines[searchLines.length - 1].trim();
-
-    if (firstSearchLine.length > 15 && lastSearchLine.length > 15) {
-      for (let i = 0; i < contentLines.length - searchLines.length; i++) {
-        const contentFirstLine = contentLines[i].trim();
-        const contentLastLine = contentLines[i + searchLines.length - 1]?.trim() || '';
-
-        const firstSimilarity = this.calculateSimilarity(firstSearchLine, contentFirstLine);
-        const lastSimilarity = this.calculateSimilarity(lastSearchLine, contentLastLine);
-
-        if (firstSimilarity > 0.8 && lastSimilarity > 0.8) {
-          // Found matching anchors
-          const newLines = [
-            ...contentLines.slice(0, i),
-            replace,
-            ...contentLines.slice(i + searchLines.length)
-          ];
-
-          return {
-            newContent: newLines.join('\n'),
-            lineNumber: i + 1
-          };
-        }
-      }
-    }
-
-    return null;
-  }
-
-  /**
-   * Calculate similarity between two strings (simple Levenshtein-based)
-   */
-  private calculateSimilarity(str1: string, str2: string): number {
-    const longer = str1.length > str2.length ? str1 : str2;
-    const shorter = str1.length > str2.length ? str2 : str1;
-
-    if (longer.length === 0) return 1.0;
-
-    const distance = this.levenshteinDistance(longer, shorter);
-    return (longer.length - distance) / longer.length;
-  }
-
-  /**
    * Extract PHP method names from file content
    */
   private extractPhpMethodNames(content: string): string[] {
@@ -3527,37 +3260,6 @@ export class WorkflowEngine {
     context += '\n**CRITICAL**: Do NOT invent service names. If a service does not exist in this list, do not use it.\n';
 
     return context;
-  }
-
-  /**
-   * Calculate Levenshtein distance between two strings
-   */
-  private levenshteinDistance(str1: string, str2: string): number {
-    const matrix: number[][] = [];
-
-    for (let i = 0; i <= str2.length; i++) {
-      matrix[i] = [i];
-    }
-
-    for (let j = 0; j <= str1.length; j++) {
-      matrix[0][j] = j;
-    }
-
-    for (let i = 1; i <= str2.length; i++) {
-      for (let j = 1; j <= str1.length; j++) {
-        if (str2.charAt(i - 1) === str1.charAt(j - 1)) {
-          matrix[i][j] = matrix[i - 1][j - 1];
-        } else {
-          matrix[i][j] = Math.min(
-            matrix[i - 1][j - 1] + 1,
-            matrix[i][j - 1] + 1,
-            matrix[i - 1][j] + 1
-          );
-        }
-      }
-    }
-
-    return matrix[str2.length][str1.length];
   }
 
   private async getCodebaseContext(task: Task): Promise<{
@@ -4237,21 +3939,6 @@ export class WorkflowEngine {
     await this.executeHooks('postTest', { event: 'postTest' });
   }
 
-  private async updateState(updates: Partial<WorkflowState>): Promise<void> {
-    const currentState = await this.stateManager.getWorkflowState();
-    const newState: WorkflowState = {
-      ...currentState,
-      ...updates,
-    };
-
-    // Calculate progress
-    if (newState.totalTasks > 0) {
-      newState.progress = newState.completedTasks / newState.totalTasks;
-    }
-
-    await this.stateManager.saveWorkflowState(newState);
-  }
-
   shutdown(): void {
     this.shutdownRequested = true;
   }
@@ -4487,133 +4174,6 @@ export class WorkflowEngine {
   /**
    * Run autonomous PRD execution - test-driven development loop
    */
-  /**
-   * Create tasks from PRD requirements in Task Master (for unified daemon mode)
-   * 
-   * This method parses PRD requirements and creates tasks in Task Master without executing them.
-   * Used by PRD set orchestrator to create tasks that will be picked up by watch mode daemon.
-   * 
-   * @param prdPath - Path to PRD file
-   * @param prdSetId - Optional PRD set ID for task metadata
-   * @returns Promise resolving to number of tasks created
-   */
-  async createTasksFromPrd(prdPath: string, prdSetId?: string): Promise<number> {
-    // Parse PRD config overlay and merge with base config
-    const configParser = new PrdConfigParser(this.debug);
-    const prdMetadata = await configParser.parsePrdMetadata(prdPath);
-
-    // Extract PRD ID for task metadata
-    const prdId = prdMetadata?.prd?.id || path.basename(prdPath, path.extname(prdPath));
-
-    // Parse PRD requirements
-    const prdParser = new PrdParser(this.aiProvider, this.debug);
-    const prdConfig = (this.config as any).prd || {};
-    const useStructuredParsing = prdConfig.useStructuredParsing !== false;
-    const parseResult = await prdParser.parseWithConfig(prdPath, useStructuredParsing);
-    let requirements = parseResult.requirements;
-
-    // Resolve dependencies if enabled
-    const resolveDependencies = prdConfig.resolveDependencies === true;
-    if (resolveDependencies && prdConfig.dependencies) {
-      requirements = this.resolveRequirementDependencies(requirements, prdConfig.dependencies);
-    }
-
-    // Mark existing tasks from other PRD sets as deferred before creating new tasks
-    const allTasks = await this.taskBridge.getAllTasks();
-    const currentPrdSetId = prdSetId || 'unknown';
-    let deferredCount = 0;
-
-    for (const task of allTasks) {
-      const taskPrdSetId = (task as any).prdSetId;
-      // Check if task is already deferred by checking task details
-      const taskDetails = task.details ? JSON.parse(task.details) : {};
-      const isDeferred = taskDetails.deferredBy !== undefined;
-      
-      // If task belongs to a different PRD set and is not already done/deferred
-      if (taskPrdSetId && taskPrdSetId !== currentPrdSetId &&
-          task.status !== 'done' && !isDeferred) {
-        // Update task with deferred metadata (store in details, keep status as 'pending' or 'blocked')
-        taskDetails.deferredReason = `Another PRD set (${currentPrdSetId}) is executing`;
-        taskDetails.deferredBy = currentPrdSetId;
-        taskDetails.deferredAt = new Date().toISOString();
-        
-        // Mark as blocked to prevent execution (deferred is not a valid TaskStatus)
-        await this.taskBridge.updateTaskStatus(task.id, 'blocked');
-        await this.taskBridge.updateTask(task.id, {
-          details: JSON.stringify(taskDetails),
-        } as any);
-        deferredCount++;
-      }
-    }
-
-    if (deferredCount > 0) {
-      console.log(`[WorkflowEngine] Deferred ${deferredCount} tasks from other PRD sets`);
-    }
-
-    // Create tasks from requirements
-    let taskCount = 0;
-    console.log('[WorkflowEngine] Creating tasks from PRD requirements...');
-    try {
-      for (const req of requirements) {
-        if (req.status === 'pending') {
-          // Map requirement priority (must/should/could) to task priority (critical/high/medium/low)
-          let taskPriority: 'critical' | 'high' | 'medium' | 'low' = 'medium';
-          if (req.priority === 'must') {
-            taskPriority = 'critical';
-          } else if (req.priority === 'should') {
-            taskPriority = 'high';
-          } else if (req.priority === 'could') {
-            taskPriority = 'low';
-          }
-
-          const taskDetails = {
-            requirementId: req.id,
-            acceptanceCriteria: req.acceptanceCriteria || [],
-            type: req.type || 'functional',
-            createdAt: new Date().toISOString(),
-            // CRITICAL: Include target files for codebase context discovery
-            targetFiles: req.implementationFiles || [],
-          };
-          
-          // Add PRD context to task details
-          if (prdId) {
-            (taskDetails as any).prdId = prdId;
-          }
-          if (prdSetId) {
-            (taskDetails as any).prdSetId = prdSetId;
-          }
-
-          // Namespace task ID by prdSetId to avoid collisions between PRD sets
-          const namespacedTaskId = prdSetId ? `${prdSetId}--${req.id}` : req.id;
-          
-          const task: Task = {
-            id: namespacedTaskId,
-            title: req.description || `Complete: ${req.id}`,
-            description: req.description || `Implement requirement: ${req.id}`,
-            status: 'pending',
-            priority: taskPriority,
-            details: JSON.stringify(taskDetails),
-            // Add dependencies from requirement if present - also namespace them
-            ...(req.dependencies && req.dependencies.length > 0 
-              ? { dependencies: req.dependencies.map((dep: string) => prdSetId ? `${prdSetId}--${dep}` : dep) } 
-              : {}),
-          };
-          await this.taskBridge.createTask(task);
-          taskCount++;
-          if (this.debug) {
-            console.log(`[WorkflowEngine] Created task: ${req.id}`);
-          }
-        }
-      }
-      console.log(`[WorkflowEngine] Created ${taskCount} task(s) from PRD requirements`);
-    } catch (error: any) {
-      console.warn(`[WorkflowEngine] Failed to create tasks: ${error.message}`);
-      throw error;
-    }
-
-    return taskCount;
-  }
-
   async runAutonomousPrd(prdPath: string): Promise<PrdExecutionResult> {
     // Parse PRD config overlay and merge with base config
     const configParser = new PrdConfigParser(this.debug);

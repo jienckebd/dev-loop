@@ -126,8 +126,8 @@ For quick-start scenarios and common contribution mode workflows, see [QUICK_STA
 
 **Common Scenarios**:
 
-1. **Single PRD (Watch Mode)**: Use `npx dev-loop watch --until-complete` for daemon mode execution
-   - See [Quick Start - Scenario 1](QUICK_START.md#scenario-1-monitoring-a-single-prd-watch-mode)
+1. **PRD Set Execution**: Use `npx dev-loop prd-set execute <path>` for IterationRunner execution
+   - See [Quick Start - Scenario 1](QUICK_START.md#scenario-1-prd-set-execution)
 
 2. **PRD Set (One-Shot Execution)**: Use `npx dev-loop prd-set execute <path>` for orchestrated execution
    - See [Quick Start - Scenario 2](QUICK_START.md#scenario-2-monitoring-a-prd-set-one-shot-execution)
@@ -135,7 +135,7 @@ For quick-start scenarios and common contribution mode workflows, see [QUICK_STA
 3. **Automated Monitoring**: Configure proactive monitoring service for unattended execution
    - See [Quick Start - Scenario 3](QUICK_START.md#scenario-3-automated-monitoring-only)
 
-**Understanding Execution Modes**: See [EXECUTION_MODES.md](EXECUTION_MODES.md) for complete guide on watch mode vs PRD set execute.
+**Understanding Execution Modes**: See [EXECUTION_MODES.md](EXECUTION_MODES.md) for the IterationRunner architecture.
 
 **Monitoring Best Practices**: See [OUTER_AGENT_MONITORING.md](OUTER_AGENT_MONITORING.md) for monitoring approaches and best practices.
 

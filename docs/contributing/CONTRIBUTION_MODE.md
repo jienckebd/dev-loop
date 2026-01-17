@@ -92,8 +92,8 @@ flowchart TB
 # Start contribution mode
 npx dev-loop contribution start --prd <path>
 
-# Monitor progress
-npx dev-loop watch --until-complete
+# Execute PRD set
+npx dev-loop prd-set execute <path>
 
 # Check status
 npx dev-loop contribution status
@@ -619,23 +619,21 @@ Dev-loop validates boundaries programmatically:
 
 ## Workflow
 
-Contribution mode supports two execution modes depending on whether you're working with a single PRD or a PRD set. The workflow differs slightly for each.
+Execution is performed via PRD sets with parallel IterationRunner instances. The loop behavior is determined by the PRD set schema.
 
-### For Single PRD (Watch Mode)
-
-Use `watch` mode for single PRDs that need continuous iteration until complete:
+### PRD Set Execution
 
 1. **Start Contribution Mode:**
    ```bash
    npx dev-loop contribution start --prd .taskmaster/docs/my-prd.md
    ```
 
-2. **Start Watch Mode (Daemon):**
+2. **Execute PRD Set:**
    ```bash
-   npx dev-loop watch --until-complete
+   npx dev-loop prd-set execute .taskmaster/planning/my-set/
    ```
    
-   Watch mode runs in a continuous loop until the PRD is 100% complete. It exits automatically when all tasks are done and tests pass.
+   PrdSetOrchestrator spawns parallel IterationRunner instances per PRD, each with fresh context per iteration (Ralph pattern). Execution completes when all tasks are done and tests pass.
 
 3. **Monitor Events (Choose One):**
    
@@ -675,61 +673,53 @@ Use `watch` mode for single PRDs that need continuous iteration until complete:
    - Fix tasks if blocked
    - Review intervention outcomes
 
-5. **Watch Mode Exits:**
-   - Automatically exits when PRD is 100% complete (all tasks done, tests passing)
+5. **Execution Completes:**
+   - Automatically exits when all PRDs are 100% complete (all tasks done, tests passing)
    - Or press `Ctrl+C` to stop early
 
-**See [Execution Modes Guide](EXECUTION_MODES.md) for details on watch mode vs PRD set execute.**
+**See [Execution Modes Guide](EXECUTION_MODES.md) for details on PRD set execution.**
 
 **See [Outer Agent Monitoring Guide](OUTER_AGENT_MONITORING.md) for best practices on event monitoring.**
 
-### For PRD Set (Unified Daemon Mode)
+### Parallel Execution Details
 
-Use `prd-set execute` to create tasks from multiple related PRDs, then `watch` mode to execute them:
+Use `prd-set execute` for multiple related PRDs with parallel IterationRunner instances:
 
 1. **Start Contribution Mode:**
    ```bash
    npx dev-loop contribution start --prd .taskmaster/planning/my-set/index.md.yml
    ```
 
-2. **Create Tasks from PRD Set:**
+2. **Execute PRD Set (Parallel IterationRunners):**
    ```bash
    npx dev-loop prd-set execute .taskmaster/planning/my-set --debug
    ```
    
-   PRD set execute creates tasks in Task Master and exits immediately (does not execute tasks).
+   PrdSetOrchestrator creates parallel IterationRunner instances per PRD, executing immediately until all complete.
 
-3. **Execute Tasks via Watch Mode (Daemon):**
-   ```bash
-   npx dev-loop watch --until-complete
-   ```
-   
-   Watch mode daemon monitors Task Master for tasks from any source (PRD or PRD set) and executes them.
-
-4. **Monitor Events (Same Options as Above):**
+3. **Monitor Events:**
    - Automated monitoring (if enabled in config)
    - Manual polling via `devloop_events_poll`
    - Hybrid approach (both)
    
-   **Note**: Events are emitted by watch mode daemon during task execution. PRD set execute doesn't emit events (exits immediately after task creation).
+   Events are emitted by each IterationRunner during execution.
 
-5. **React to Issues (Same as Above):**
+4. **React to Issues:**
    - Enhance dev-loop code
    - Fix tasks
    - Review interventions
 
-6. **Stop Execution:**
+5. **Stop Execution:**
    ```bash
    npx dev-loop stop
    ```
-   
-   This stops watch mode daemon (which executes all tasks). PRD set execute doesn't write PID file (exits immediately after task creation).
 
-7. **Watch Mode Completes:**
-   - Exits automatically when PRD is 100% complete (all tasks done, tests passing)
+6. **Execution Completes:**
+   - Each PRD runner exits when complete
+   - PrdSetOrchestrator exits when all PRDs finish
    - Or stop manually with `npx dev-loop stop` or `Ctrl+C`
 
-**See [Execution Modes Guide](EXECUTION_MODES.md) for unified daemon architecture details.**
+**See [Execution Modes Guide](EXECUTION_MODES.md) for IterationRunner architecture details.**
 
 **See [Outer Agent Monitoring Guide](OUTER_AGENT_MONITORING.md) for monitoring best practices.**
 

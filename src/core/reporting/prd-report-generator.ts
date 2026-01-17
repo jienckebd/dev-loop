@@ -329,7 +329,7 @@ export class PrdReportGenerator {
 
     // Emit report generated event
     try {
-      const { emitEvent } = require('./event-stream');
+      const { emitEvent } = require('../utils/event-stream');
       emitEvent('report:generated', {
         setId,
         format: fullOptions.format,

@@ -159,7 +159,7 @@ cat .devloop/observations.json | jq '.observations[] | select(.type == "json_par
 ### Enable Debug Mode
 
 ```bash
-npx dev-loop watch --until-complete --debug
+npx dev-loop prd-set execute <path> --debug
 ```
 
 Debug output shows:

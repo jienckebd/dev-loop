@@ -1,5 +1,11 @@
-import { AIProviderManager } from './provider-manager';
+/**
+ * Embedding Service
+ *
+ * Uses LangChain embeddings for generating code embeddings.
+ */
+
 import { EmbeddingCacheManager, CodeItemMetadata } from './embedding-cache';
+import { LangChainEmbeddings } from '../providers/ai/langchain/embeddings';
 import { logger } from "../core/utils/logger";
 
 export interface CodeItem {
@@ -21,7 +27,7 @@ export interface SimilarItem {
 
 export class EmbeddingService {
   constructor(
-    private providerManager: AIProviderManager,
+    private embeddings: LangChainEmbeddings,
     private cache: EmbeddingCacheManager
   ) {}
 
@@ -35,9 +41,8 @@ export class EmbeddingService {
       return cached;
     }
 
-    // Generate embedding
-    const provider = this.providerManager.selectOptimalProvider('embedding');
-    const embedding = await provider.generateEmbedding(code);
+    // Generate embedding using LangChain
+    const embedding = await this.embeddings.embedQuery(code);
 
     // Cache it (we'll need metadata, but for single embeddings we can skip it)
     // For now, we'll just store the embedding without full metadata
@@ -68,12 +73,12 @@ export class EmbeddingService {
     }
 
     // Process remaining items in batches
-    const provider = this.providerManager.selectOptimalProvider('embedding');
-    const batchSize = provider.capabilities.batchSize;
+    // Use a fixed batch size of 100 for LangChain embeddings
+    const batchSize = 100;
 
     for (let i = 0; i < itemsToProcess.length; i += batchSize) {
       const batch = itemsToProcess.slice(i, i + batchSize);
-      await this.processBatch(batch, provider, results);
+      await this.processBatch(batch, results);
     }
 
     return results;
@@ -148,12 +153,11 @@ export class EmbeddingService {
    */
   private async processBatch(
     items: CodeItem[],
-    provider: any,
     results: Map<string, number[]>
   ): Promise<void> {
     try {
       const texts = items.map(item => item.content);
-      const embeddings = await provider.generateEmbeddings(texts);
+      const embeddings = await this.embeddings.embedDocuments(texts);
 
       // Store results and cache
       for (let i = 0; i < items.length; i++) {
@@ -162,12 +166,13 @@ export class EmbeddingService {
         results.set(item.id, embedding);
 
         // Cache the embedding with metadata
+        // Use default values for provider name and dimensions
         this.cache.set(
           item.fileHash,
           embedding,
           item.metadata,
-          provider.name,
-          provider.capabilities.embeddingDimensions.toString()
+          'langchain',
+          embedding.length.toString()
         );
       }
     } catch (error: any) {

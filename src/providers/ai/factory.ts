@@ -1,43 +1,50 @@
 import { Config } from '../../config/schema/core';
-import { AIProvider, AIProviderConfig } from './interface';
-import { AnthropicProvider } from './anthropic';
-import { OpenAIProvider } from './openai';
-import { GeminiProvider } from './gemini';
-import { OllamaProvider } from './ollama';
+import { AIProvider } from './interface';
+import { LangChainProvider } from './langchain/provider';
 import { CursorProvider } from './cursor';
+import { AmpProvider } from './amp';
 
 export class AIProviderFactory {
   static create(config: Config): AIProvider {
-    const providerConfig: AIProviderConfig = {
-      apiKey: config.ai.apiKey || process.env[this.getApiKeyEnvVar(config.ai.provider)] || '',
-      model: config.ai.model,
-      temperature: 0.7,
-      maxTokens: config.ai.maxTokens || 4000,
-      // Pass cursor rules path from config
-      cursorRulesPath: config.rules?.cursorRulesPath,
-      // Pass framework config for task detection and prompt customization
-      frameworkConfig: (config as any).framework,
-      // Pass session management config for provider-agnostic session support
-      sessionManagement: (config.ai as any).sessionManagement,
-    };
-
-    switch (config.ai.provider) {
-      case 'anthropic':
-        return new AnthropicProvider(providerConfig);
-      case 'openai':
-        return new OpenAIProvider(providerConfig);
-      case 'gemini':
-        return new GeminiProvider(providerConfig);
-      case 'ollama':
-        return new OllamaProvider(providerConfig);
-      case 'cursor':
-        return new CursorProvider({
-          ...providerConfig,
-          model: config.ai.model || 'auto',
-        });
-      default:
-        throw new Error(`Unknown AI provider: ${config.ai.provider}`);
+    // For cursor provider, use the original CursorProvider directly
+    // as it has specialized handling for Cursor CLI
+    if (config.ai.provider === 'cursor') {
+      return new CursorProvider({
+        apiKey: config.ai.apiKey || '',
+        model: config.ai.model || 'auto',
+        temperature: 0.7,
+        maxTokens: config.ai.maxTokens || 4000,
+        cursorRulesPath: config.rules?.cursorRulesPath,
+        frameworkConfig: (config as any).framework,
+        sessionManagement: (config.ai as any).sessionManagement,
+      });
     }
+
+    // For amp provider, use AmpProvider directly
+    // as it has specialized handling for Amp CLI
+    if (config.ai.provider === 'amp') {
+      return new AmpProvider({
+        apiKey: '', // Amp uses its own authentication
+        model: config.ai.model || 'auto',
+        temperature: 0.7,
+        maxTokens: config.ai.maxTokens || 4000,
+        cursorRulesPath: config.rules?.cursorRulesPath,
+        frameworkConfig: (config as any).framework,
+      });
+    }
+
+    // For all other providers, use LangChainProvider
+    return new LangChainProvider({
+      provider: config.ai.provider,
+      model: config.ai.model,
+      apiKey: config.ai.apiKey || process.env[this.getApiKeyEnvVar(config.ai.provider)] || '',
+      maxTokens: config.ai.maxTokens || 4000,
+      temperature: 0.7,
+      cursorRulesPath: config.rules?.cursorRulesPath,
+      frameworkConfig: (config as any).framework,
+      sessionManagement: (config.ai as any).sessionManagement,
+      debug: config.debug,
+    });
   }
 
   static createWithFallback(config: Config): AIProvider {

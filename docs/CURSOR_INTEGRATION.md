@@ -289,7 +289,7 @@ When `createObservabilityChats` is enabled, dev-loop can optionally create visib
 
 - **Agent configs** - Generated in `.cursor/agents/` for visibility in Cursor IDE
 - **Chat requests** - Created in `files-private/cursor/chat-requests.json` (optional, for observability only)
-- **Auto-processing** - Chat auto-processor (when watch mode is running) processes requests to create instruction files
+- **Auto-processing** - Chat auto-processor (when execution is running) processes requests to create instruction files
 - **Non-blocking** - Observability chat creation runs in parallel and doesn't block primary execution
 
 **Note**: Observability chats are optional and non-blocking. Primary execution uses background agents and doesn't require visible chats.
@@ -330,7 +330,7 @@ See [`docs/CURSOR_CHAT_AUTOMATION.md`](CURSOR_CHAT_AUTOMATION.md) (deprecated) f
 | `chatRequestsPath` | string | `files-private/cursor/chat-requests.json` | Path to chat requests JSON file |
 | `chatInstructionsPath` | string | `files-private/cursor/chat-instructions` | Path to chat instruction files directory |
 | `defaultMode` | enum | `'Ask'` | Default chat mode: `'Ask'`, `'Chat'`, or `'Compose'` |
-| `autoProcess` | boolean | `true` | Auto-process chat requests in watch mode |
+| `autoProcess` | boolean | `true` | Auto-process chat requests during execution |
 | `watchMode` | boolean | `true` | Enable file watching for new chat requests |
 | `processInterval` | number | `2000` | Polling interval in milliseconds |
 | `useBackgroundAgent` | boolean | `true` | Use background agent execution (--print mode) |
@@ -371,16 +371,16 @@ cursor: {
    }
    ```
 
-2. **Start watch mode**:
+2. **Execute PRD set**:
    ```bash
-   dev-loop watch
+   dev-loop prd-set execute <path>
    ```
 
 3. **Dev-loop automatically**:
    - Executes tasks using background agents (headless, primary execution)
    - Optionally generates observability agent configs (if `createObservabilityChats: true`)
    - Optionally creates chat requests for observability (if enabled)
-   - Auto-processes observability requests via background service (if watch mode running)
+   - Auto-processes observability requests via background service (if execution is running)
 
 ### Validation
 

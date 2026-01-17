@@ -5,20 +5,19 @@ import { promisify } from 'util';
 import { Config } from '../../config/schema/core';
 import { Task, TaskStatus, TaskType } from '../../types';
 import { emitEvent } from '../utils/event-stream';
-import { UnifiedStateManager } from '../state/StateManager';
 
 const execAsync = promisify(exec);
 
 export class TaskMasterBridge {
   private tasksPath: string;
-  private stateManager: UnifiedStateManager;
+  private retryCountsPath: string;
   private originalFormat: 'array' | 'tasks' | 'master' = 'master';
   private taskRetryCount: Map<string, number> = new Map();
   private maxRetries: number = 3;
 
   constructor(private config: Config) {
     this.tasksPath = path.resolve(process.cwd(), config.taskMaster.tasksPath);
-    this.stateManager = new UnifiedStateManager(process.cwd());
+    this.retryCountsPath = path.resolve(process.cwd(), '.devloop/retry-counts.json');
     // Allow config override for maxRetries
     this.maxRetries = (config as any).maxRetries || 3;
     // Load persisted retry counts (fire and forget - don't block constructor)
@@ -28,17 +27,14 @@ export class TaskMasterBridge {
   }
 
   /**
-   * Load retry counts from persistent storage
+   * Load retry counts from persistent storage (simple JSON file)
    */
   private async loadRetryCountsFromFile(): Promise<void> {
     try {
-      await this.stateManager.initialize();
-      const state = await this.stateManager.getExecutionState();
-      // Load retry counts from current PRD if active
-      if (state.active.prdId && state.prds[state.active.prdId]) {
-        const prd = state.prds[state.active.prdId];
-        this.taskRetryCount = new Map(Object.entries(prd.retryCounts || {}));
-        console.log(`[TaskBridge] Loaded ${this.taskRetryCount.size} retry counts from execution state`);
+      if (await fs.pathExists(this.retryCountsPath)) {
+        const data = await fs.readJson(this.retryCountsPath);
+        this.taskRetryCount = new Map(Object.entries(data));
+        console.log(`[TaskBridge] Loaded ${this.taskRetryCount.size} retry counts from ${this.retryCountsPath}`);
       }
     } catch (err) {
       // Start fresh if file is corrupted
@@ -48,22 +44,12 @@ export class TaskMasterBridge {
   }
 
   /**
-   * Save retry counts to persistent storage (using UnifiedStateManager)
+   * Save retry counts to persistent storage (simple JSON file)
    */
   private async saveRetryCountsToFile(): Promise<void> {
     try {
-      await this.stateManager.initialize();
-      const state = await this.stateManager.getExecutionState();
-      // Save retry counts to current PRD if active
-      if (state.active.prdId && state.prds[state.active.prdId]) {
-        await this.stateManager.updateExecutionState((draft) => {
-          if (draft.active.prdId && draft.prds[draft.active.prdId]) {
-            const prd = draft.prds[draft.active.prdId];
-            prd.retryCounts = Object.fromEntries(this.taskRetryCount);
-          }
-        });
-      }
-
+      await fs.ensureDir(path.dirname(this.retryCountsPath));
+      await fs.writeJson(this.retryCountsPath, Object.fromEntries(this.taskRetryCount), { spaces: 2 });
     } catch (err) {
       console.warn('[TaskBridge] Could not save retry counts:', err);
     }
@@ -86,8 +72,6 @@ export class TaskMasterBridge {
     const count = (this.taskRetryCount.get(baseId) || 0) + 1;
     this.taskRetryCount.set(baseId, count);
     await this.saveRetryCountsToFile();
-    // Also update via UnifiedStateManager
-    await this.stateManager.incrementRetryCount(baseId);
     return count;
   }
 
@@ -189,7 +173,6 @@ export class TaskMasterBridge {
       const tasks = await this.loadTasks();
 
       // Get active prdSetId from execution state to filter by PRD set
-      // Read directly from file to handle both UnifiedStateManager and PrdCoordinator formats
       let activePrdSetId: string | undefined;
       try {
         const stateFilePath = path.resolve(process.cwd(), '.devloop/execution-state.json');

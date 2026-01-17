@@ -249,23 +249,33 @@ addLoggedTool({
   }),
   execute: async (args: { config?: string }) => {
     const { loadConfig } = await import('../config/loader.js');
-    const { StateManager } = await import('../core/utils/state-manager.js');
+    const { TaskMasterBridge } = await import('../core/execution/task-bridge.js');
 
     const config = await loadConfig(args.config);
-    const stateManager = new StateManager(config);
-    const state = await stateManager.getWorkflowState();
+    const taskBridge = new TaskMasterBridge(config);
+    
+    // Get status from task counts
+    const allTasks = await taskBridge.getAllTasks();
+    const pendingTasks = allTasks.filter((t: any) => t.status === 'pending');
+    const completedTasks = allTasks.filter((t: any) => t.status === 'done');
+    const inProgressTasks = allTasks.filter((t: any) => t.status === 'in-progress');
+    
+    const currentTask = inProgressTasks[0] || pendingTasks[0];
+    const totalTasks = allTasks.length;
+    const completedCount = completedTasks.length;
+    const progress = totalTasks > 0 ? completedCount / totalTasks : 0;
 
     return JSON.stringify({
-      status: state.status,
-      currentTask: state.currentTask ? {
-        id: state.currentTask.id,
-        title: state.currentTask.title,
-        status: state.currentTask.status,
-        priority: state.currentTask.priority,
+      status: inProgressTasks.length > 0 ? 'running' : (pendingTasks.length > 0 ? 'idle' : 'complete'),
+      currentTask: currentTask ? {
+        id: currentTask.id,
+        title: currentTask.title,
+        status: currentTask.status,
+        priority: currentTask.priority,
       } : null,
-      completedTasks: state.completedTasks,
-      totalTasks: state.totalTasks,
-      progress: Math.round(state.progress * 100),
+      completedTasks: completedCount,
+      totalTasks,
+      progress: Math.round(progress * 100),
     });
   },
 });
@@ -372,20 +382,18 @@ addLoggedTool({
       const retryCounts = taskBridge.getAllRetryCounts();
       const skipInvestigation = (config as any).autonomous?.skipInvestigation;
 
-      // Read retry counts from execution state for accuracy
+      // Read retry counts from file
       let persistedRetryCounts: Record<string, number> = {};
       try {
-        // Dynamic import since this is ESM
-        const { UnifiedStateManager } = await import('../core/state/StateManager.js');
-        const stateManager = new UnifiedStateManager(process.cwd());
-        await stateManager.initialize();
-        const state = await stateManager.getExecutionState();
-        // Get retry counts from current PRD if active
-        if (state.active.prdId && state.prds[state.active.prdId]) {
-          persistedRetryCounts = state.prds[state.active.prdId].retryCounts || {};
+        const fs = await import('fs-extra');
+        const path = await import('path');
+        const retryCountsPath = path.resolve(process.cwd(), '.devloop/retry-counts.json');
+        if (await fs.pathExists(retryCountsPath)) {
+          persistedRetryCounts = await fs.readJson(retryCountsPath);
         }
       } catch {
         // Ignore - use in-memory retry counts from taskBridge as fallback
+        persistedRetryCounts = retryCounts;
       }
 
       return JSON.stringify({

@@ -46,6 +46,12 @@ export const PROVIDER_MODELS: Record<AIProviderName, ModelOption[]> = {
     { name: 'GPT-4 Turbo', value: 'gpt-4-turbo' },
     { name: 'GPT-4', value: 'gpt-4' },
   ],
+  amp: [
+    { name: 'Auto (Amp Selects Best Model)', value: 'auto' },
+    { name: 'Claude Sonnet 4', value: 'claude-sonnet-4-20250514' },
+    { name: 'Claude Opus 4.5', value: 'claude-opus-4-20250514' },
+    { name: 'GPT-4o', value: 'gpt-4o' },
+  ],
 };
 
 /**

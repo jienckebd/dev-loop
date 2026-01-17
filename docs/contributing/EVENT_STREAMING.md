@@ -814,12 +814,12 @@ sequenceDiagram
 
 ### Event Source
 
-**Critical**: Events are emitted by the execution process itself, not a separate daemon. The event stream is active whenever dev-loop is executing (watch mode or prd-set execute), regardless of execution mode.
+**Critical**: Events are emitted by IterationRunner instances during execution. The event stream is active whenever dev-loop is executing.
 
-- **Watch Mode**: Events are emitted during continuous loop execution
-- **PRD Set Execute**: Events are emitted during one-shot execution
-- **No Separate Daemon**: Event streaming does not require a separate daemon process
-- **Same Process**: Events are emitted from the same process that runs execution
+- **PRD Set Execute**: Events emitted by parallel IterationRunner instances per PRD
+- **Single Run**: Events emitted during single-iteration execution
+- **Same Process**: Events are emitted from the execution process
+- **LangGraph Integration**: Events correspond to LangGraph node transitions
 
 ## Event Monitoring Service vs Manual Polling
 
@@ -972,8 +972,8 @@ See [CONTRIBUTION_MODE.md](./CONTRIBUTION_MODE.md) for details on issue detectio
 ```mermaid
 flowchart TD
     Start[Start Contribution Mode] --> Monitor[Event Monitor Starts]
-    Monitor --> Watch[dev-loop watch]
-    Watch --> Poll[Monitor Polls Events]
+    Monitor --> Execute[prd-set execute]
+    Execute --> Poll[Monitor Polls Events]
     Poll --> Threshold{Threshold Exceeded?}
     Threshold -->|No| Poll
     Threshold -->|Yes| AutoIntervene{Auto-Intervention?}

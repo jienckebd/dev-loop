@@ -17,7 +17,10 @@ import { CodebaseGraph } from '../../core/analysis/code/codebase-graph';
 import { SemanticFileDiscovery } from '../../core/analysis/code/semantic-file-discovery';
 import { ASTParser } from '../../core/analysis/code/ast-parser';
 import { EmbeddingService } from '../../ai/embedding-service';
+import { EmbeddingCacheManager } from '../../ai/embedding-cache';
+import { LangChainEmbeddings } from '../../providers/ai/langchain/embeddings';
 import { AbstractionDetector } from "../../core/analysis/code/abstraction-detector";
+import { CodeQualityScanner } from "../../core/analysis/code/quality-scanner";
 import { Config } from '../../config/schema/core';
 
 // Tool schemas
@@ -90,8 +93,21 @@ async function getSemanticDiscovery(config: Config, debug: boolean): Promise<Sem
     const parser = await getASTParser(debug);
     const codebaseConfig = (config as any).codebase || {};
 
-    // Create embedding service (may not have API key)
-    const embeddingService = new EmbeddingService(config, debug);
+    // Create LangChain embeddings service
+    // Default to OpenAI for embeddings, but allow Ollama if provider is set to ollama
+    const embeddingsProvider = config.ai.provider === 'ollama' ? 'ollama' : 'openai';
+    const embeddings = new LangChainEmbeddings({
+      provider: embeddingsProvider,
+      apiKey: config.ai.apiKey || process.env.OPENAI_API_KEY || process.env.OLLAMA_API_KEY,
+      model: embeddingsProvider === 'ollama' ? 'nomic-embed-text' : 'text-embedding-3-small',
+      baseUrl: embeddingsProvider === 'ollama' ? 'http://localhost:11434' : undefined,
+    });
+
+    // Create embedding service with LangChain embeddings
+    const embeddingService = new EmbeddingService(
+      embeddings,
+      new EmbeddingCacheManager(process.cwd())
+    );
 
     semanticDiscovery = new SemanticFileDiscovery({
       projectRoot: process.cwd(),
@@ -106,7 +122,8 @@ async function getSemanticDiscovery(config: Config, debug: boolean): Promise<Sem
 
 async function getAbstractionDetector(debug: boolean): Promise<AbstractionDetector> {
   if (!abstractionDetector) {
-    abstractionDetector = new AbstractionDetector(debug);
+    const scanner = new CodeQualityScanner(debug);
+    abstractionDetector = new AbstractionDetector(scanner, debug);
   }
   return abstractionDetector;
 }

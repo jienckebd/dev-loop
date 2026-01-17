@@ -5,7 +5,7 @@ Dev-loop uses Unix domain sockets for reliable communication between the parent 
 ## Overview
 
 The IPC (Inter-Process Communication) system provides structured, bidirectional communication between:
-- **Parent Agent (WorkflowEngine)**: Orchestrates task execution
+- **Parent Agent (IterationRunner/WorkflowEngine)**: Orchestrates task execution
 - **Child Agents (Background Cursor Agents)**: Execute code generation tasks
 
 ## Architecture
@@ -207,7 +207,7 @@ When fallback is triggered:
 Set debug mode in config or use `--debug` flag:
 
 ```bash
-npx dev-loop watch --until-complete --debug
+npx dev-loop prd-set execute <path> --debug
 ```
 
 Debug output includes:

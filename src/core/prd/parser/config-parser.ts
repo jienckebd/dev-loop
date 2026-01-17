@@ -536,7 +536,7 @@ export class PrdConfigParser {
    */
   mergeWithBaseConfig(baseConfig: Config, prdConfig: Partial<Config>): Config {
     // Import the hierarchical merger
-    const { mergeConfigHierarchy } = require('./config-merger');
+    const { mergeConfigHierarchy } = require('../../../config/merger');
     return mergeConfigHierarchy(baseConfig, undefined, undefined, prdConfig as ConfigOverlay, undefined);
   }
 
@@ -555,7 +555,7 @@ export class PrdConfigParser {
     prdConfig?: ConfigOverlay,
     phaseConfig?: ConfigOverlay
   ): Config {
-    const { mergeConfigHierarchy } = require('./config-merger');
+    const { mergeConfigHierarchy } = require('../../../config/merger');
     return mergeConfigHierarchy(baseConfig, undefined, prdSetConfig, prdConfig, phaseConfig);
   }
 }

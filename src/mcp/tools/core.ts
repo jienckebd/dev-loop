@@ -1,7 +1,6 @@
 import { z } from 'zod';
 import { WorkflowEngine } from "../../core/execution/workflow";
 import { TaskMasterBridge } from "../../core/execution/task-bridge";
-import { StateManager } from "../../core/utils/state-manager";
 import { ConfigLoader, FastMCPType } from './index';
 import { truncateMcpResponse } from '../utils/truncate-response';
 
@@ -81,20 +80,30 @@ export function registerCoreTools(mcp: FastMCPType, getConfig: ConfigLoader): vo
     }),
     execute: async (args: { config?: string }, context: any) => {
       const config = await getConfig(args.config);
-      const stateManager = new StateManager(config);
-      const state = await stateManager.getWorkflowState();
+      const taskBridge = new TaskMasterBridge(config);
+      
+      // Get status from task counts
+      const allTasks = await taskBridge.getAllTasks();
+      const pendingTasks = allTasks.filter((t: any) => t.status === 'pending');
+      const completedTasks = allTasks.filter((t: any) => t.status === 'done');
+      const inProgressTasks = allTasks.filter((t: any) => t.status === 'in-progress');
+      
+      const currentTask = inProgressTasks[0] || pendingTasks[0];
+      const totalTasks = allTasks.length;
+      const completedCount = completedTasks.length;
+      const progress = totalTasks > 0 ? completedCount / totalTasks : 0;
 
       return JSON.stringify({
-        status: state.status,
-        currentTask: state.currentTask ? {
-          id: state.currentTask.id,
-          title: state.currentTask.title,
-          status: state.currentTask.status,
-          priority: state.currentTask.priority,
+        status: inProgressTasks.length > 0 ? 'running' : (pendingTasks.length > 0 ? 'idle' : 'complete'),
+        currentTask: currentTask ? {
+          id: currentTask.id,
+          title: currentTask.title,
+          status: currentTask.status,
+          priority: currentTask.priority,
         } : null,
-        completedTasks: state.completedTasks,
-        totalTasks: state.totalTasks,
-        progress: Math.round(state.progress * 100),
+        completedTasks: completedCount,
+        totalTasks,
+        progress: Math.round(progress * 100),
       });
     },
   });

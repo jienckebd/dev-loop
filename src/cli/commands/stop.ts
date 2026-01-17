@@ -5,37 +5,35 @@ import * as path from 'path';
 const PID_FILE = '.devloop.pid';
 const PID_DIR = '.devloop/pids';
 
-export function getPidDirPath(): string {
+function getPidDirPath(): string {
   return path.resolve(process.cwd(), PID_DIR);
 }
 
-export function getPidFilePath(): string {
+function getPidFilePath(): string {
   return path.resolve(process.cwd(), PID_FILE);
 }
 
-export function getPidFilePathForType(type: 'watch' | 'prd-set', setId?: string): string {
+function getPidFilePathForPrdSet(setId?: string): string {
   const pidDir = getPidDirPath();
-  if (type === 'watch') {
-    return path.join(pidDir, 'watch.pid');
-  } else {
-    const safeSetId = (setId || 'unknown').replace(/[^a-zA-Z0-9_-]/g, '_');
-    return path.join(pidDir, `prd-set-${safeSetId}.pid`);
-  }
+  const safeSetId = (setId || 'unknown').replace(/[^a-zA-Z0-9_-]/g, '_');
+  return path.join(pidDir, `prd-set-${safeSetId}.pid`);
 }
 
-export async function writePidFile(): Promise<void> {
+export async function writePidFile(setId?: string): Promise<void> {
   // Legacy support: also write to old location
   const pidPath = getPidFilePath();
   await fs.writeFile(pidPath, process.pid.toString(), 'utf-8');
   
-  // New location: write to pids directory
-  const watchPidPath = getPidFilePathForType('watch');
-  await fs.ensureDir(path.dirname(watchPidPath));
-  await fs.writeFile(watchPidPath, process.pid.toString(), 'utf-8');
+  // New location: write to pids directory for prd-set
+  if (setId) {
+    const prdSetPidPath = getPidFilePathForPrdSet(setId);
+    await fs.ensureDir(path.dirname(prdSetPidPath));
+    await fs.writeFile(prdSetPidPath, process.pid.toString(), 'utf-8');
+  }
 }
 
 export async function writePidFileForPrdSet(setId: string): Promise<void> {
-  const pidPath = getPidFilePathForType('prd-set', setId);
+  const pidPath = getPidFilePathForPrdSet(setId);
   await fs.ensureDir(path.dirname(pidPath));
   await fs.writeFile(pidPath, process.pid.toString(), 'utf-8');
 }
@@ -46,16 +44,10 @@ export async function removePidFile(): Promise<void> {
   if (await fs.pathExists(pidPath)) {
     await fs.remove(pidPath);
   }
-  
-  // Remove watch PID file
-  const watchPidPath = getPidFilePathForType('watch');
-  if (await fs.pathExists(watchPidPath)) {
-    await fs.remove(watchPidPath);
-  }
 }
 
 export async function removePidFileForPrdSet(setId: string): Promise<void> {
-  const pidPath = getPidFilePathForType('prd-set', setId);
+  const pidPath = getPidFilePathForPrdSet(setId);
   if (await fs.pathExists(pidPath)) {
     await fs.remove(pidPath);
   }
@@ -80,7 +72,7 @@ async function getAllPidFiles(): Promise<Array<{ path: string; pid: number; type
         const pidStr = await fs.readFile(pidPath, 'utf-8');
         const pid = parseInt(pidStr.trim(), 10);
         if (!isNaN(pid)) {
-          const type = file.startsWith('prd-set-') ? 'prd-set' : file.startsWith('watch') ? 'watch' : 'unknown';
+          const type = file.startsWith('prd-set-') ? 'prd-set' : 'unknown';
           results.push({ path: pidPath, pid, type });
         }
       } catch (error) {
@@ -93,16 +85,15 @@ async function getAllPidFiles(): Promise<Array<{ path: string; pid: number; type
 }
 
 /**
- * Stop all dev-loop processes (watch mode and prd-set execute)
+ * Stop all dev-loop processes
  * 
- * **Unified Daemon Mode**: With unified daemon mode, PRD sets create tasks in Task Master
- * and exit immediately. Only watch mode daemon runs continuously to execute tasks.
- * This command stops all dev-loop processes (watch mode daemon and prd-set execute processes).
+ * **Execution Model**: PRD sets use parallel IterationRunner instances for
+ * execution. The loop behavior is determined by the PRD set schema and
+ * parallel PRD execution, not by a separate command.
  * 
  * **Usage**:
- * - PRD sets create tasks: `npx dev-loop prd-set execute <path>` (writes PID file, exits after task creation)
- * - Watch mode executes tasks: `npx dev-loop watch --until-complete` (daemon, writes PID file)
- * - Stop execution: `npx dev-loop stop` (stops all dev-loop processes)
+ * - Execute PRD set: `npx dev-loop prd-set execute <path>`
+ * - Stop execution: `npx dev-loop stop`
  */
 export async function stopCommand(): Promise<void> {
   // Check both legacy PID file and new PID directory
@@ -115,7 +106,7 @@ export async function stopCommand(): Promise<void> {
       const pidStr = await fs.readFile(legacyPidPath, 'utf-8');
       const pid = parseInt(pidStr.trim(), 10);
       if (!isNaN(pid)) {
-        pidFiles.push({ path: legacyPidPath, pid, type: 'watch' });
+        pidFiles.push({ path: legacyPidPath, pid, type: 'legacy' });
       }
     } catch {
       // Skip invalid legacy PID file
@@ -130,7 +121,6 @@ export async function stopCommand(): Promise<void> {
 
   let stoppedCount = 0;
   let failedCount = 0;
-  let stoppedWatch = false;
 
   for (const { path: pidPath, pid, type } of pidFiles) {
     try {
@@ -144,7 +134,7 @@ export async function stopCommand(): Promise<void> {
       }
 
       // Send SIGTERM for graceful shutdown
-      const typeLabel = type === 'watch' ? 'watch mode daemon' : `prd-set execute (${pidPath.split('/').pop()?.replace('.pid', '') || 'unknown'})`;
+      const typeLabel = type === 'prd-set' ? `prd-set execute (${pidPath.split('/').pop()?.replace('.pid', '') || 'unknown'})` : 'process';
       console.log(chalk.cyan(`Stopping dev-loop ${typeLabel} (PID: ${pid})...`));
       process.kill(pid, 'SIGTERM');
 
@@ -162,9 +152,6 @@ export async function stopCommand(): Promise<void> {
 
       await fs.remove(pidPath);
       stoppedCount++;
-      if (type === 'watch') {
-        stoppedWatch = true;
-      }
       console.log(chalk.green(`✓ Dev-loop ${typeLabel} stopped`));
 
     } catch (error) {
@@ -181,9 +168,7 @@ export async function stopCommand(): Promise<void> {
 
   if (stoppedCount > 0) {
     console.log(chalk.green(`\n✓ Stopped ${stoppedCount} dev-loop process(es)`));
-    if (stoppedWatch) {
-      console.log(chalk.gray('  (Task execution stopped - tasks remain in Task Master)'));
-    }
+    console.log(chalk.gray('  (Task execution stopped - tasks remain in Task Master)'));
   }
 
   if (failedCount > 0) {

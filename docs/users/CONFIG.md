@@ -168,6 +168,47 @@ Captures learned project characteristics:
 - Pattern discovery during codebase analysis
 - Task type learning from execution
 
+### IterationRunner Configuration
+
+Controls the fresh-context execution loop (Ralph pattern):
+
+```javascript
+{
+  iteration: {
+    maxIterations: 100,        // Max iterations before stopping
+    contextThreshold: 90,      // Context usage % for auto-handoff
+    autoHandoff: true,         // Enable automatic handoff generation
+    persistLearnings: true,    // Save learnings to progress.md
+    updatePatterns: true,      // Update learned-patterns.md
+    handoffInterval: 5,        // Generate handoff every N iterations
+  },
+}
+```
+
+**Key Points**:
+- IterationRunner is the default execution entry point
+- Each iteration gets fresh AI context (Ralph pattern)
+- Learnings persist via `handoff.md` and `progress.md`
+- Checkpoints enable state recovery on crash
+
+### PRD Set Execution Configuration
+
+Controls parallel PRD execution:
+
+```javascript
+{
+  prdSet: {
+    parallel: true,            // Enable parallel PRD execution
+    maxConcurrent: 3,          // Max parallel IterationRunner instances
+  },
+}
+```
+
+**Key Points**:
+- PrdSetOrchestrator creates parallel IterationRunner per PRD
+- Dependency-aware scheduling via DependencyGraphBuilder
+- Each PRD gets isolated execution context
+
 ## Complete Configuration Example
 
 ```javascript

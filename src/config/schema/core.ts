@@ -25,13 +25,26 @@ const configSchemaBase = z.object({
     path: z.string().default('.devloop/metrics.json'),
   }).optional(),
   ai: z.object({
-    provider: z.enum(['anthropic', 'openai', 'gemini', 'ollama', 'cursor']),
-    model: z.string(), // For cursor: 'auto' (default) or specific model name
+    provider: z.enum(['anthropic', 'openai', 'gemini', 'ollama', 'cursor', 'amp']),
+    model: z.string(), // For cursor/amp: 'auto' (default) or specific model name
     fallback: z.string().optional(),
-    apiKey: z.string().optional(), // Not used for cursor provider
+    apiKey: z.string().optional(), // Not used for cursor/amp provider
     maxTokens: z.number().optional(),
     maxContextChars: z.number().optional(),
   }),
+  // Execution mode configuration (fresh-context by default)
+  execution: z.object({
+    mode: z.enum(['fresh-context', 'legacy']).default('fresh-context').describe('Execution mode: fresh-context (default) or legacy'),
+    maxIterations: z.number().default(100).describe('Maximum iterations for fresh-context mode'),
+    contextThreshold: z.number().min(50).max(100).default(90).describe('Context usage threshold (%) for auto-handoff'),
+    handoffInterval: z.number().default(5).describe('Force handoff every N iterations (fallback)'),
+    autoHandoff: z.boolean().default(true).describe('Enable automatic handoff when context threshold reached'),
+    persistLearnings: z.boolean().default(true).describe('Persist learnings to progress.md'),
+    updatePatterns: z.boolean().default(true).describe('Update patterns file with discoveries'),
+    progressFile: z.string().default('.devloop/progress.md').describe('Path to learnings progress file'),
+    patternsFile: z.string().default('.devloop/learned-patterns.md').describe('Path to learned patterns file'),
+    checkpointDir: z.string().default('.devloop/checkpoints').describe('Directory for LangGraph checkpoints'),
+  }).optional().describe('Fresh-context execution configuration'),
   templates: z.object({
     source: z.enum(['builtin', 'ai-dev-tasks', 'custom']),
     customPath: z.string().optional(),

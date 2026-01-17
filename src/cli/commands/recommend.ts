@@ -6,17 +6,10 @@ import { FrameworkLoader } from '../../frameworks';
 import { PatternLearningSystem } from "../../core/analysis/pattern/learner";
 import { ObservationTracker } from "../../core/tracking/observation-tracker";
 import { PluginRecommender } from "../../core/analysis/plugin-recommender";
-import { CodeQualityScanner } from "../../core/analysis/code/quality-scanner";
-import { AbstractionDetector } from "../../core/analysis/code/abstraction-detector";
-import { AIProviderManager } from '../../ai/provider-manager';
-import { EmbeddingService } from '../../ai/embedding-service';
-import { EmbeddingCacheManager } from '../../ai/embedding-cache';
-import { PatternClusterer } from '../../ai/pattern-clusterer';
-import { SemanticAnalyzer } from '../../ai/semantic-analyzer';
-import { FeedbackStore } from '../../ai/feedback-store';
-import { AnthropicPatternProvider } from '../../providers/ai/pattern-detection/anthropic';
-import { OpenAIPatternProvider } from '../../providers/ai/pattern-detection/openai';
-import { OllamaPatternProvider } from '../../providers/ai/pattern-detection/ollama';
+import { logger } from '../../core/utils/logger';
+
+// Note: AI pattern detection has been migrated to LangChain.
+// The --ai flag now uses LangChain structured output instead of legacy pattern-detection providers.
 
 export async function recommendCommand(options: {
   source?: 'errors' | 'codebase' | 'both';
@@ -61,109 +54,6 @@ export async function recommendCommand(options: {
     );
 
     let recommendations = await recommender.generateRecommendations();
-
-    // AI-enhanced pattern detection if enabled
-    const aiConfig = config.aiPatterns;
-    if (options.ai && aiConfig?.enabled) {
-      console.log(chalk.cyan('Running AI-enhanced pattern detection...\n'));
-
-      // Initialize AI services
-      const providerManager = new AIProviderManager({
-        maxTokensPerScan: options.maxTokens || aiConfig.costs?.maxTokensPerScan,
-        maxRequestsPerScan: aiConfig.costs?.maxRequestsPerScan,
-      });
-
-      // Register providers based on config
-      if (aiConfig.providers?.anthropic?.apiKey) {
-        providerManager.registerProvider(
-          new AnthropicPatternProvider({ apiKey: aiConfig.providers.anthropic.apiKey, model: aiConfig.providers.anthropic.model, embeddingModel: aiConfig.providers.anthropic.embeddingModel }),
-          aiConfig.provider === 'anthropic'
-        );
-      }
-      if (aiConfig.providers?.openai?.apiKey) {
-        providerManager.registerProvider(
-          new OpenAIPatternProvider({ apiKey: aiConfig.providers.openai.apiKey, model: aiConfig.providers.openai.model, embeddingModel: aiConfig.providers.openai.embeddingModel }),
-          aiConfig.provider === 'openai'
-        );
-      }
-      if (aiConfig.providers?.ollama) {
-        providerManager.registerProvider(
-          new OllamaPatternProvider(aiConfig.providers.ollama),
-          aiConfig.provider === 'ollama'
-        );
-      }
-
-      const embeddingCache = new EmbeddingCacheManager(projectRoot);
-      await embeddingCache.load();
-
-      const embeddingService = new EmbeddingService(providerManager, embeddingCache);
-      const patternClusterer = new PatternClusterer(embeddingService);
-
-      const feedbackStore = aiConfig.learning?.enabled
-        ? new FeedbackStore(projectRoot, aiConfig.learning.feedbackFile)
-        : undefined;
-      if (feedbackStore) {
-        await feedbackStore.load();
-      }
-
-      const semanticAnalyzer = new SemanticAnalyzer(
-        providerManager,
-        patternClusterer,
-        feedbackStore
-      );
-
-      const scanner = new CodeQualityScanner(config.debug);
-      const detector = new AbstractionDetector(
-        scanner,
-        embeddingService,
-        semanticAnalyzer,
-        patternClusterer,
-        config.debug
-      );
-
-      // Run AI detection
-      const aiMode = options.aiMode || aiConfig.analysis?.mode || 'hybrid';
-      const useLLM = aiMode === 'llm-only' || aiMode === 'hybrid';
-
-      const aiPatterns = await detector.detectPatternsWithAI({
-        projectRoot,
-        useAI: true,
-        useLLMAnalysis: useLLM,
-        similarityThreshold: options.similarity || aiConfig.analysis?.similarityThreshold,
-        minOccurrences: aiConfig.analysis?.minOccurrences,
-        maxTokensPerScan: options.maxTokens || aiConfig.costs?.maxTokensPerScan,
-        incrementalOnly: options.incremental && !options.fullScan,
-      });
-
-      // Convert patterns to recommendations
-      if (aiPatterns.length > 0) {
-        console.log(chalk.green(`Found ${aiPatterns.length} AI-detected patterns\n`));
-        // Add AI patterns as abstraction recommendations (cast to any to avoid TS issues with extended properties)
-        for (const pattern of aiPatterns) {
-          (recommendations as any[]).push({
-            type: 'abstraction-pattern',
-            trigger: `AI detected ${pattern.occurrences} similar patterns`,
-            suggestion: pattern.suggestedName || 'Abstract pattern',
-            evidence: pattern.evidence,
-            priority: pattern.similarity > 0.9 ? 'high' : pattern.similarity > 0.7 ? 'medium' : 'low',
-            pattern,
-            implementation: {
-              type: pattern.suggestedAbstraction,
-              name: pattern.suggestedName || 'AbstractPattern',
-              description: `Abstraction for ${pattern.occurrences} similar patterns`,
-            },
-            impact: {
-              codeReduction: pattern.occurrences * 10, // Estimate
-              filesAffected: pattern.files.length,
-              maintenanceBenefit: pattern.similarity > 0.9 ? 'high' : pattern.similarity > 0.7 ? 'medium' : 'low',
-            },
-          });
-        }
-      }
-
-      // Save cache
-      await embeddingCache.save();
-    }
 
     // Generate recommendations
     console.log(chalk.cyan('Analyzing patterns...\n'));

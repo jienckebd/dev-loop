@@ -1,0 +1,27 @@
+{
+  "$schema": "https://unpkg.com/knip@latest/schema.json",
+  "entry": [
+    "src/index.ts",
+    "src/mcp/server.mts"
+  ],
+  "project": [
+    "src/**/*.ts",
+    "src/**/*.mts"
+  ],
+  "ignore": [
+    "src/**/*.test.ts",
+    "src/**/*.spec.ts",
+    "dist/**",
+    "src/core/generation/investigation-task-generator.ts",
+    "src/core/analysis/code/debugging-strategy-advisor.ts",
+    "src/core/analysis/code/execution-order-analyzer.ts",
+    "src/core/analysis/code/component-interaction-analyzer.ts",
+    "src/core/analysis/error/root-cause-analyzer.ts",
+    "src/core/analysis/pattern/framework-pattern-library.ts"
+  ],
+  "ignoreDependencies": [
+    "@types/*",
+    "immer",
+    "task-master-ai"
+  ]
+}

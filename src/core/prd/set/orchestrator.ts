@@ -1,6 +1,6 @@
 import { Config } from '../../../config/schema/core';
 import { ConfigOverlay } from '../../../config/schema/overlays';
-import { WorkflowEngine, PrdExecutionResult } from '../../execution/workflow';
+import { IterationRunner, IterationResult } from '../../execution/iteration-runner';
 import { PrdSet } from '../coordination/coordinator';
 import { DiscoveredPrdSet } from './discovery';
 import { DependencyGraphBuilder, ExecutionLevel } from '../../utils/dependency-graph';
@@ -17,7 +17,6 @@ import * as path from 'path';
 import { TaskMasterBridge } from '../../execution/task-bridge';
 import { SpecKitContext, ResolvedClarification, ResearchFinding, ConstitutionRules } from '../parser/planning-doc-parser';
 import { emitEvent } from '../../utils/event-stream';
-import { UnifiedStateManager } from '../../state/StateManager';
 
 export interface PrdSetMetadata {
   setId: string;
@@ -49,22 +48,18 @@ export interface PrdSetExecutionResult {
 export class PrdSetOrchestrator {
   private baseConfig: Config;
   private configContext: ConfigContext;
-  private workflowEngine: WorkflowEngine;
   private coordinator: PrdCoordinator;
   private graphBuilder: DependencyGraphBuilder;
   private prerequisiteValidator: PrerequisiteValidator;
   private progressTracker: PrdSetProgressTracker;
   private errorHandler: PrdSetErrorHandler;
   private prdSetMetrics: PrdSetMetrics;
-  private stateManager: UnifiedStateManager;
   private debug: boolean;
 
   constructor(config: Config, debug: boolean = false) {
     this.baseConfig = config;
     this.configContext = createConfigContext(config);
-    this.workflowEngine = new WorkflowEngine(config);
     this.coordinator = new PrdCoordinator('.devloop/execution-state.json', debug);
-    this.stateManager = new UnifiedStateManager(process.cwd());
     this.graphBuilder = new DependencyGraphBuilder(debug);
     this.prerequisiteValidator = new PrerequisiteValidator(
       new ValidationScriptExecutor(debug),
@@ -212,17 +207,10 @@ export class PrdSetOrchestrator {
     if (discoveredSet.configOverlay) {
       applyPrdSetConfig(this.configContext, discoveredSet.configOverlay);
       logger.debug(`[PrdSetOrchestrator] Applied PRD set config overlay for ${discoveredSet.setId}`);
-
-      // Update workflow engine with effective config
-      // Note: WorkflowEngine uses config internally, so we may need to recreate it
-      // For now, we store the effective config for use by individual PRD executions
     }
 
-    // Load and inject spec-kit context if available
+    // Load spec-kit context if available (will be passed to IterationRunner)
     const specKitContext = await this.loadSpecKitContext(discoveredSet.directory);
-    if (specKitContext) {
-      this.workflowEngine.setSpecKitContext(specKitContext);
-    }
 
     // Initialize PRD set coordination
     await this.coordinator.coordinatePrdSet(discoveredSet.prdSet);
@@ -272,12 +260,10 @@ export class PrdSetOrchestrator {
     // Wrap execution in try/finally to ensure lock cleanup and task restoration
     try {
 
-    // Create tasks for PRDs level by level
-    // For unified daemon mode: PRD sets create tasks in Task Master instead of executing directly
-    // Tasks will be picked up by watch mode daemon
+    // Execute PRDs level by level with parallel fresh-context execution
     for (const level of executionLevels) {
       if (this.debug) {
-        logger.debug(`[PrdSetOrchestrator] Creating tasks for level ${level.level}: ${level.prds.join(', ')}`);
+        logger.debug(`[PrdSetOrchestrator] Executing level ${level.level}: ${level.prds.join(', ')}`);
       }
 
       // Generate progress report
@@ -316,7 +302,7 @@ export class PrdSetOrchestrator {
       }
 
       // Collect PRDs eligible for execution in this level
-      type PrdExecutor = () => Promise<{ prdId: string; result: PrdExecutionResult }>;
+      type PrdExecutor = () => Promise<{ prdId: string; result: IterationResult }>;
       const executorFunctions: Array<{ prdId: string; executor: PrdExecutor }> = [];
 
       for (const prdId of level.prds) {
@@ -349,65 +335,62 @@ export class PrdSetOrchestrator {
           continue;
         }
 
-        // Create task creation function (NOT called yet - stored as reference)
-        // For unified daemon mode: PRD sets create tasks in Task Master instead of executing directly
-        // Tasks will be picked up by watch mode daemon
-        const createPrdTasks: PrdExecutor = async () => {
-          // Update state when starting task creation
+        // Create PRD executor function using IterationRunner (Ralph pattern)
+        // Each PRD gets a fresh IterationRunner for parallel execution with fresh context
+        const executePrd: PrdExecutor = async () => {
+          // Update state when starting PRD execution
           await this.coordinator.updatePrdState(prdId, { status: 'running' });
 
           try {
             if (this.debug) {
-              logger.debug(`[PrdSetOrchestrator] Creating tasks for PRD: ${prdId}`);
+              logger.debug(`[PrdSetOrchestrator] Executing PRD with fresh context: ${prdId}`);
             }
 
-            // Create tasks from PRD requirements in Task Master
-            // Tasks will be picked up by watch mode daemon
-            const taskCount = await this.workflowEngine.createTasksFromPrd(prd.path, discoveredSet.setId);
+            // Create fresh IterationRunner per PRD (Ralph pattern)
+            // Pass specKitContext if available for design decisions injection
+            const runner = new IterationRunner(this.baseConfig, {
+              maxIterations: 100,
+              contextThreshold: 90,
+              autoHandoff: true,
+              persistLearnings: true,
+              updatePatterns: true,
+              handoffInterval: 5,
+            }, specKitContext || undefined);
+
+            // Execute PRD with fresh context
+            const iterResult = await runner.runWithFreshContext(prd.path);
 
             if (this.debug) {
-              logger.debug(`[PrdSetOrchestrator] Created ${taskCount} tasks for PRD: ${prdId}`);
+              logger.debug(`[PrdSetOrchestrator] PRD ${prdId} completed: ${iterResult.status} (${iterResult.tasksCompleted} tasks, ${iterResult.iterations} iterations)`);
             }
 
-            // Mark PRD as running (tasks created, ready for execution)
-            // Actual execution will be handled by watch mode daemon
-            // Note: Status remains 'running' until watch mode executes tasks and marks as 'complete'
+            // Update PRD state based on execution result
             await this.coordinator.updatePrdState(prdId, {
-              status: 'running',
-              startTime: new Date(),
+              status: iterResult.status === 'complete' ? 'complete' : 'failed',
+              endTime: new Date(),
             });
 
-            // Return success result (tasks created, not executed)
-            // Note: result.status uses 'complete' to indicate task creation complete (not execution complete)
             return {
               prdId,
-              result: {
-                prdId,
-                status: 'complete', // Task creation complete (not execution complete)
-                tasksCreated: taskCount,
-                testsGenerated: 0,
-                testsPassing: 0,
-                testsFailing: 0,
-              } as any,
+              result: iterResult,
             };
           } catch (error: any) {
+            await this.coordinator.updatePrdState(prdId, { status: 'failed' });
             await this.errorHandler.propagateError(prdId, error, result);
             throw error;
           }
         };
 
         // Store executor function reference (not called yet)
-        executorFunctions.push({ prdId, executor: createPrdTasks });
+        executorFunctions.push({ prdId, executor: executePrd });
       }
 
-      // Create tasks for PRDs with proper concurrency control
-      // For unified daemon mode: PRD sets create tasks in Task Master instead of executing directly
-      // Tasks will be picked up by watch mode daemon
+      // Execute PRDs with proper concurrency control
       if (executorFunctions.length > 0) {
         const concurrentLimit = parallel ? Math.min(maxConcurrent, executorFunctions.length) : 1;
 
         if (this.debug) {
-          logger.debug(`[PrdSetOrchestrator] Creating tasks for ${executorFunctions.length} PRDs with concurrency limit ${concurrentLimit}`);
+          logger.debug(`[PrdSetOrchestrator] Executing ${executorFunctions.length} PRDs with concurrency limit ${concurrentLimit}`);
         }
 
         // Process in batches, starting each batch only after the previous completes
@@ -427,7 +410,7 @@ export class PrdSetOrchestrator {
               result.completedPrds.push(settled.value.prdId);
             } else {
               result.failedPrds.push(prdId);
-              result.errors.push(`PRD ${prdId} task creation failed: ${settled.reason?.message || 'Unknown error'}`);
+              result.errors.push(`PRD ${prdId} execution failed: ${settled.reason?.message || 'Unknown error'}`);
             }
           }
         }
@@ -440,12 +423,11 @@ export class PrdSetOrchestrator {
       }
     }
 
-    // Determine final status (task creation complete, not execution complete)
-    // Actual execution will be handled by watch mode daemon
+    // Determine final status
     if (result.failedPrds.length > 0) {
       result.status = result.completedPrds.length > 0 ? 'blocked' : 'failed';
     } else if (result.completedPrds.length === discoveredSet.prdSet.prds.length) {
-      // All PRDs have tasks created successfully
+      // All PRDs completed successfully
       result.status = 'complete';
     } else {
       result.status = 'blocked';

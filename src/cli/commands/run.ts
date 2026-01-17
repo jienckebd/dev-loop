@@ -3,6 +3,7 @@ import ora from 'ora';
 import { loadConfig } from '../../config/loader';
 import { WorkflowEngine } from '../../core/execution/workflow';
 import { TaskMasterBridge } from '../../core/execution/task-bridge';
+import { IterationRunner } from '../../core/execution/iteration-runner';
 
 export async function runCommand(options: {
   config?: string;
@@ -11,6 +12,11 @@ export async function runCommand(options: {
   all?: boolean;
   until?: string;
   skip?: string;
+  legacy?: boolean;
+  maxIterations?: number;
+  contextThreshold?: number;
+  persistLearnings?: boolean;
+  updatePatterns?: boolean;
 }): Promise<void> {
   const spinner = ora('Loading configuration').start();
 
@@ -92,20 +98,57 @@ export async function runCommand(options: {
       return;
     }
 
-    // Default: run single iteration
-    spinner.start('Running workflow iteration');
-    const result = await engine.runOnce();
+    // Default: use fresh-context mode (IterationRunner)
+    // Legacy mode available with --legacy flag
+    if (options.legacy) {
+      console.log(chalk.yellow('[DEPRECATED] Legacy mode is deprecated. Fresh-context mode is recommended.'));
+      spinner.start('Running workflow iteration (legacy mode)');
+      const result = await engine.runOnce();
 
-    if (result.completed) {
-      spinner.succeed('Workflow iteration completed');
-      console.log(chalk.green(`✓ Task completed: ${result.taskId || 'N/A'}`));
-    } else if (result.noTasks) {
-      spinner.info('No pending tasks found');
-      console.log(chalk.yellow('No tasks to process'));
+      if (result.completed) {
+        spinner.succeed('Workflow iteration completed');
+        console.log(chalk.green(`✓ Task completed: ${result.taskId || 'N/A'}`));
+      } else if (result.noTasks) {
+        spinner.info('No pending tasks found');
+        console.log(chalk.yellow('No tasks to process'));
+      } else {
+        spinner.warn('Workflow iteration finished with issues');
+        if (result.error) {
+          console.error(chalk.red(`Error: ${result.error}`));
+        }
+      }
     } else {
-      spinner.warn('Workflow iteration finished with issues');
-      if (result.error) {
-        console.error(chalk.red(`Error: ${result.error}`));
+      // Fresh-context mode (default)
+      spinner.start('Running with fresh-context mode');
+      
+      const iterationRunner = new IterationRunner(config, {
+        maxIterations: options.maxIterations || 100,
+        contextThreshold: options.contextThreshold || 90,
+        autoHandoff: true,
+        persistLearnings: options.persistLearnings !== false,
+        updatePatterns: options.updatePatterns !== false,
+        handoffInterval: 5,
+      });
+
+      const result = await iterationRunner.runWithFreshContext();
+
+      if (result.status === 'complete') {
+        spinner.succeed(`All tasks completed in ${result.iterations} iteration(s)`);
+        console.log(chalk.green(`✓ Tasks completed: ${result.tasksCompleted}`));
+        if (result.patternsDiscovered > 0) {
+          console.log(chalk.cyan(`  Patterns discovered: ${result.patternsDiscovered}`));
+        }
+      } else if (result.status === 'max-iterations') {
+        spinner.warn(`Max iterations reached (${result.iterations})`);
+        console.log(chalk.yellow(`Tasks completed: ${result.tasksCompleted}, Failed: ${result.tasksFailed}`));
+      } else if (result.status === 'stalled') {
+        spinner.warn('Workflow stalled');
+        console.log(chalk.red(`Stalled after ${result.iterations} iterations. Check .devloop/progress.md for details.`));
+      } else {
+        spinner.fail('Workflow failed');
+        if (result.error) {
+          console.error(chalk.red(`Error: ${result.error}`));
+        }
       }
     }
   } catch (error) {

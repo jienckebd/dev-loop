@@ -3,7 +3,6 @@
 import { Command } from 'commander';
 import { initCommand } from './cli/commands/init';
 import { runCommand } from './cli/commands/run';
-import { watchCommand } from './cli/commands/watch';
 import { stopCommand } from './cli/commands/stop';
 import { statusCommand } from './cli/commands/status';
 import { logsCommand } from './cli/commands/logs';
@@ -57,27 +56,23 @@ program
 
 program
   .command('run')
-  .description('Execute one iteration of the workflow loop')
+  .description('Execute workflow (default: fresh-context mode)')
   .option('-c, --config <path>', 'Path to config file', 'devloop.config.js')
   .option('-d, --debug', 'Enable debug mode with verbose output')
   .option('--task <id>', 'Run specific task by ID')
   .option('--all', 'Run all pending tasks sequentially')
   .option('--until <id>', 'Run tasks until reaching specified task')
   .option('--skip <id>', 'Skip specific task and continue')
+  .option('--legacy', 'Use legacy single-iteration mode (deprecated)')
+  .option('--max-iterations <n>', 'Maximum iterations for fresh-context mode', (v) => parseInt(v, 10))
+  .option('--context-threshold <n>', 'Context threshold for auto-handoff (0-100)', (v) => parseInt(v, 10))
+  .option('--no-persist-learnings', 'Disable learnings persistence to progress.md')
+  .option('--no-update-patterns', 'Disable pattern discovery and persistence')
   .action(runCommand);
 
 program
-  .command('watch')
-  .description('Daemon mode - continuous execution until PRD complete')
-  .option('-c, --config <path>', 'Path to config file', 'devloop.config.js')
-  .option('-d, --debug', 'Enable debug mode with verbose output')
-  .option('--until-complete', 'Exit when all tasks done and tests pass')
-  .option('--max-iterations <n>', 'Maximum iterations before exit', (v) => parseInt(v, 10))
-  .action(watchCommand);
-
-program
   .command('stop')
-  .description('Stop the running daemon')
+  .description('Stop running dev-loop processes')
   .action(stopCommand);
 
 program

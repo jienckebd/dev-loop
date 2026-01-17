@@ -47,7 +47,7 @@ dev-loop/
 │   │   │   └── action-strategies.ts   # Action strategies for each issue type
 │   │   ├── config/       # Configuration management
 │   │   │   └── merger.ts # Hierarchical config merger (schema consistency)
-│   │   └── utils/        # Shared utilities (logger, state-manager, dependency-graph, event-stream, etc.)
+│   │   └── utils/        # Shared utilities (logger, dependency-graph, event-stream, string-matcher, etc.)
 │   ├── config/           # Configuration loading and schema
 │   │   ├── schema/       # Modular schema structure (8 files: base, core, framework, prd, overlays, phase, validation, index)
 │   │   ├── schema.ts     # Backward-compatible re-export wrapper
@@ -57,6 +57,16 @@ dev-loop/
 │   ├── mcp/              # MCP server implementation
 │   │   └── tools/        # MCP tool registrations
 │   ├── providers/        # AI, test runner, log analyzer providers
+│   │   └── ai/
+│   │       ├── langchain/  # LangChain provider implementation
+│   │       │   ├── provider.ts      # LangChainProvider
+│   │       │   ├── models.ts        # Model factory
+│   │       │   ├── schemas.ts       # Zod schemas
+│   │       │   ├── cursor-adapter.ts # CursorCLIAdapter
+│   │       │   └── index.ts         # Module exports
+│   │       ├── cursor.ts           # CursorProvider (kept)
+│   │       ├── interface.ts        # AIProvider interface (kept)
+│   │       └── factory.ts          # AIProviderFactory (updated)
 │   └── templates/        # Code generation templates
 ├── docs/
 │   ├── ai/               # AI agent documentation (PRD creation)
@@ -72,17 +82,66 @@ dev-loop/
 
 ## Core Components
 
-### WorkflowEngine
+### IterationRunner (Default Entry Point)
+
+**Location:** `src/core/execution/iteration-runner.ts`
+
+The default entry point for workflow execution, implementing the Ralph pattern of fresh context per iteration:
+
+- Creates fresh LangGraph workflow per iteration
+- Generates handoff document (`handoff.md`) for context continuity
+- Persists learnings to `progress.md` and `learned-patterns.md`
+- Supports configurable max iterations and context thresholds
+- Used by `PrdSetOrchestrator` for parallel PRD execution
+
+```typescript
+const runner = new IterationRunner(config, {
+  maxIterations: 100,
+  contextThreshold: 90,
+  autoHandoff: true,
+  persistLearnings: true,
+});
+const result = await runner.runWithFreshContext(prdPath);
+```
+
+### LangGraph StateGraph
+
+**Location:** `src/core/execution/langgraph/`
+
+Graph-based workflow orchestration with 10 nodes:
+
+| Node | Purpose |
+|------|---------|
+| `fetchTask` | Get next pending task from TaskMasterBridge |
+| `buildContext` | Build code context for AI generation |
+| `generateCode` | AI code generation via provider |
+| `validateCode` | Pre-apply syntax validation |
+| `applyChanges` | Apply code patches to files |
+| `runTests` | Execute test suite |
+| `analyzeFailure` | Analyze test/apply failures |
+| `createFixTask` | Create fix task for failures |
+| `suggestImprovements` | Suggest improvements on stall |
+| `captureLearnings` | Persist learnings (Ralph pattern) |
+
+**Files:**
+- `state.ts` - WorkflowState annotation and types
+- `graph.ts` - StateGraph definition with conditional edges
+- `checkpointer.ts` - File-based checkpoint persistence
+- `nodes/*.ts` - Individual node implementations
+
+### WorkflowEngine (Legacy Direct Execution)
 
 **Location:** `src/core/execution/workflow.ts`
 
-Main orchestration loop that manages the test-driven development cycle:
+Direct task execution engine (used for single `run` commands):
 - Fetches tasks from Task Master
 - Executes AI code generation
 - Applies code changes
 - Runs tests
 - Analyzes logs
 - Creates fix tasks on failure
+
+**Note:** For continuous execution, use `IterationRunner` which wraps workflow execution with the Ralph pattern.
 
 ### TaskMasterBridge
 
@@ -93,21 +152,16 @@ Wrapper around task-master-ai MCP for task management:
 - Update task status
 - Get task details
 
-### UnifiedStateManager
+### State Management (LangGraph)
 
-**Location:** `src/core/state/StateManager.ts`
+**Location:** `src/core/execution/langgraph/`
 
-Manages unified execution state and metrics with immutable updates:
-- **Immer Integration**: Immutable state updates using producers
-- **Zod Validation**: Schema validation on read/write
-- **Atomic Writes**: Temp file + rename pattern for safety
-- **File Locking**: Prevents race conditions in concurrent access
-- **Unified State**: All execution state in `.devloop/execution-state.json`
-- **Unified Metrics**: All metrics in `.devloop/metrics.json` with hierarchical structure
-- Handles state recovery on restart
-- Tracks execution history across PRD sets, PRDs, phases, and tasks
-
-See [`docs/ai/STATE_MANAGEMENT.md`](../ai/STATE_MANAGEMENT.md) for complete documentation.
+State is managed by LangGraph checkpoints and the handoff mechanism:
+- **LangGraph Checkpoints**: File-based state persistence in `.devloop/checkpoints/`
+- **Handoff Context**: Generated in `.devloop/handoff.md` for context continuity
+- **Learnings**: Persisted in `.devloop/progress.md` and `.devloop/learned-patterns.md`
+- **Retry Counts**: Simple JSON file at `.devloop/retry-counts.json`
+- **Execution State**: PRD coordination via `PrdCoordinator` in `.devloop/execution-state.json`
 
 ### CodeContextProvider
 
@@ -179,7 +233,7 @@ See "Monitoring & Intervention System" section above for details.
 
 Learns from successful and failed task executions:
 - Extracts patterns
-- Stores in `.devloop/patterns.json` (managed via UnifiedStateManager)
+- Stores in `.devloop/patterns.json` and `.devloop/learned-patterns.md`
 - Injects guidance into AI prompts
 
 ### ParallelMetrics
@@ -203,56 +257,6 @@ Provides real-time progress updates during execution:
 - Emits progress events for UI integration
 - Tracks task start/completion/failure states
 
-### SessionBoundaryManager
-
-**Location:** `src/providers/ai/session-boundary-manager.ts`
-
-Enforces session and context boundary rules for all execution scenarios:
-- Parallel task session isolation
-- Fix task session reuse
-- Cross-PRD dependency handling
-- PRD set execution boundaries
-- Context snapshotting enforcement
-
-### BaseSessionManager
-
-**Location:** `src/providers/ai/session-manager.ts`
-
-Provider-agnostic base class for session management:
-- Unified session interface for all AI providers
-- History management and pruning
-- Session lifecycle management
-- Context continuity across tasks
-
-### ContextBuilder
-
-**Location:** `src/providers/ai/context-builder.ts`
-
-Unified context building for all AI providers:
-- Combines codebase context, task details, and session history
-- Consistent context format across providers
-- Session history integration
-- File-specific and pattern guidance inclusion
-
-### AgentInterface
-
-**Location:** `src/providers/ai/agent-interface.ts`
-
-Model-agnostic interface for AI agent interactions:
-- Abstract provider-specific differences
-- Unified code generation interface
-- Consistent error handling
-- Provider-agnostic session management
-
-### TimeoutHandler
-
-**Location:** `src/providers/ai/timeout-handler.ts`
-
-Provider-agnostic timeout handling:
-- Configurable timeouts per provider
-- Progressive timeout extension on activity
-- Heartbeat monitoring
-- Timeout error handling
 
 ### ReportGenerator
 
@@ -269,12 +273,24 @@ Generates comprehensive execution reports:
 
 **Location:** `src/core/prd/set/orchestrator.ts`
 
-Orchestrates PRD set execution with parallel processing:
+Orchestrates PRD set execution with parallel `IterationRunner` instances:
 - Discovers PRD sets from `index.md.yml` files
 - Validates PRD sets at multiple levels (set, PRD, phase)
-- Executes PRDs in parallel when independent
+- Builds dependency graph to determine execution levels
+- Creates parallel `IterationRunner` per PRD (respecting `maxConcurrent` limit)
+- Passes `specKitContext` to runners for design decisions injection
 - Manages hierarchical configuration overlays
 - Tracks PRD set-level metrics and progress
+
+```mermaid
+flowchart TB
+    PSO[PrdSetOrchestrator] --> DG[DependencyGraphBuilder]
+    DG --> L0[Level 0: Independent PRDs]
+    DG --> L1[Level 1: Depends on L0]
+    L0 --> IR1[IterationRunner PRD-A]
+    L0 --> IR2[IterationRunner PRD-B]
+    L1 --> IR3[IterationRunner PRD-C]
+```
 
 ### Hierarchical Config Merger
 
@@ -325,10 +341,71 @@ Each plugin implements `FrameworkPlugin` interface with:
 
 ### AI Providers
 
-- **Anthropic** - Claude API
-- **OpenAI** - GPT API
-- **Gemini** - Google Gemini API
-- **Ollama** - Local models
+Supported providers via LangChain.js:
+- **Anthropic** - Claude via `@langchain/anthropic`
+- **OpenAI** - GPT via `@langchain/openai`
+- **Google** - Gemini via `@langchain/google-genai`
+- **Ollama** - Local models via `@langchain/ollama`
+- **Cursor** - Via `CursorCLIAdapter` with Anthropic API fallback
+
+See "LangChain Provider Architecture" section above for implementation details.
+
+## LangChain Provider Architecture
+
+**Location:** `src/providers/ai/langchain/`
+
+Dev-loop uses LangChain.js for unified AI provider abstraction:
+
+### LangChainProvider
+
+**Location:** `src/providers/ai/langchain/provider.ts`
+
+Main provider implementing the `AIProvider` interface:
+- Unified implementation for Anthropic, OpenAI, Gemini, Ollama
+- Structured output via Zod schemas (`CodeChangesSchema`, `AnalysisSchema`)
+- Cursor provider uses CursorCLIAdapter with Anthropic fallback
+- Implements `generateCode()`, `analyzeError()`, `generateText()`
+
+### Model Factory
+
+**Location:** `src/providers/ai/langchain/models.ts`
+
+Creates LangChain chat models via `createLangChainModel()`:
+- `ChatAnthropic` for Claude models
+- `ChatOpenAI` for GPT models
+- `ChatGoogleGenerativeAI` for Gemini models
+- `ChatOllama` for local Ollama models
+- Returns `BaseChatModel` interface for all providers
+
+### CursorCLIAdapter
+
+**Location:** `src/providers/ai/langchain/cursor-adapter.ts`
+
+Special adapter wrapping CursorProvider as LangChain `BaseChatModel`:
+- Handles 8192-byte truncation detection
+- Falls back to Anthropic API on truncation
+- Wraps existing CursorProvider for CLI interactions
+- Maintains session persistence via CursorProvider
+
+### Zod Schemas
+
+**Location:** `src/providers/ai/langchain/schemas.ts`
+
+Structured output schemas for type-safe AI responses:
+- `CodeChangesSchema` - File changes with operations
+- `AnalysisSchema` - Error analysis with root cause
+- `PatternDetectionSchema` - Pattern detection results
+- `FixTaskSchema` - Fix task generation
+- `ImprovementSuggestionSchema` - Improvement suggestions
+
+### AIProviderFactory Integration
+
+**Location:** `src/providers/ai/factory.ts`
+
+Factory now returns:
+- `LangChainProvider` for anthropic, openai, gemini, ollama providers
+- `CursorProvider` for cursor provider (specialized CLI handling)
+- All providers implement unified `AIProvider` interface
 
 ### Test Runners
 
@@ -338,7 +415,7 @@ Each plugin implements `FrameworkPlugin` interface with:
 ### Log Analyzers
 
 - **PatternMatcher** - Regex-based analysis
-- **AILogAnalyzer** - AI-powered analysis
+- **AILogAnalyzer** - AI-powered analysis (uses LangChainProvider)
 
 ## MCP Integration
 
@@ -638,6 +715,128 @@ Context is snapshotted at task start for parallel execution:
 
 **Location:** `src/core/analysis/code/context-provider.ts` and `src/core/execution/workflow.ts` - `getCodebaseContext()`
 
+## Code Cleanup Status
+
+### Stub Implementations
+
+The following files have stub implementations pending full LangChain integration:
+
+1. **EmbeddingService** (`src/ai/embedding-service.ts`)
+   - Current: Uses `any` type for providerManager
+   - Needed: Replace with LangChain embeddings via `@langchain/core/embeddings`
+   - Status: Temporarily disabled in `recommend.ts`
+
+2. **SemanticAnalyzer** (`src/ai/semantic-analyzer.ts`)
+   - Current: Uses `any` type for providerManager
+   - Needed: Replace with LangChainProvider
+   - Status: Works with current stub but logs warning
+
+### Files Requiring Verification
+
+Run these commands to verify no dead code remains:
+
+```bash
+# Check for imports of deleted modules
+grep -r "AIProviderManager\|AIPatternProvider" src/
+grep -r "from.*provider-manager" src/
+grep -r "AnthropicProvider\|OpenAIProvider\|GeminiProvider\|OllamaProvider" src/
+
+# Check for stub implementations
+grep -r "TODO.*LangChain\|stub.*LangChain" src/
+
+# Check for unused files
+# (Run after verifying all imports)
+```
+
+See follow-up plan "Dead Code Cleanup" for detailed removal instructions.
+
+## Code Inventory for Dead Code Detection
+
+### Files That Import Deleted Modules
+
+**Stub Files (Need Full LangChain Integration):**
+- `src/ai/embedding-service.ts` - Uses `any` type for providerManager, needs LangChain embeddings
+- `src/ai/semantic-analyzer.ts` - Uses `any` type for providerManager, needs LangChainProvider
+- `src/cli/commands/recommend.ts` - AI pattern detection disabled, needs LangChain embeddings integration
+
+**Files Importing AIProvider Interface (Still Valid):**
+- `src/providers/ai/interface.ts` - Core AIProvider interface (KEEP)
+- `src/providers/ai/factory.ts` - Factory using LangChainProvider (KEEP, updated)
+- `src/providers/ai/cursor.ts` - CursorProvider implementing AIProvider (KEEP)
+- `src/core/execution/workflow.ts` - Uses AIProvider interface (KEEP)
+- `src/providers/log-analyzers/ai-analyzer.ts` - Uses AIProvider interface (KEEP)
+- All other files using AIProvider interface - Verify they use interface, not internals
+
+### Deleted Files (Already Removed)
+
+These files were deleted in the refactor:
+- `src/providers/ai/anthropic.ts` - DELETED
+- `src/providers/ai/openai.ts` - DELETED
+- `src/providers/ai/gemini.ts` - DELETED
+- `src/providers/ai/ollama.ts` - DELETED
+- `src/providers/ai/api-agent-wrapper.ts` - DELETED
+- `src/providers/ai/pattern-detection/` - DELETED (entire directory)
+- `src/ai/provider-interface.ts` - DELETED (AIPatternProvider interface)
+- `src/ai/provider-manager.ts` - DELETED (AIProviderManager)
+- `docker-compose.temporal.yml` - DELETED
+
+### New LangChain Files (Keep)
+
+New LangChain implementation:
+- `src/providers/ai/langchain/provider.ts` - LangChainProvider implementation
+- `src/providers/ai/langchain/models.ts` - Model factory
+- `src/providers/ai/langchain/schemas.ts` - Zod schemas
+- `src/providers/ai/langchain/cursor-adapter.ts` - CursorCLIAdapter
+- `src/providers/ai/langchain/index.ts` - Module exports
+
+### Code Patterns to Check
+
+**Grep patterns to find potential dead code:**
+
+```bash
+# Find imports of deleted modules
+grep -r "AIProviderManager\|AIPatternProvider" src/
+grep -r "from.*provider-manager\|from.*provider-interface" src/
+grep -r "AnthropicProvider\|OpenAIProvider\|GeminiProvider\|OllamaProvider" src/
+grep -r "pattern-detection" src/
+grep -r "@temporalio" src/
+
+# Find stub implementations
+grep -r "TODO.*LangChain\|stub.*LangChain\|pending.*LangChain" src/
+
+# Find any remaining references to deleted files
+grep -r "api-agent-wrapper" src/
+```
+
+**Files to check for dead code:**
+- All files in `src/ai/` - Check if they're still used
+- `src/cli/commands/recommend.ts` - Check if disabled code should be removed
+- `src/core/analysis/` - Check pattern detection code that might be obsolete
+- Any file using `embedding-service.ts` or `semantic-analyzer.ts` - Check if stubs work correctly
+
+### Stub Implementations Status
+
+**Currently Using Stubs:**
+- `embedding-service.ts` - Uses `any` type, warns "LangChain integration pending"
+- `semantic-analyzer.ts` - Uses `any` type, warns "LangChain integration pending"
+
+**Action Required:**
+- These need full LangChain integration OR should be removed if not used
+- Check all usages to determine if integration is needed or code can be deleted
+
+### Integration Points to Verify
+
+**Files that use AIProvider (should work with LangChainProvider):**
+- `src/core/execution/workflow.ts` - Main workflow (verify works)
+- `src/providers/log-analyzers/ai-analyzer.ts` - Log analysis (verify works)
+- `src/mcp/tools/debug.ts` - MCP debug tools (verify works)
+- All PRD generation/building code (verify works)
+
+**Files that might need updates:**
+- Any file using `EmbeddingService` directly
+- Any file using `SemanticAnalyzer` directly
+- Any file referencing pattern detection providers
+
 ## AI Provider Reliability
 
 Dev-loop includes comprehensive reliability features for AI provider interactions:
@@ -668,7 +867,7 @@ Automatic retry mechanism for failed AI calls:
 - Enhanced JSON extraction for various response formats
 - "Already complete" response detection
 
-**Location:** `src/providers/ai/cursor.ts` - `generateCode()` method
+**Location:** `src/providers/ai/cursor.ts` - `generateCode()` method and `src/providers/ai/langchain/provider.ts` - LangChainProvider implementation
 
 ### Enhanced JSON Parsing
 
@@ -771,9 +970,10 @@ See [Schema Modular Refactoring Handoff](../handoff-schema-modular-refactoring.m
 3. **Test-driven** - All features include tests
 4. **Stateful** - Tracks execution state for recovery
 5. **Extensible** - Easy to add new providers/plugins
-6. **Provider-agnostic** - Unified interfaces for all AI providers
+6. **Provider-agnostic** - Unified AI provider via LangChain.js
 7. **Parallel-first** - Designed for concurrent execution
 8. **Modular organization** - Clear separation of concerns with logical directory structure
+9. **Stateful execution** - LangGraph checkpoints and handoff mechanism provide state persistence
 
 ## See Also
 

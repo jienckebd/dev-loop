@@ -4,7 +4,7 @@ export type TaskType = 'analysis' | 'fix' | 'generate' | 'investigate';
 
 export type InterventionMode = 'autonomous' | 'review' | 'hybrid';
 
-export type AIProviderName = 'anthropic' | 'openai' | 'gemini' | 'ollama' | 'cursor';
+export type AIProviderName = 'anthropic' | 'openai' | 'gemini' | 'ollama' | 'cursor' | 'amp';
 
 export type TestRunnerName = 'playwright' | 'cypress';
 
@@ -96,14 +96,6 @@ export interface LogAnalysis {
   warnings: string[];
   summary: string;
   recommendations?: string[];
-}
-
-export interface WorkflowState {
-  currentTask?: Task;
-  status: 'idle' | 'fetching-task' | 'executing-ai' | 'applying-changes' | 'awaiting-approval' | 'running-post-apply-hooks' | 'running-pre-test-hooks' | 'running-tests' | 'analyzing-logs' | 'marking-done' | 'creating-fix-task';
-  progress: number;
-  totalTasks: number;
-  completedTasks: number;
 }
 
 export interface Config {

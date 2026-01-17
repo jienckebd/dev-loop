@@ -4,7 +4,6 @@ import * as fs from 'fs-extra';
 import * as path from 'path';
 import { loadConfig } from '../../config/loader';
 import { TaskMasterBridge } from "../../core/execution/task-bridge";
-import { StateManager } from "../../core/utils/state-manager";
 
 export async function handoffCreateCommand(options: {
   config?: string;
@@ -15,16 +14,21 @@ export async function handoffCreateCommand(options: {
   try {
     const config = await loadConfig(options.config);
     const taskBridge = new TaskMasterBridge(config);
-    const stateManager = new StateManager(config);
 
     const allTasks = await taskBridge.getAllTasks();
-    const workflowState = await stateManager.getWorkflowState();
 
     // Categorize tasks
-    const doneTasks = allTasks.filter(t => t.status === 'done');
-    const pendingTasks = allTasks.filter(t => t.status === 'pending');
-    const inProgressTasks = allTasks.filter(t => t.status === 'in-progress');
-    const blockedTasks = allTasks.filter(t => t.status === 'blocked');
+    const doneTasks = allTasks.filter((t: any) => t.status === 'done');
+    const pendingTasks = allTasks.filter((t: any) => t.status === 'pending');
+    const inProgressTasks = allTasks.filter((t: any) => t.status === 'in-progress');
+    const blockedTasks = allTasks.filter((t: any) => t.status === 'blocked');
+    
+    // Calculate progress
+    const totalTasks = allTasks.length;
+    const completedCount = doneTasks.length;
+    const progress = totalTasks > 0 ? (completedCount / totalTasks) * 100 : 0;
+    const currentTask = inProgressTasks[0] || null;
+    const status = inProgressTasks.length > 0 ? 'running' : (pendingTasks.length > 0 ? 'idle' : 'complete');
 
     // Generate handoff document
     const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
@@ -42,12 +46,12 @@ Generated: ${new Date().toISOString()}
 | Blocked | ${blockedTasks.length} |
 | **Total** | **${allTasks.length}** |
 
-Progress: ${workflowState.progress ? Math.round(workflowState.progress * 100) : 0}%
+Progress: ${Math.round(progress)}%
 
 ## Current State
 
-${workflowState.currentTask ? `Current Task: **${workflowState.currentTask.id}** - ${workflowState.currentTask.title}` : 'No active task'}
-Status: ${workflowState.status}
+${currentTask ? `Current Task: **${currentTask.id}** - ${currentTask.title}` : 'No active task'}
+Status: ${status}
 
 ## Completed Work
 

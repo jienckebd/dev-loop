@@ -41,6 +41,7 @@ const PROVIDER_ENV_VARS: Record<Exclude<AIProviderName, 'cursor'>, string[]> = {
   openai: ['OPENAI_API_KEY', 'AZURE_OPENAI_API_KEY'],
   gemini: ['GOOGLE_AI_API_KEY', 'GEMINI_API_KEY'],
   ollama: ['OLLAMA_API_KEY', 'OLLAMA_HOST'],
+  amp: ['AMP_API_KEY', 'AMP_CONFIG'], // Amp typically uses its own auth
 };
 
 /**

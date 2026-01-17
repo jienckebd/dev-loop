@@ -4,6 +4,44 @@ All notable changes to dev-loop will be documented in this file.
 
 ## [Unreleased]
 
+### Changed - LangChain Refactor
+
+- **BREAKING**: Replaced custom AI provider implementations with LangChain.js
+  - All providers (Anthropic, OpenAI, Gemini, Ollama) now use LangChain models
+  - Unified `LangChainProvider` replaces provider-specific implementations
+  - Removed `AIProviderManager` and `AIPatternProvider` interfaces
+  - Removed `pattern-detection/` directory (replaced by LangChain structured output)
+
+- **BREAKING**: Removed Temporal.io dependencies
+  - Removed `@temporalio/*` packages
+  - Removed `docker-compose.temporal.yml`
+  - State management uses existing `StateManager` (file-based persistence)
+
+- Added `CursorCLIAdapter` for Cursor provider truncation handling
+  - Detects 8192-byte truncation
+  - Falls back to Anthropic API automatically
+  - Wraps existing `CursorProvider` as LangChain `BaseChatModel`
+
+- Added Zod schemas for structured output
+  - `CodeChangesSchema`, `AnalysisSchema`, `PatternDetectionSchema`
+  - Type-safe AI responses via `model.withStructuredOutput()`
+
+- Updated `AIProviderFactory` to return `LangChainProvider` for all providers except Cursor
+  - Cursor provider still uses specialized `CursorProvider` directly
+  - All providers implement unified `AIProvider` interface
+
+### Removed
+
+- `src/providers/ai/anthropic.ts` - Replaced by LangChain `ChatAnthropic`
+- `src/providers/ai/openai.ts` - Replaced by LangChain `ChatOpenAI`
+- `src/providers/ai/gemini.ts` - Replaced by LangChain `ChatGoogleGenerativeAI`
+- `src/providers/ai/ollama.ts` - Replaced by LangChain `ChatOllama`
+- `src/providers/ai/api-agent-wrapper.ts` - No longer needed
+- `src/providers/ai/pattern-detection/` - Replaced by LangChain structured output
+- `src/ai/provider-interface.ts` - Replaced by LangChain `BaseChatModel`
+- `src/ai/provider-manager.ts` - Replaced by single `LangChainProvider`
+- `docker-compose.temporal.yml` - Temporal.io removed from plan
+
 ### Added
 
 - **Event Streaming System** - Structured event emission for contribution mode observability

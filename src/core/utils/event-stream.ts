@@ -111,7 +111,12 @@ export type EventType =
   // Recovery system events
   | 'recovery:attempted'
   | 'recovery:succeeded'
-  | 'recovery:failed';
+  | 'recovery:failed'
+  // Iteration/handoff events (fresh-context mode)
+  | 'iteration:started'
+  | 'iteration:completed'
+  | 'context:handoff_triggered'
+  | 'workflow:stalled';
 
 export type EventSeverity = 'info' | 'warn' | 'error' | 'critical';
 
@@ -153,11 +158,11 @@ export interface EventFilter {
  * **Buffer Behavior**: 
  * - Maximum 1000 events (oldest removed when exceeded)
  * - Circular buffer - newest events are kept, oldest discarded
- * - Buffer is shared across all dev-loop execution (watch mode, prd-set execute, etc.)
- * - Events are emitted by the execution process itself, not a separate daemon
+ * - Buffer is shared across all dev-loop execution (prd-set execute, run, etc.)
+ * - Events are emitted by the execution process itself
  * 
  * **Event Lifecycle**:
- * 1. Events are emitted during execution (watch mode or prd-set execute)
+ * 1. Events are emitted during execution (prd-set execute or run)
  * 2. Events are buffered in memory (max 1000 events)
  * 3. Events are polled via MCP tools (devloop_events_poll, devloop_events_latest)
  * 4. Buffer is cleared on process restart
@@ -227,7 +232,7 @@ class EventStreamImpl {
    * 
    * **Note**: Events are in-memory only. After process restart, historical events are not available.
    * Poll events during active execution, not after restart. Events are emitted by the execution
-   * process itself (watch mode or prd-set execute), not a separate daemon.
+   * process itself (prd-set execute or run).
    * 
    * @param filter - Filter criteria for events (since, types, severity, taskId, prdId, limit)
    * @returns Filtered array of events matching criteria

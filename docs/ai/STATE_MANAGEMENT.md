@@ -2,322 +2,225 @@
 
 ## Overview
 
-Dev-loop uses a unified state management system that consolidates execution state and metrics into two main files:
-
-- **`execution-state.json`** - All execution-related state (workflow, PRDs, sessions, etc.)
-- **`metrics.json`** - All metrics and insights (hierarchical organization)
+Dev-loop uses a LangGraph-based state management system with the "Ralph pattern" - fresh context per iteration with persistent learnings.
 
 ## Architecture
 
-### Unified State Manager
+### LangGraph StateGraph
 
-The `UnifiedStateManager` class (`src/core/state/StateManager.ts`) provides:
+The core execution flow uses LangGraph's StateGraph for workflow orchestration:
 
-- **Immer Integration**: Immutable state updates using producers
-- **Zod Validation**: Schema validation on read/write
-- **Atomic Writes**: Temp file + rename pattern for safety
-- **File Locking**: Prevents race conditions in concurrent access
-- **Type Safety**: Full TypeScript support with inferred types
-
-### Execution State Schema
-
-Location: `src/config/schema/execution-state.ts`
-
-The execution state consolidates:
-
-- **Active Context**: Currently active PRD set, PRD, phase, task
-- **PRD Set States**: Execution status for each PRD set
-- **PRD States**: Execution status for each PRD
-- **Contribution Tracking**: File creation and investigation task tracking
-- **Contribution Mode**: Contribution mode activation state
-- **Sessions**: Cursor session management
-
-### Metrics Schema
-
-Location: `src/config/schema/metrics.ts` and `src/config/schema/runtime.ts`
-
-The metrics file uses a hierarchical structure:
-
-- **Runs**: Run-level metrics (task executions)
-- **PRD Sets**: PRD set-level metrics
-- **PRDs**: PRD-level metrics
-- **Phases**: Phase-level metrics (nested by PRD)
-- **Features**: Feature-level metrics
-- **Parallel**: Parallel execution metrics
-- **Schema**: Schema operation metrics
-- **Insights**: Enhanced performance insights (new)
-
-#### Enhanced Insights
-
-The metrics file includes insights for better execution analysis:
-
-- **Efficiency**: Tokens per success, iterations to success, failure patterns
-- **Trends**: Token usage, execution time, success rate trends over time
-- **Bottlenecks**: Slowest operations, most retried tasks, context size impact
-- **Quality**: Test coverage progress, validation pass rate, first-time success rate
-- **Resources**: Context window usage, files per task, token distribution
-
-## File Locations
-
-All state files are located in `.devloop/` directory at project root:
-
-- `.devloop/execution-state.json` - Unified execution state (replaces state.json, prd-set-state.json, cursor-sessions.json, retry-counts.json, contribution-mode.json, evolution-state.json)
-- `.devloop/metrics.json` - Unified hierarchical metrics (replaces prd-set-metrics.json, prd-metrics.json, phase-metrics.json, feature-metrics.json, schema-metrics.json, parallel-metrics.json)
-- `.devloop/patterns.json` - Learned patterns (managed via UnifiedStateManager)
-- `.devloop/observations.json` - System observations (managed via UnifiedStateManager)
-- `.devloop/test-results.json/test-results.json` - Test results (unchanged)
-
-## Usage
-
-### Basic Usage
-
-```typescript
-import { UnifiedStateManager } from 'dev-loop/src/core/state/StateManager';
-
-const stateManager = new UnifiedStateManager();
-await stateManager.initialize();
-
-// Get execution state
-const state = await stateManager.getExecutionState();
-
-// Update execution state (with Immer)
-await stateManager.updateExecutionState((draft) => {
-  draft.active.prdSetId = 'my-prd-set';
-  draft.active.workflowState = 'running';
-});
-
-// Get metrics
-const metrics = await stateManager.getMetrics();
-
-// Update metrics (with Immer)
-await stateManager.updateMetrics((draft) => {
-  draft.runs.push({
-    timestamp: new Date().toISOString(),
-    status: 'completed',
-    // ... other metrics
-  });
-});
+```
+┌─────────────────────────────────────────────────────────┐
+│                    IterationRunner                       │
+│  (Fresh context orchestration - Ralph pattern)          │
+├─────────────────────────────────────────────────────────┤
+│                                                          │
+│   ┌─────────────┐     ┌─────────────┐     ┌───────────┐ │
+│   │ ContextHandoff │──▶│ LangGraph   │──▶│ Learnings │ │
+│   │ (handoff.md)   │   │ StateGraph  │   │ Manager   │ │
+│   └─────────────┘     └──────┬──────┘   └───────────┘ │
+│                              │                         │
+│                    ┌─────────▼─────────┐              │
+│                    │  FileCheckpointer  │              │
+│                    │  (checkpoints/)    │              │
+│                    └───────────────────┘              │
+└─────────────────────────────────────────────────────────┘
 ```
 
-### Convenience Methods
+### Key Components
+
+| Component | Location | Purpose |
+|-----------|----------|---------|
+| `IterationRunner` | `src/core/execution/iteration-runner.ts` | Fresh context outer loop |
+| `ContextHandoff` | `src/core/execution/context-handoff.ts` | Handoff document generation |
+| `LearningsManager` | `src/core/execution/learnings-manager.ts` | Learnings persistence |
+| `FileCheckpointer` | `src/core/execution/langgraph/checkpointer.ts` | LangGraph state persistence |
+| `TaskMasterBridge` | `src/core/execution/task-bridge.ts` | Task management and retry counts |
+
+## State Files
+
+All state files are in `.devloop/` directory:
+
+| File | Purpose | Manager |
+|------|---------|---------|
+| `checkpoints/*.json` | LangGraph workflow state | FileCheckpointer |
+| `handoff.md` | Context for fresh iterations | ContextHandoff |
+| `progress.md` | Learnings and progress | LearningsManager |
+| `learned-patterns.md` | Discovered patterns | LearningsManager |
+| `retry-counts.json` | Task retry tracking | TaskMasterBridge |
+| `execution-state.json` | PRD coordination | PrdCoordinator |
+| `metrics.json` | Execution metrics | Metrics classes |
+
+## The Ralph Pattern
+
+The execution model follows "Ralph's pattern" of fresh AI context per iteration:
+
+1. **Generate Handoff** - Create context document from current state
+2. **Execute Iteration** - Run single workflow iteration with LangGraph
+3. **Persist Learnings** - Save discoveries to progress.md
+4. **Update Patterns** - Store reusable patterns
+5. **Check Completion** - Continue or stop based on results
 
 ```typescript
-// Get active context
-const context = await stateManager.getActiveContext();
+// IterationRunner.runWithFreshContext()
+while (iteration < maxIterations) {
+  // 1. Generate handoff context
+  const handoff = await this.contextHandoff.generate();
+  
+  // 2. Execute single iteration with fresh LangGraph state
+  const result = await this.executeIteration(handoff);
+  
+  // 3. Persist learnings
+  await this.learningsManager.persist(result.learnings);
+  
+  // 4. Check completion
+  if (result.complete) break;
+  
+  iteration++;
+}
+```
 
-// Set active context
-await stateManager.setActiveContext({
-  prdSetId: 'my-prd-set',
-  prdId: 'my-prd',
-  workflowState: 'running',
-});
+## LangGraph Workflow State
 
-// Get active PRD set
-const prdSet = await stateManager.getActivePRDSet();
+The workflow state during execution includes:
 
-// Get active PRD
-const prd = await stateManager.getActivePRD();
+```typescript
+interface WorkflowState {
+  threadId: string;
+  task: Task | null;
+  context: TaskContext | null;
+  changes: CodeChanges | null;
+  testResults: TestResult | null;
+  status: WorkflowStatus;
+  error: string | null;
+  retryCount: number;
+  handoffContext: HandoffContext;
+}
+```
+
+State transitions are managed by LangGraph nodes:
+- `fetchTask` - Get next pending task
+- `generateChanges` - AI code generation
+- `applyChanges` - Apply code patches
+- `runTests` - Execute tests
+- `analyzeResults` - Process test output
+- `handleSuccess` - Mark task complete
+- `handleFailure` - Create fix tasks or retry
+
+## Checkpointing
+
+LangGraph checkpoints enable:
+- **Recovery** - Resume from last checkpoint on restart
+- **Debugging** - Inspect state at any point
+- **Branching** - Explore different execution paths
+
+```typescript
+// Checkpoints stored per thread
+// .devloop/checkpoints/{threadId}/{stepId}.json
+const checkpointer = createFileCheckpointer('.devloop/checkpoints');
+const graph = createWorkflowGraph().compile({ checkpointer });
+```
+
+## Learnings Persistence
+
+Learnings are persisted to markdown files for AI consumption:
+
+### progress.md
+Contains execution history and learnings:
+```markdown
+# Progress
+
+## Completed Tasks
+- [x] REQ-1.1: Implemented user authentication
+
+## Learnings
+- Pattern: Always validate input before processing
+- Discovery: Configuration uses hierarchical merging
+```
+
+### learned-patterns.md
+Contains reusable patterns:
+```markdown
+# Learned Patterns
+
+## Error Handling
+- Always wrap async operations in try-catch
+- Log errors with context before re-throwing
+
+## Code Style
+- Use early returns for guard clauses
+- Prefer const over let
+```
+
+## Task and Retry Management
+
+Tasks are managed via `TaskMasterBridge`:
+
+```typescript
+const bridge = new TaskMasterBridge(config);
+
+// Get pending tasks
+const tasks = await bridge.getPendingTasks();
 
 // Update task status
-await stateManager.updateTaskStatus('task-123', 'completed');
+await bridge.updateTaskStatus(taskId, 'in-progress');
 
-// Increment retry count
-await stateManager.incrementRetryCount('task-123');
+// Track retries (stored in retry-counts.json)
+await bridge.incrementRetryCount(taskId);
+const retries = await bridge.getRetryCount(taskId);
+```
 
-// Record metrics at any level
-await stateManager.recordMetrics('prdSet', 'my-prd-set', {
-  setId: 'my-prd-set',
-  status: 'in-progress',
-  startTime: new Date().toISOString(),
-  // ... other metrics
+## PRD Coordination
+
+PRD sets use `PrdCoordinator` for multi-PRD execution:
+
+```typescript
+const coordinator = new PrdCoordinator(config);
+
+// Initialize PRD set
+await coordinator.coordinatePrdSet(prdSet);
+
+// Track PRD state
+await coordinator.updatePrdState(prdId, { status: 'running' });
+
+// Set active PRD set for task filtering
+await coordinator.setActivePrdSetId(setId);
+```
+
+## Parallel Execution
+
+PRD set orchestration supports parallel execution:
+
+```typescript
+const orchestrator = new PrdSetOrchestrator(config);
+
+// Execute PRD set with parallel runners
+const result = await orchestrator.executePrdSet(prdSet, {
+  parallel: true,
+  maxConcurrent: 3,
 });
 ```
 
-## Migration from Old Files
-
-The following files were consolidated:
-
-**Execution State** (consolidated into `execution-state.json`):
-- `state.json` → `execution-state.json.active`
-- `prd-set-state.json` → `execution-state.json.prdSets`
-- `evolution-state.json` → `execution-state.json.contribution`
-- `contribution-mode.json` → `execution-state.json.contributionMode`
-- `cursor-sessions.json` → `execution-state.json.sessions`
-- `retry-counts.json` → `execution-state.json.prds[prdId].retryCounts`
-
-**Metrics** (consolidated into `metrics.json`):
-- `prd-set-metrics.json` → `metrics.json.prdSets`
-- `prd-metrics.json` → `metrics.json.prds`
-- `phase-metrics.json` → `metrics.json.phases`
-- `feature-metrics.json` → `metrics.json.features`
-- `parallel-metrics.json` → `metrics.json.parallel`
-- `schema-metrics.json` → `metrics.json.schema`
-
-Old files are deleted on first use of the new system.
-
-## Schema Validation
-
-All state files are validated using Zod schemas:
-
-- `executionStateFileSchema` - Validates execution state structure
-- `metricsFileSchema` - Validates metrics structure (from runtime.ts)
-- Insights schemas - Validate insights data
-
-Invalid data is rejected with clear error messages.
-
-## Thread Safety
-
-The StateManager uses file locking to prevent race conditions:
-
-- In-process locking using Promise-based locks
-- File-based locking for cross-process safety
-- Automatic stale lock cleanup (locks older than 30 seconds)
-- Retry logic for transient read failures
-
-## Performance Considerations
-
-- Atomic writes ensure file integrity
-- Immer provides efficient immutable updates
-- Schema validation happens on read (not every access)
-- Large metrics files are handled efficiently with Immer's structural sharing
+Each PRD gets a fresh `IterationRunner` instance for isolation.
 
 ## Best Practices
 
-1. **Use Immer Producers**: Always use `updateExecutionState` or `updateMetrics` with producers for updates
-2. **Initialize First**: Always call `initialize()` before using the manager
-3. **Handle Errors**: Wrap operations in try-catch for validation errors
-4. **Use Convenience Methods**: Use provided convenience methods for common operations
-5. **Don't Mutate Directly**: Never mutate state objects directly - always use update methods
+1. **Use IterationRunner** - Default entry point for workflow execution
+2. **Generate Handoffs** - Always create context document before iterations
+3. **Persist Learnings** - Save patterns and discoveries for future use
+4. **Check Retry Counts** - Use TaskMasterBridge for retry tracking
+5. **Enable Checkpoints** - Use FileCheckpointer for recovery
 
-## Patterns and Observations Integration
+## Migration from Legacy State
 
-Patterns and observations are managed through UnifiedStateManager methods for consistency:
+The old state management (StateManager, UnifiedStateManager) has been replaced:
 
-```typescript
-// Get patterns
-const patterns = await stateManager.getPatterns();
-
-// Add a new pattern
-await stateManager.addPattern({
-  id: 'pattern-1',
-  pattern: 'error pattern text',
-  guidance: 'guidance text',
-  occurrences: 0,
-  lastSeen: new Date().toISOString(),
-  files: [],
-  projectTypes: [],
-});
-
-// Update patterns (with filtering support)
-await stateManager.updatePatterns((draft) => {
-  const pattern = draft.patterns.find(p => p.id === 'pattern-1');
-  if (pattern) {
-    pattern.occurrences++;
-    pattern.lastSeen = new Date().toISOString();
-  }
-});
-
-// Get observations
-const observations = await stateManager.getObservations();
-
-// Add a new observation
-await stateManager.addObservation({
-  id: 'obs-1',
-  type: 'failure-pattern',
-  severity: 'high',
-  createdAt: new Date().toISOString(),
-  relevanceScore: 0.9,
-  expiresAt: null,
-  prdId: 'my-prd',
-  phaseId: 1,
-  taskId: 'task-1',
-  category: 'error',
-  observation: 'Observation text',
-  description: 'Description',
-  resolved: false,
-});
-
-// Update observations
-await stateManager.updateObservations((draft) => {
-  const obs = draft.observations.find(o => o.id === 'obs-1');
-  if (obs) {
-    obs.resolved = true;
-    obs.resolvedAt = new Date().toISOString();
-  }
-});
-```
-
-## Examples
-
-### Setting Active Context
-
-```typescript
-await stateManager.setActiveContext({
-  prdSetId: 'notification-system',
-  prdId: 'notification-system-phase1',
-  phaseId: 1,
-  taskId: 'REQ-1.1',
-  workflowState: 'executing-ai',
-});
-```
-
-### Tracking File Creation
-
-```typescript
-await stateManager.updateExecutionState((draft) => {
-  const prdId = draft.active.prdId;
-  if (prdId && !draft.contribution.fileCreation[prdId]) {
-    draft.contribution.fileCreation[prdId] = {
-      requested: [],
-      created: [],
-      missing: [],
-      wrongLocation: [],
-    };
-  }
-  if (prdId) {
-    draft.contribution.fileCreation[prdId].requested.push('path/to/file.php');
-    draft.contribution.fileCreation[prdId].created.push('path/to/file.php');
-  }
-});
-```
-
-### Recording Metrics
-
-```typescript
-await stateManager.recordMetrics('run', 'run-123', {
-  timestamp: new Date().toISOString(),
-  taskId: 'REQ-1.1',
-  status: 'completed',
-  timing: {
-    aiCallMs: 1500,
-    testRunMs: 200,
-    totalMs: 1700,
-  },
-  tokens: {
-    input: 5000,
-    output: 1000,
-  },
-});
-```
-
-### Updating Insights
-
-```typescript
-await stateManager.updateMetrics((draft) => {
-  if (!draft.insights) draft.insights = {};
-  if (!draft.insights.efficiency) draft.insights.efficiency = {};
-  
-  // Calculate tokens per success
-  const successfulRuns = draft.runs.filter(r => r.status === 'completed');
-  const totalTokens = successfulRuns.reduce((sum, r) => sum + (r.tokens?.input || 0), 0);
-  draft.insights.efficiency.tokensPerSuccess = totalTokens / successfulRuns.length;
-  
-  // Track trends
-  if (!draft.insights.trends) draft.insights.trends = {};
-  if (!draft.insights.trends.tokenUsageTrend) draft.insights.trends.tokenUsageTrend = [];
-  draft.insights.trends.tokenUsageTrend.push({
-    date: new Date().toISOString(),
-    tokens: totalTokens,
-  });
-});
-```
+| Old | New |
+|-----|-----|
+| `StateManager.getState()` | `TaskMasterBridge.getAllTasks()` |
+| `StateManager.updateState()` | LangGraph state transitions |
+| `UnifiedStateManager.recordMetrics()` | Metrics classes |
+| `UnifiedStateManager.getPatterns()` | `LearningsManager.getPatterns()` |
+| Workflow state object | LangGraph `WorkflowState` |
+| Daemon mode | Parallel `IterationRunner` instances |

@@ -248,7 +248,7 @@ export class PrdSetMetrics {
 
     // Emit metrics finalized event
     try {
-      const { emitEvent } = require('./event-stream');
+      const { emitEvent } = require('../utils/event-stream');
       emitEvent('metrics:finalized', {
         setId,
         status,
@@ -314,7 +314,7 @@ export class PrdSetMetrics {
 
         // Emit aggregation event
         try {
-          const { emitEvent } = require('./event-stream');
+          const { emitEvent } = require('../utils/event-stream');
           emitEvent('metrics:aggregated', {
             setId,
             runsProcessed: runCount,

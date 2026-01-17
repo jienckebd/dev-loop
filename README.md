@@ -1,161 +1,226 @@
 # dev-loop
 
-Autonomous development orchestrator that transforms PRDs into validated code through a continuous loop of AI code generation, test execution, and Log/metric Analysis.
+Autonomous development orchestrator that implements test-driven development in a loop. AI generates code, tests validate it, failures create fix tasks, and the loop continues until all tests pass.
 
-## Table of Contents
+Built on **LangGraph** for workflow orchestration, **LangChain.js** for unified AI provider access, and the **Ralph pattern** for fresh context per iteration.
 
-- [Documentation](#documentation)
-- [Core Concept](#core-concept)
-- [Operating Modes](#operating-modes)
-- [Quick Start](#quick-start)
-- [Configuration](#configuration)
-- [Key Features](#key-features)
-- [Architecture](#architecture)
-- [Development](#development)
-- [See Also](#see-also)
+## How It Works
 
-## Documentation
+dev-loop runs a TDD loop where each iteration:
 
-Dev-loop documentation is organized by audience and topic. Choose the documentation that matches your needs:
+1. **Fetches a task** from Task Master
+2. **Generates code** via LangChain.js (6 AI providers supported)
+3. **Validates syntax** before applying changes
+4. **Runs tests** (Playwright/Cypress)
+5. **On failure**: Analyzes errors, creates fix task, loops back
+6. **On success**: Captures learnings, proceeds to next task
 
-**For Users:**
-- [`docs/users/README.md`](docs/users/README.md) - Complete user guide with CLI reference, configuration, and all features
-- [`docs/users/PRD_BUILDING.md`](docs/users/PRD_BUILDING.md) - PRD building guide (convert/enhance/create)
-- [`docs/users/METRICS.md`](docs/users/METRICS.md) - Metrics and reporting guide
-- [`docs/users/REPORTS.md`](docs/users/REPORTS.md) - Report generation guide
-- [`docs/users/PATTERNS.md`](docs/users/PATTERNS.md) - Unified pattern system guide
-- [`docs/users/INIT_COMMAND.md`](docs/users/INIT_COMMAND.md) - Init command with execution intelligence
-- [`docs/users/CONFIG.md`](docs/users/CONFIG.md) - Complete configuration reference
-
-**For AI Agents:**
-- [`docs/ai/README.md`](docs/ai/README.md) - AI agent onboarding guide for creating PRDs
-- [`docs/ai/INDEX.md`](docs/ai/INDEX.md) - Documentation index with task → doc mappings
-- [`docs/ai/PRD_SCHEMA.md`](docs/ai/PRD_SCHEMA.md) - Complete PRD schema reference
-- [`docs/ai/PRD_FEATURES.md`](docs/ai/PRD_FEATURES.md) - Guide to all 17 dev-loop features
-- [`docs/ai/PRD_TEMPLATE.md`](docs/ai/PRD_TEMPLATE.md) - Copy-paste PRD template
-
-**For Contributors:**
-- [`docs/contributing/README.md`](docs/contributing/README.md) - Contribution guide overview
-- [`docs/contributing/CONTRIBUTION_MODE.md`](docs/contributing/CONTRIBUTION_MODE.md) - Contribution mode guide
-- [`docs/contributing/ARCHITECTURE.md`](docs/contributing/ARCHITECTURE.md) - Architecture documentation
-- [`docs/contributing/QUICK_START.md`](docs/contributing/QUICK_START.md) - Quick-start scenarios
-
-**Specialized Topics:**
-- [`docs/CURSOR_INTEGRATION.md`](docs/CURSOR_INTEGRATION.md) - Complete Cursor integration guide
-- [`docs/contributing/EVENT_STREAMING.md`](docs/contributing/EVENT_STREAMING.md) - Event streaming guide
-- [`docs/contributing/PROACTIVE_MONITORING.md`](docs/contributing/PROACTIVE_MONITORING.md) - Proactive monitoring guide
-- [`docs/MIGRATION_PATTERNS.md`](docs/MIGRATION_PATTERNS.md) - Pattern schema migration guide
-
-**Documentation Discovery:** All documentation files include YAML frontmatter metadata. See [`docs/ai/README.md`](docs/ai/README.md) for AI agent discovery strategies.
-
-## Core Concept
-
-Dev-loop implements a **test-driven development loop**:
-
-```mermaid
-flowchart LR
-    PRD[PRD] --> Tasks[Task Master]
-    Tasks --> AI[AI Provider]
-    AI --> Code[Code Changes]
-    Code --> Tests[Test Runner]
-    Tests --> Logs[Log/metric Analyzer]
-    Logs -->|Pass| Done[Mark Done]
-    Logs -->|Fail| Fix[Create Fix Task]
-    Fix --> AI
-    Done --> Tasks
-```
-
-**Key principle**: Every task bundles feature code + test code. The loop continues until all tests pass.
-
-## Key Features
-
-| Feature | Description | Documentation |
-|---------|-------------|---------------|
-| **Multi-Provider AI** | Anthropic, OpenAI, Gemini, Ollama, Cursor support | [`docs/users/README.md`](docs/users/README.md) |
-| **Parallel Execution** | Multiple PRD sets and phases execute simultaneously with isolated sessions | [`docs/CURSOR_INTEGRATION.md`](docs/CURSOR_INTEGRATION.md#parallel-execution) |
-| **Test-Driven Loop** | Playwright/Cypress test runners with automatic retry and fix | [`docs/users/README.md`](docs/users/README.md) |
-| **Pre-Apply Validation** | Syntax checking before code changes are applied | [`docs/contributing/ARCHITECTURE.md`](docs/contributing/ARCHITECTURE.md) |
-| **Log/metric Analysis** | Automatic Log/metric Analysis and error detection | [`docs/users/README.md`](docs/users/README.md) |
-| **State Management** | JSON/YAML persistence, state recovery | [`docs/contributing/ARCHITECTURE.md`](docs/contributing/ARCHITECTURE.md) |
-| **Framework Plugins** | Drupal, Django, React, Browser Extension with auto-detection | [`docs/users/README.md`](docs/users/README.md#framework-plugins) |
-| **AI Pattern Detection** | Semantic code analysis with abstraction recommendations | [`docs/users/README.md`](docs/users/README.md#ai-enhanced-pattern-detection) |
-| **Code Quality Scanning** | Static analysis, security, tech debt, and duplicate detection | [`docs/users/README.md`](docs/users/README.md#code-quality-scanning) |
-| **Pattern Learning** | Unified pattern system learns from outcomes to improve code generation | [`docs/users/PATTERNS.md`](docs/users/PATTERNS.md) |
-| **Execution Intelligence** | Learns from task execution and PRD generation to optimize configuration | [`docs/users/INIT_COMMAND.md`](docs/users/INIT_COMMAND.md) |
-| **Config Evolution** | Learns from manual config edits to improve suggestions | [`docs/users/CONFIG.md`](docs/users/CONFIG.md) |
-| **PRD Building** | Convert planning docs, enhance PRD sets, or create interactively | [`docs/users/PRD_BUILDING.md`](docs/users/PRD_BUILDING.md) |
-| **17 PRD Features** | Framework config, test generation, error guidance, and more | [`docs/ai/PRD_FEATURES.md`](docs/ai/PRD_FEATURES.md) |
-| **MCP Integration** | Task Master and Dev-Loop MCP servers for AI assistant integration | [`docs/users/README.md`](docs/users/README.md#mcp-integration) |
-| **Contribution Mode** | Two-agent architecture for contributing to dev-loop | [`docs/contributing/CONTRIBUTION_MODE.md`](docs/contributing/CONTRIBUTION_MODE.md) |
-| **Hierarchical Metrics** | PRD Set → PRD → Phase → Task level tracking with cost analysis | [`docs/users/METRICS.md`](docs/users/METRICS.md) |
-
-## Architecture
-
-### PRD Set Execution with Parallel Background Agents
-
-Dev-loop executes PRD sets through parallel background agents, enabling concurrent execution of multiple PRDs and phases:
+The **Ralph pattern** resets AI context each iteration to prevent context pollution. State persists to files (`handoff.md`, `progress.md`) instead of accumulating in the AI's context window.
 
 ```mermaid
 flowchart TB
-    PRDSet[PRD Set<br/>17 PRD Features] --> Execute[prd-set execute]
-    Execute --> Orchestrator[Workflow Engine<br/>State Management]
+    subgraph CLI [CLI Entry Points]
+        run[dev-loop run]
+        prdset[dev-loop prd-set execute]
+    end
 
-    Orchestrator --> FrameworkDrupal[Framework Plugin<br/>Drupal]
-    Orchestrator --> FrameworkDjango[Framework Plugin<br/>Django]
-    Orchestrator --> FrameworkReact[Framework Plugin<br/>React]
+    subgraph Orchestration [Orchestration Layer]
+        run --> IR[IterationRunner]
+        prdset --> PSO[PrdSetOrchestrator]
+        PSO -->|parallel| IR1[IterationRunner]
+        PSO -->|parallel| IR2[IterationRunner]
+    end
 
-    FrameworkDrupal --> PRDA[PRD A<br/>Parallel Execution]
-    FrameworkDjango --> PRDB[PRD B<br/>Parallel Execution]
-    FrameworkReact --> PRDC[PRD C<br/>Parallel Execution]
+    subgraph Workflow [LangGraph Workflow]
+        IR --> Graph[StateGraph]
+        IR1 --> Graph
+        IR2 --> Graph
+        Graph --> Nodes[10 Nodes: fetch / build / generate / validate / apply / test / analyze / fix / suggest / learn]
+    end
 
-    PRDA --> PhaseA1[Phase 1]
-    PRDA --> PhaseA2[Phase 2]
-    PRDB --> PhaseB1[Phase 1]
-    PRDC --> PhaseC1[Phase 1]
+    subgraph Context [Context Sources]
+        TaskMaster[Task Master]
+        SpecKit[SpecKit: clarifications + research + constitution]
+        Handoff[handoff.md]
+        Codebase[CodeContextProvider]
+    end
 
-    PhaseA1 --> AgentA1[Background Agent<br/>Multi-Provider AI<br/>Session A-1]
-    PhaseA2 --> AgentA2[Background Agent<br/>Multi-Provider AI<br/>Session A-2]
-    PhaseB1 --> AgentB1[Background Agent<br/>Multi-Provider AI<br/>Session B-1]
-    PhaseC1 --> AgentC1[Background Agent<br/>Multi-Provider AI<br/>Session C-1]
+    subgraph AI [AI Layer]
+        LCP[LangChainProvider]
+        LCP --> Anthropic & OpenAI & Gemini & Ollama & Cursor & Amp
+    end
 
-    AgentA1 --> CodeA1[Code Changes]
-    AgentA2 --> CodeA2[Code Changes]
-    AgentB1 --> CodeB1[Code Changes]
-    AgentC1 --> CodeC1[Code Changes]
+    subgraph Testing [Test Layer]
+        Playwright[Playwright]
+        Cypress[Cypress]
+    end
 
-    CodeA1 --> Quality[Code Quality Scanning]
-    CodeA2 --> Quality
-    CodeB1 --> Quality
-    CodeC1 --> Quality
+    subgraph Persistence [Ralph Pattern Persistence]
+        Progress[progress.md]
+        Patterns[learned-patterns.md]
+        Checkpoints[checkpoints/]
+    end
 
-    Quality --> Pattern[AI Pattern Detection]
-    Pattern --> Validator[Pre-Apply Validation]
-
-    Validator --> Tests[Test Runner<br/>Test-Driven Loop]
-    Tests --> Logs[Log/metric Analysis]
-    Logs --> Metrics[Hierarchical Metrics<br/>PRD Set → PRD → Phase → Task]
-
-    Metrics --> Learning[Unified Pattern Learning<br/>Error, Code, Schema, Test, PRD Patterns]
-    Learning --> Intelligence[Execution Intelligence<br/>Task Patterns, PRD Insights, Provider Performance]
-    Intelligence --> ConfigEvolution[Config Evolution<br/>Learned Preferences]
-    ConfigEvolution --> Orchestrator
-
-    Metrics --> State[State Management<br/>Observations, Patterns, Metrics, Learning]
-    State --> Orchestrator
+    Context --> Graph
+    Graph --> LCP
+    Graph --> Testing
+    Graph --> Persistence
 ```
 
-The architecture enables parallel execution of multiple PRD sets through background agents, with validation, testing, and metrics collection at each stage. See [`docs/contributing/ARCHITECTURE.md`](docs/contributing/ARCHITECTURE.md) for complete architecture documentation including implementation details, core components, and provider interfaces.
+## Quick Start
 
-## Contribution
+```bash
+# Configure AI provider
+echo "ANTHROPIC_API_KEY=sk-ant-..." > .env
 
-See [`docs/contributing/README.md`](docs/contributing/README.md) for development workflow and contribution guide.
+# Initialize
+dev-loop init && task-master init
+
+# Execute PRD set (loop behavior determined by PRD set schema)
+dev-loop prd-set execute .taskmaster/planning/my-feature/
+
+# Single iteration (for debugging)
+dev-loop run
+```
+
+## PRD Sets: Parallel Autonomous Execution
+
+For large-scope development, dev-loop supports **PRD sets** - collections of related PRDs executed in parallel with dependency-aware scheduling.
+
+**PRD Set structure**:
+
+```
+.taskmaster/planning/my-feature/
+├── index.md.yml          # Manifest with dependencies
+├── api-layer.md          # PRD 1
+├── data-model.md         # PRD 2 (depends on api-layer)
+├── ui-components.md      # PRD 3 (parallel with data-model)
+└── .speckit/             # Autonomous context
+    ├── clarifications.json   # Resolved design decisions
+    ├── research.json         # Codebase research findings
+    └── constitution.json     # Project rules/patterns
+```
+
+**PrdSetOrchestrator** builds a dependency graph and executes PRDs in levels:
+- **Level 1**: Independent PRDs run in parallel (isolated IterationRunner per PRD)
+- **Level 2+**: PRDs wait for their dependencies to complete
+
+**SpecKit** enables fully autonomous execution by pre-resolving:
+- **Clarifications**: Design decisions answered before execution
+- **Research**: Codebase findings (existing patterns, APIs, conventions)
+- **Constitution**: Project rules from `.cursorrules` or similar
+
+## Key Dependencies
+
+| Package | Role in TDD Loop |
+|---------|------------------|
+| `@langchain/langgraph` | 10-node workflow StateGraph with conditional edges and file-based checkpointing |
+| `@langchain/core` | Unified interface for all AI providers |
+| `@langchain/anthropic` | Claude models for code generation |
+| `zod` | Type-safe structured output from AI (code changes, analysis) |
+| `fastmcp` | MCP server exposing dev-loop tools to outer AI agents |
+| `task-master-ai` | Task management, PRD parsing, dependency tracking |
+
+## The Ralph Pattern
+
+Long-running AI sessions accumulate errors. The Ralph pattern solves this:
+
+- **Fresh context each iteration**: No token accumulation across iterations
+- **State in files**: `handoff.md` captures current state, `progress.md` logs history
+- **Pattern learning**: Discoveries with 3+ occurrences promote to `learned-patterns.md`
+- **Crash recovery**: LangGraph checkpoints in `.devloop/checkpoints/`
+
+## LangGraph Nodes
+
+| Node | TDD Role |
+|------|----------|
+| `fetchTask` | Get next pending task from Task Master |
+| `buildContext` | Gather relevant code context for AI |
+| `generateCode` | AI code generation via LangChainProvider |
+| `validateCode` | Pre-apply syntax/lint validation |
+| `applyChanges` | Write code changes to files |
+| `runTests` | Execute test suite (the "T" in TDD) |
+| `analyzeFailure` | AI analysis of test failures |
+| `createFixTask` | Create fix task (loops back for retry) |
+| `suggestImprovements` | Escalate on repeated failures |
+| `captureLearnings` | Persist learnings (Ralph pattern) |
+
+## AI Providers
+
+All providers use LangChain.js with Zod schemas for structured output:
+
+| Provider | Package | Notes |
+|----------|---------|-------|
+| Anthropic | `@langchain/anthropic` | Recommended (claude-sonnet-4) |
+| OpenAI | `@langchain/openai` | gpt-4o, gpt-4-turbo |
+| Google Gemini | `@langchain/google-genai` | gemini-1.5-pro, gemini-2.0-flash |
+| Ollama | `@langchain/ollama` | Local models (llama3.1, codellama) |
+| Cursor | Custom adapter | IDE integration |
+| Amp | Custom adapter | ampcode.com CLI agent |
+
+## For AI Agents: MCP Tools
+
+dev-loop exposes ~50 MCP tools for outer agent integration:
+
+```json
+{ "mcpServers": { "dev-loop": { "command": "dev-loop-mcp" } } }
+```
+
+| Category | Example Tools |
+|----------|---------------|
+| Core | `get_task`, `complete_task`, `get_pending_tasks` |
+| Control | `pause_execution`, `resume_execution`, `stop` |
+| Debug | `get_logs`, `analyze_error`, `get_state` |
+| Playwright | `run_test`, `get_test_results` |
+| Events | `subscribe_events` (real-time workflow observability) |
+
+## CLI Reference
+
+| Command | Purpose |
+|---------|---------|
+| `dev-loop prd-set execute <path>` | Execute PRD set (primary method) |
+| `dev-loop run` | Single iteration (debugging) |
+| `dev-loop status` | Current state |
+| `dev-loop logs -f` | Follow logs |
+| `dev-loop pause` / `resume` / `stop` | Workflow control |
+
+## Framework Plugins
+
+Auto-detected plugins inject framework-specific context:
+
+| Framework | Detection | Provides |
+|-----------|-----------|----------|
+| Drupal | `composer.json` with drupal/core | Module patterns, config schema |
+| Django | `manage.py` | App structure, migrations |
+| React | `package.json` with react | Component patterns, hooks |
+| Browser Extension | `manifest.json` | Content scripts, messaging |
+
+## Project Structure
+
+```
+.devloop/
+├── checkpoints/        # LangGraph crash recovery
+├── handoff.md          # Current iteration context (Ralph pattern)
+├── progress.md         # Iteration history
+└── learned-patterns.md # Discovered patterns
+
+.taskmaster/
+├── tasks.json          # Task list
+└── planning/           # PRD sets
+```
+
+## Documentation
+
+- [`docs/ai/`](docs/ai/) - AI agent integration
+- [`docs/users/`](docs/users/) - User guide
+- [`docs/contributing/`](docs/contributing/) - Architecture details
 
 ## See Also
 
-- [`docs/users/README.md`](docs/users/README.md) - Complete user documentation
-- [`docs/ai/README.md`](docs/ai/README.md) - AI agent guide
-- [`docs/contributing/README.md`](docs/contributing/README.md) - Contribution guide
+- [LangGraph](https://langchain-ai.github.io/langgraph/) - Workflow orchestration
+- [LangChain.js](https://js.langchain.com/) - AI model interface
 - [Task Master AI](https://www.npmjs.com/package/task-master-ai) - Task management
+- [Model Context Protocol](https://modelcontextprotocol.io/) - AI tool integration
 
 ## License
 
