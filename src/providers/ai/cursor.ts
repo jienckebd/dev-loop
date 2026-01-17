@@ -240,6 +240,14 @@ export class CursorProvider implements AIProvider {
 
         const result = await chatOpener.openChat(chatRequest);
 
+        // Extract and store token usage from chat result for metrics tracking
+        if (result.tokens) {
+          this.lastTokens = {
+            input: result.tokens.input || 0,
+            output: result.tokens.output || 0,
+          };
+        }
+
         if (result.success && result.response) {
           // Use unified CodeChangesValidator for consistent parsing
           const parsingContext: JsonParsingContext = {

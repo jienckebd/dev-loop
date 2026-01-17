@@ -57,6 +57,11 @@ export interface ChatOpenResult {
   stdout?: string;
   /** Whether the result is due to a timeout */
   timeout?: boolean;
+  /** Estimated token usage (input tokens based on prompt length, output on response) */
+  tokens?: {
+    input?: number;
+    output?: number;
+  };
 }
 
 export interface CursorChatOpenerConfig {
@@ -666,6 +671,11 @@ export class CursorChatOpener {
             // Track agent completion in parallel metrics
             parallelMetrics.completeAgent(agentId, 'completed', stdout.length);
 
+            // Calculate token estimates based on character counts
+            // Rough estimate: ~4 characters per token for English text
+            const inputTokenEstimate = Math.ceil(prompt.length / 4);
+            const outputTokenEstimate = Math.ceil(parsedResponse.length / 4);
+
             resolve({
               success: true,
               method: 'agent',
@@ -673,6 +683,10 @@ export class CursorChatOpener {
               command: `cursor agent --print --output-format ${outputFormat} --workspace ${workspacePath}`,
               response: parsedResponse,
               stdout: stdout.trim(),
+              tokens: {
+                input: inputTokenEstimate,
+                output: outputTokenEstimate,
+              },
             });
           } else {
             logger.error(`[CursorChatOpener] Background agent failed with code ${code}${session ? ` (session: ${session.sessionId})` : ''}`);
