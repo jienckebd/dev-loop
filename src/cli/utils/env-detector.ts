@@ -38,7 +38,8 @@ export interface ProviderDetectionConfig {
  */
 const PROVIDER_ENV_VARS: Record<Exclude<AIProviderName, 'cursor'>, string[]> = {
   anthropic: ['ANTHROPIC_API_KEY'],
-  openai: ['OPENAI_API_KEY', 'AZURE_OPENAI_API_KEY'],
+  openai: ['OPENAI_API_KEY'],
+  azure: ['AZURE_OPENAI_API_KEY'],
   gemini: ['GOOGLE_AI_API_KEY', 'GEMINI_API_KEY'],
   ollama: ['OLLAMA_API_KEY', 'OLLAMA_HOST'],
   amp: ['AMP_API_KEY', 'AMP_CONFIG'], // Amp typically uses its own auth
@@ -250,7 +251,7 @@ export async function getBestAvailableProvider(
   const available = detected.filter(p => p.hasApiKey);
 
   // Priority order
-  const priority: AIProviderName[] = ['anthropic', 'openai', 'cursor', 'gemini', 'ollama'];
+  const priority: AIProviderName[] = ['anthropic', 'openai', 'azure', 'cursor', 'gemini', 'ollama'];
 
   for (const provider of priority) {
     if (available.some(p => p.provider === provider)) {

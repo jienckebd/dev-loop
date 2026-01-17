@@ -6,7 +6,7 @@
  */
 
 import { ChatAnthropic } from '@langchain/anthropic';
-import { ChatOpenAI } from '@langchain/openai';
+import { ChatOpenAI, AzureChatOpenAI } from '@langchain/openai';
 import { ChatGoogleGenerativeAI } from '@langchain/google-genai';
 import { ChatOllama } from '@langchain/ollama';
 import { BaseChatModel } from '@langchain/core/language_models/chat_models';
@@ -18,6 +18,16 @@ export interface ModelConfig {
   baseUrl?: string;
   maxTokens?: number;
   temperature?: number;
+}
+
+/**
+ * Extract Azure instance name from endpoint URL.
+ * E.g., "https://my-resource.openai.azure.com/" -> "my-resource"
+ */
+function extractAzureInstanceName(endpoint?: string): string {
+  if (!endpoint) return '';
+  const match = endpoint.match(/https?:\/\/([^.]+)\./);
+  return match ? match[1] : '';
 }
 
 /**
@@ -41,6 +51,15 @@ export function createLangChainModel(config: ModelConfig): BaseChatModel {
       return new ChatOpenAI({
         openAIApiKey: apiKey,
         model: model || 'gpt-4o',
+        maxTokens: maxTokens || 4096,
+      }) as BaseChatModel;
+
+    case 'azure':
+      return new AzureChatOpenAI({
+        azureOpenAIApiKey: apiKey || process.env.AZURE_OPENAI_API_KEY,
+        azureOpenAIApiInstanceName: extractAzureInstanceName(baseUrl || process.env.AZURE_OPENAI_ENDPOINT),
+        azureOpenAIApiDeploymentName: model || process.env.AZURE_OPENAI_DEPLOYMENT_NAME || 'gpt-4',
+        azureOpenAIApiVersion: process.env.AZURE_OPENAI_API_VERSION || '2024-02-15-preview',
         maxTokens: maxTokens || 4096,
       }) as BaseChatModel;
 
@@ -76,7 +95,7 @@ export function createLangChainModel(config: ModelConfig): BaseChatModel {
       }) as BaseChatModel;
 
     default:
-      throw new Error(`Unknown AI provider: ${provider}. Supported: anthropic, openai, gemini, ollama, cursor, amp`);
+      throw new Error(`Unknown AI provider: ${provider}. Supported: anthropic, openai, azure, gemini, ollama, cursor, amp`);
   }
 }
 
@@ -89,6 +108,8 @@ export function getApiKeyEnvVar(provider: string): string {
       return 'ANTHROPIC_API_KEY';
     case 'openai':
       return 'OPENAI_API_KEY';
+    case 'azure':
+      return 'AZURE_OPENAI_API_KEY';
     case 'gemini':
       return 'GOOGLE_API_KEY';
     case 'ollama':

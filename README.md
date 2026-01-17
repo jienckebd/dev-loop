@@ -153,10 +153,33 @@ All providers use LangChain.js with Zod schemas for structured output:
 |----------|---------|-------|
 | Anthropic | `@langchain/anthropic` | Recommended (claude-sonnet-4) |
 | OpenAI | `@langchain/openai` | gpt-4o, gpt-4-turbo |
+| Azure OpenAI | `@langchain/openai` | Enterprise Azure deployments |
 | Google Gemini | `@langchain/google-genai` | gemini-1.5-pro, gemini-2.0-flash |
 | Ollama | `@langchain/ollama` | Local models (llama3.1, codellama) |
 | Cursor | Custom adapter | IDE integration |
 | Amp | Custom adapter | ampcode.com CLI agent |
+
+### Azure OpenAI Configuration
+
+For Azure OpenAI, set these environment variables:
+
+```bash
+AZURE_OPENAI_API_KEY=<your-api-key>
+AZURE_OPENAI_ENDPOINT=https://<resource-name>.openai.azure.com/
+AZURE_OPENAI_API_VERSION=2024-02-15-preview
+AZURE_OPENAI_DEPLOYMENT_NAME=gpt-4
+```
+
+Then configure in `devloop.config.js`:
+
+```javascript
+module.exports = {
+  ai: {
+    provider: 'azure',
+    model: 'gpt-4',  // Your deployment name
+  },
+};
+```
 
 ## For AI Agents: MCP Tools
 

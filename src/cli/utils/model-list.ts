@@ -24,6 +24,12 @@ export const PROVIDER_MODELS: Record<AIProviderName, ModelOption[]> = {
     { name: 'GPT-4', value: 'gpt-4' },
     { name: 'GPT-3.5 Turbo', value: 'gpt-3.5-turbo' },
   ],
+  azure: [
+    { name: 'GPT-4o (Use Your Deployment Name)', value: 'gpt-4o' },
+    { name: 'GPT-4 Turbo', value: 'gpt-4-turbo' },
+    { name: 'GPT-4', value: 'gpt-4' },
+    { name: 'GPT-3.5 Turbo', value: 'gpt-35-turbo' },
+  ],
   gemini: [
     { name: 'Gemini 2.0 Flash (Latest, Fast)', value: 'gemini-2.0-flash' },
     { name: 'Gemini 1.5 Pro', value: 'gemini-1.5-pro' },
