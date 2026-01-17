@@ -98,6 +98,10 @@ export class IterationRunner {
   private tasksFailed = 0;
   private patternsDiscovered = 0;
 
+  /** Track retry counts per task to prevent infinite loops */
+  private taskRetryCount: Map<string, number> = new Map();
+  private readonly maxTaskRetries = 3;
+
   /** Accumulated metrics across all iterations */
   private accumulatedMetrics = {
     tokensInput: 0,
@@ -207,9 +211,38 @@ export class IterationRunner {
           this.tasksCompleted++;
           // Mark task as done in TaskBridge
           await this.taskBridge.updateTaskStatus(String(result.task.id), 'done');
+          // Clear retry count on success
+          this.taskRetryCount.delete(String(result.task.id));
           logger.info(`[IterationRunner] Task ${result.task.id} marked as done`);
-        } else if (result.status === 'failed') {
-          this.tasksFailed++;
+        } else if (result.status === 'failed' && result.task) {
+          const taskId = String(result.task.id);
+          const currentRetries = (this.taskRetryCount.get(taskId) || 0) + 1;
+          this.taskRetryCount.set(taskId, currentRetries);
+
+          logger.warn(`[IterationRunner] Task ${taskId} failed (attempt ${currentRetries}/${this.maxTaskRetries}): ${result.error || 'Unknown error'}`);
+
+          if (currentRetries >= this.maxTaskRetries) {
+            // Mark task as blocked after too many retries
+            this.tasksFailed++;
+            await this.taskBridge.updateTaskStatus(taskId, 'blocked');
+            this.taskRetryCount.delete(taskId);
+            logger.error(`[IterationRunner] Task ${taskId} marked as blocked after ${this.maxTaskRetries} failed attempts`);
+
+            // Emit task:blocked event
+            emitEvent('task:blocked', {
+              taskId,
+              prdId: result.prdId,
+              phaseId: result.phaseId,
+              attempts: currentRetries,
+              lastError: result.error || 'Unknown error',
+            }, {
+              taskId,
+              prdId: result.prdId,
+              phaseId: result.phaseId ? Number(result.phaseId) : undefined,
+              severity: 'error',
+            });
+          }
+          // If not yet at max retries, task stays pending and will be retried next iteration
         }
 
         // 6. Check for handoff (iteration-based or context threshold)
