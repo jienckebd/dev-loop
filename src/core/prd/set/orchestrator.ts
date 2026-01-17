@@ -437,7 +437,7 @@ export class PrdSetOrchestrator {
 
             if (settled.status === 'fulfilled') {
               const { prdId: completedPrdId, result: iterResult } = settled.value;
-              
+
               // Record PRD completion with metrics from IterationResult
               this.prdSetMetrics.recordPrdCompletion(completedPrdId, {
                 prdId: completedPrdId,
@@ -473,7 +473,7 @@ export class PrdSetOrchestrator {
                 observations: { total: 0, byType: {}, bySeverity: {}, resolutionRate: 0 },
                 patterns: { totalMatched: iterResult.patternsDiscovered, byType: {}, effectiveness: 0, successRate: 0 },
               });
-              
+
               result.completedPrds.push(completedPrdId);
             } else {
               result.failedPrds.push(prdId);
@@ -599,7 +599,7 @@ export class PrdSetOrchestrator {
 
   /**
    * Populate tasks.json from PRD phase files
-   * 
+   *
    * Extracts tasks from all PRD phase files in the discovered set
    * and creates them in tasks.json for TaskMasterBridge to find.
    * Each task includes prdSetId in details for filtering.
@@ -654,12 +654,28 @@ export class PrdSetOrchestrator {
                 continue;
               }
 
+              // Map MoSCoW priority to Task Master priority
+              // MoSCoW: must, should, could, wont -> Task Master: critical, high, medium, low
+              const priorityMap: Record<string, string> = {
+                'must': 'critical',
+                'should': 'high',
+                'could': 'medium',
+                'wont': 'low',
+                // Also support direct Task Master priorities
+                'critical': 'critical',
+                'high': 'high',
+                'medium': 'medium',
+                'low': 'low',
+              };
+              const rawPriority = (taskDef.priority || 'medium').toLowerCase();
+              const mappedPriority = (priorityMap[rawPriority] || 'medium') as 'low' | 'medium' | 'high' | 'critical';
+
               // Create task with prdSetId for filtering
               const task: Omit<Task, 'status'> & { status?: TaskStatus } = {
                 id: taskDef.id,
                 title: taskDef.title || `Task ${taskDef.id}`,
                 description: taskDef.description || '',
-                priority: taskDef.priority || 'medium',
+                priority: mappedPriority,
                 status: 'pending' as TaskStatus,
                 // Store prdSetId, prdId, phaseId in details for filtering
                 details: JSON.stringify({
