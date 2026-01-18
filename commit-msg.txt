@@ -1,0 +1,16 @@
+Add Azure OpenAI provider support
+
+Enables dev-loop to work with Azure OpenAI deployments via LangChain's
+AzureChatOpenAI class. Enterprise users with Azure OpenAI can now use
+dev-loop by setting environment variables and configuring provider: 'azure'.
+
+Changes:
+- Add 'azure' to AIProviderName type
+- Add AzureChatOpenAI case in createLangChainModel()
+- Add helper to extract Azure instance name from endpoint URL
+- Update env-detector with AZURE_OPENAI_API_KEY detection
+- Add Azure model options to model-list
+- Update Zod schema to include 'azure' provider
+- Add Azure configuration documentation to README
+
+Closes #1

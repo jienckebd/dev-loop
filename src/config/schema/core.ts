@@ -25,7 +25,7 @@ const configSchemaBase = z.object({
     path: z.string().default('.devloop/metrics.json'),
   }).optional(),
   ai: z.object({
-    provider: z.enum(['anthropic', 'openai', 'gemini', 'ollama', 'cursor', 'amp']),
+    provider: z.enum(['anthropic', 'openai', 'azure', 'gemini', 'ollama', 'cursor', 'amp']),
     model: z.string(), // For cursor/amp: 'auto' (default) or specific model name
     fallback: z.string().optional(),
     apiKey: z.string().optional(), // Not used for cursor/amp provider
