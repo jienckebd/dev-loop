@@ -4,7 +4,7 @@ export type TaskType = 'analysis' | 'fix' | 'generate' | 'investigate';
 
 export type InterventionMode = 'autonomous' | 'review' | 'hybrid';
 
-export type AIProviderName = 'anthropic' | 'openai' | 'gemini' | 'ollama' | 'cursor' | 'amp';
+export type AIProviderName = 'anthropic' | 'openai' | 'azure' | 'gemini' | 'ollama' | 'cursor' | 'amp';
 
 export type TestRunnerName = 'playwright' | 'cypress';
 
